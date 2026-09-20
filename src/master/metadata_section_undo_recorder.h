@@ -128,17 +128,11 @@ struct XAttrRemoveMutation {
 	kv::Key liveKey;
 };
 
-struct XAttrRangeRemoveMutation {
-	inode_t inode;
-	kv::Key rangeBegin;
-	kv::Key rangeEnd;
-};
-
 using MetadataMutation =
     std::variant<ChunkSetMutation, NodeSetMutation, NodeRemoveMutation, FreeNodeSetMutation,
                  FreeNodeRemoveMutation, EdgeSetMutation, EdgeRemoveMutation,
                  DetachedPathSetMutation, DetachedPathRemoveMutation, XAttrSetMutation,
-                 XAttrRemoveMutation, XAttrRangeRemoveMutation>;
+                 XAttrRemoveMutation>;
 
 class ISectionUndoRecorder {
 public:

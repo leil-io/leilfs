@@ -207,19 +207,6 @@ private:
 	std::vector<uint8_t> name;
 };
 
-/// Removal event for all xattrs of an inode.
-/// Removes the range XATR_<InodeId> .. XATR_<InodeId+1> from FDB.
-class XAttrInodeRemoveEvent : public IMetadataUpdateEvent {
-public:
-	explicit XAttrInodeRemoveEvent(inode_t _inode);
-	~XAttrInodeRemoveEvent() override = default;
-
-	void applyEvent(const MetadataWriteContext &context) override;
-
-private:
-	inode_t inode;
-};
-
 /// Metadata writer that preserves changelog ordering
 class MetadataWriterFDB {
 public:

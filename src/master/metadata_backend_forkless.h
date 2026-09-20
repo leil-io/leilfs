@@ -370,13 +370,6 @@ private:
 	/// @param inode    Inode of the detached path to remove.
 	void onDetachedPathRemoved(inode_t inode);
 
-	/// Enqueue an xattr inode removal event to the metadata writer.
-	///
-	/// Called when all xattrs of an inode are removed. The event removes all `XATR_<inode><name>`
-	/// keys for the given inode from the KV store on the next flush.
-	/// @param inode Inode of the xattr entries to remove.
-	void onXAttrInodeRemoved(inode_t inode);
-
 	/// Enqueue an xattr creation or update event to the metadata writer.
 	///
 	/// Called when an xattr is created or its value is modified. The event writes

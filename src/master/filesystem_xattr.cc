@@ -137,25 +137,26 @@ void xattr_recalculate_checksum() {
 
 void xattr_removeinode(inode_t inode, bool emitSignals) {
 	XAttributeInodeEntry *xattrInodeEntry = nullptr;
-	bool hadEntries = false;
 
 	auto hash = get_xattr_inode_hash(inode);
 	auto &bucket = gMetadata->xattrInodeHash[hash];
 	for (auto attributeIterator = bucket.begin(); attributeIterator != bucket.end();) {
 		xattrInodeEntry = attributeIterator->get();
 		if (xattrInodeEntry->inode == inode) {
-			hadEntries = true;
 			while (!xattrInodeEntry->xattrDataEntries.empty()) {
-				xattr_removeentry(xattrInodeEntry, xattrInodeEntry->xattrDataEntries.front());
+				auto *entry = xattrInodeEntry->xattrDataEntries.front();
+				// Emit before erasing: each queued event owns its name and retains deletion order.
+				// Per-key undo capture can be split across bounded FDB transactions.
+				if (emitSignals && gXAttrRemovedSignal.size() > 0) {
+					gXAttrRemovedSignal.emit(inode, xattrBytesView(entry->attributeName.data(),
+					                                                  entry->attributeName.size()));
+				}
+				xattr_removeentry(xattrInodeEntry, entry);
 			}
 			attributeIterator = bucket.erase(attributeIterator);
 		} else {
 			++attributeIterator;
 		}
-	}
-
-	if (hadEntries && emitSignals) {
-		gXAttrInodeRemovedSignal.emit(inode);
 	}
 }
 

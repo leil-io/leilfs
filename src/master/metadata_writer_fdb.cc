@@ -379,38 +379,6 @@ void XAttrRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	context.transaction->remove(key);
 }
 
-XAttrInodeRemoveEvent::XAttrInodeRemoveEvent(inode_t _inode) : inode(_inode) {}
-
-void XAttrInodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
-	if (context.transaction == nullptr) {
-		safs::log_err("XAttrInodeRemoveEvent requires a valid transaction in the context");
-		return;
-	}
-
-	// Remove all keys with prefix XATR_<inode>. Use prefixEnd() for the exclusive
-	// upper bound so a max-valued inode cannot overflow inode+1 and produce an
-	// invalid range.
-	auto startKey = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
-	auto endKey = kv::prefixEnd(startKey);
-
-	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
-		MetadataMutation mutation = XAttrRangeRemoveMutation{
-		    .inode = inode,
-		    .rangeBegin = startKey,
-		    .rangeEnd = endKey,
-		};
-
-		context.checkpointManager->recordPreMutation(
-		    MetadataMutationContext{
-		        .transaction = context.transaction,
-		        .checkpointVersion = context.checkpointVersion,
-		    },
-		    mutation);
-	}
-
-	context.transaction->removeRange(startKey, endKey);
-}
-
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine,
                                      MetadataCheckpointManager *checkpointManager,
                                      size_t backlogHighWatermark)

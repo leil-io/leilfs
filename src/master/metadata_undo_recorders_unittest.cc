@@ -891,3 +891,33 @@ TEST(MetadataUndoRecorderRetry, XAttrPreservesOriginalPreimage) {
 	    });
 	EXPECT_EQ(engine.store().at(liveKey), laterValue);
 }
+
+TEST(MetadataUndoRecorderRetry, XAttrRemovalPreservesOriginalPreimage) {
+	RecordingKVEngine engine;
+	XAttrUndoRecorder recorder(&engine);
+
+	constexpr inode_t kInode = 48;
+	const std::vector<uint8_t> name{'u', 's', 'e', 'r', '.', 'g', 'o', 'n', 'e'};
+	kv::Key liveKey = kv::encodeKeyBE(kXAttrKeyPrefix, kInode);
+	liveKey.insert(liveKey.end(), name.begin(), name.end());
+	kv::Key undoKey = kv::encodeKeyBE(kXAttrUndoKeyPrefix, kCheckpointVersion, kInode);
+	undoKey.insert(undoKey.end(), name.begin(), name.end());
+	const kv::Value originalValue{0x10, 0x11, 0x12};
+	kv::Value expectedUndoValue{0x01};
+	expectedUndoValue.insert(expectedUndoValue.end(), originalValue.begin(), originalValue.end());
+	engine.store()[liveKey] = originalValue;
+
+	// Inode cleanup now emits one removal per name. A failed batch must not poison its retry,
+	// and a later removal must not replace the original pre-image with a tombstone.
+	const MetadataMutation mutation = XAttrRemoveMutation{
+	    .inode = kInode,
+	    .name = name,
+	    .liveKey = liveKey,
+	};
+	expectFailedFirstTouchRetryPreservesPreimage(
+	    recorder, engine.store(), mutation, undoKey, expectedUndoValue,
+	    [&](RecordingTransaction &transaction, bool /*laterMutation*/) {
+		    transaction.remove(liveKey);
+	    });
+	EXPECT_FALSE(engine.store().contains(liveKey));
+}

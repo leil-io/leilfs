@@ -181,8 +181,7 @@ void MetadataCheckpointManager::recordPreMutation(const MetadataMutationContext 
 		                         std::is_same_v<T, DetachedPathRemoveMutation>) {
 			    return MetadataSectionKind::Edge;
 		    } else if constexpr (std::is_same_v<T, XAttrSetMutation> ||
-		                         std::is_same_v<T, XAttrRemoveMutation> ||
-		                         std::is_same_v<T, XAttrRangeRemoveMutation>) {
+		                         std::is_same_v<T, XAttrRemoveMutation>) {
 			    return MetadataSectionKind::XAttr;
 		    } else {
 			    // Force a compile error if a new MetadataMutation alternative is added

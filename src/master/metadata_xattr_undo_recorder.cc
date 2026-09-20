@@ -84,18 +84,6 @@ bool decodeXAttrUndoKey(const kv::Key &key, inode_t &inode, std::vector<uint8_t>
 	return true;
 }
 
-// Live key format: XATR_ + <inode:inode_t> + <name>
-bool decodeLiveXAttrKey(const kv::Key &key, inode_t &inode, std::vector<uint8_t> &name) {
-	const size_t fixedSize = kXAttrKeyPrefix.size() + sizeof(inode_t);
-	if (!startsWith(key, kXAttrKeyPrefix) || key.size() <= fixedSize) { return false; }
-
-	const uint8_t *ptr = key.data() + kXAttrKeyPrefix.size();
-	getINode(&ptr, inode);
-
-	name.assign(key.data() + fixedSize, key.data() + key.size());
-	return true;
-}
-
 }  // namespace
 
 XAttrUndoRecorder::XAttrUndoRecorder(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {}
@@ -111,11 +99,6 @@ void XAttrUndoRecorder::beforeMutation(const MetadataMutationContext &context,
 
 	if (const auto *xattrRemove = std::get_if<XAttrRemoveMutation>(&mutation)) {
 		beforeXAttrKey(context, xattrRemove->inode, xattrRemove->name, xattrRemove->liveKey);
-		return;
-	}
-
-	if (const auto *xattrRange = std::get_if<XAttrRangeRemoveMutation>(&mutation)) {
-		beforeXAttrRange(context, xattrRange->rangeBegin, xattrRange->rangeEnd);
 		return;
 	}
 
@@ -235,32 +218,6 @@ void XAttrUndoRecorder::beforeXAttrKey(const MetadataMutationContext &context, i
 	if (context.checkpointVersion == 0) { return; }
 
 	recordXAttrUndo(context.transaction, context.checkpointVersion, inode, name, liveKey);
-}
-
-void XAttrUndoRecorder::beforeXAttrRange(const MetadataMutationContext &context,
-                                         const kv::Key &rangeBegin, const kv::Key &rangeEnd) {
-	if (context.checkpointVersion == 0) { return; }
-
-	// Record the pre-image of every live xattr of the inode before the inode-wide removal.
-	kv::KeySelector startSelector(rangeBegin, true, 0);
-	kv::KeySelector endSelector(rangeEnd, true, 0);
-
-	while (true) {
-		auto page =
-		    context.transaction->getRange(startSelector, endSelector, kv::kDefaultGetRangeLimit);
-
-		for (const auto &pair : page.getPairs()) {
-			inode_t inode = 0;
-			std::vector<uint8_t> name;
-			if (!decodeLiveXAttrKey(pair.key, inode, name)) { continue; }
-
-			recordXAttrUndo(context.transaction, context.checkpointVersion, inode, name, pair.key);
-		}
-
-		if (!page.hasMore() || page.getPairs().empty()) { break; }
-
-		startSelector = kv::KeySelector(page.getPairs().back().key, false, 0);
-	}
 }
 
 void XAttrUndoRecorder::recordXAttrUndo(kv::IReadWriteTransaction *transaction,

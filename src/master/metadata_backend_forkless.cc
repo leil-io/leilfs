@@ -400,12 +400,6 @@ void MetadataBackendForkless::onDetachedPathRemoved(inode_t inode) {
 	}
 }
 
-void MetadataBackendForkless::onXAttrInodeRemoved(inode_t inode) {
-	if (metadataWriter_) {
-		metadataWriter_->enqueue(std::make_unique<XAttrInodeRemoveEvent>(inode));
-	}
-}
-
 void MetadataBackendForkless::onXAttrChanged(inode_t inode, std::span<const uint8_t> name,
                                              std::span<const uint8_t> value) {
 	if (metadataWriter_) {
@@ -1441,10 +1435,6 @@ void MetadataBackendForkless::connectGlobalSignalsOnce() {
 	// removal. Guarded on metadataWriter_ like the update handler above.
 	gChunkRemovedSignal.connect([](uint64_t chunkId) {
 		if (gForklessBackend != nullptr) { gForklessBackend->onChunkRemoved(chunkId); }
-	});
-
-	gXAttrInodeRemovedSignal.connect([](inode_t inode) {
-		if (gForklessBackend != nullptr) { gForklessBackend->onXAttrInodeRemoved(inode); }
 	});
 
 	gXAttrChangedSignal.connect(

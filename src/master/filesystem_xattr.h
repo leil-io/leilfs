@@ -108,9 +108,6 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
                       uint32_t attributeValueLength, const uint8_t *attributeValueBuffer,
                       uint8_t mode, bool emitSignals = true);
 
-/// Signal emitted when all xattrs for an inode are removed (node deletion cleanup).
-inline Signal<inode_t> gXAttrInodeRemovedSignal;
-
 /// Signal emitted when an xattr is created or its value is updated.
 /// Parameters: inode, attributeName bytes, attributeValue bytes.
 inline Signal<inode_t, std::span<const uint8_t>, std::span<const uint8_t>> gXAttrChangedSignal;

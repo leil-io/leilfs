@@ -68,13 +68,12 @@ public:
 
 	/// Records the pre-image of an xattr mutation before its live key(s) are written or removed.
 	///
-	/// Handles XAttrSetMutation and XAttrRemoveMutation (one xattr) and XAttrRangeRemoveMutation
-	/// (all xattrs of an inode, e.g. on node deletion); any other variant is logged and ignored.
+	/// Handles XAttrSetMutation and XAttrRemoveMutation (one xattr); other variants are ignored.
 	/// No-op when context.transaction is null or context.checkpointVersion is 0 (e.g. bootstrap).
 	/// Only the first touch of each xattr per interval is recorded.
 	///
 	/// @param context  Active write transaction and current checkpoint version of the flush.
-	/// @param mutation Must hold an XAttrSetMutation, XAttrRemoveMutation or XAttrRangeRemoveMutation.
+	/// @param mutation Must hold an XAttrSetMutation or XAttrRemoveMutation.
 	void beforeMutation(const MetadataMutationContext &context,
 	                    const MetadataMutation &mutation) override;
 
@@ -121,11 +120,6 @@ private:
 	/// as the first-touch guard. Shared by the set and single-remove mutation paths.
 	void beforeXAttrKey(const MetadataMutationContext &context, inode_t inode,
 	                    std::span<const uint8_t> name, const kv::Key &liveKey);
-
-	/// Records the pre-image of every live xattr of an inode before an inode-wide removal, by
-	/// scanning the [rangeBegin, rangeEnd) live range inside the write transaction.
-	void beforeXAttrRange(const MetadataMutationContext &context, const kv::Key &rangeBegin,
-	                      const kv::Key &rangeEnd);
 
 	/// Writes the undo row for (inode, name) under checkpointVersion, copying the current live
 	/// value (prefixed with a 0x01 presence byte) or a single 0x00 tombstone byte when the live
