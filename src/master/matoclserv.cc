@@ -5106,6 +5106,8 @@ void matoclserv_fuse_getxattr(matoclserventry *eptr, const uint8_t *data, uint32
 		eptr->mode = ClientConnectionMode::KILL;
 		return;
 	}
+	// An empty name is a listing request, as in the client's listxattr.
+	safs::log_trace("master.cltoma_fuse_getxattr: {} {}", inode, anleng);
 
 	status = matoclserv_check_group_cache(eptr, gid);
 
