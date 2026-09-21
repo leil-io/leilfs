@@ -30,26 +30,12 @@
 #include "master/metadata_node_restore_helpers.h"
 
 namespace {
-/// File-like node types share open-file/quota handling: regular files plus their trash and
-/// reserved variants.
-bool isFileLikeNode(FSNodeType type) {
-	return type == FSNodeType::kFile || type == FSNodeType::kTrash || type == FSNodeType::kReserved;
-}
-
-/// Whether a current node may be replaced by a restored node of a given type. Types must match
-/// exactly, or both be file-like (a file may move between regular/trash/reserved across a
-/// rollback boundary).
-bool areCompatibleForRestore(FSNodeType currentType, FSNodeType restoredType) {
-	auto areBothFileLike = isFileLikeNode(currentType) && isFileLikeNode(restoredType);
-	return currentType == restoredType || areBothFileLike;
-}
-
 /// Enforces the node-only replacement contract and carries over edge-owned directory state.
 ///
-/// Rejects the replacement when the current node still has parent links, or (for a
-/// directory->directory replacement) when the current directory still has entries: both are
-/// EDGE-section state that node restore must not touch. On success the restored directory
-/// inherits the current directory's caseInsensitive flag.
+/// Rejects the replacement when the current node still has parent links, or when the current
+/// directory still has entries: both are EDGE-section state that node restore must not touch. On
+/// a directory-to-directory replacement, the restored directory inherits the current directory's
+/// caseInsensitive flag.
 ///
 /// @return kOpSuccess when replacement is allowed, kOpFailure when edge-owned state is attached.
 int8_t restoreParentsAndSectionLocalState(FSNode *currentNode, FSNode *restoredNode) {
@@ -59,10 +45,8 @@ int8_t restoreParentsAndSectionLocalState(FSNode *currentNode, FSNode *restoredN
 		return kOpFailure;
 	}
 
-	if (currentNode->type == FSNodeType::kDirectory &&
-	    restoredNode->type == FSNodeType::kDirectory) {
+	if (currentNode->type == FSNodeType::kDirectory) {
 		auto *currentDir = static_cast<FSNodeDirectory *>(currentNode);
-		auto *restoredDir = static_cast<FSNodeDirectory *>(restoredNode);
 
 		if (!currentDir->entries.empty() || !currentDir->lowerCaseEntries.empty()) {
 			safs::log_err(
@@ -71,7 +55,10 @@ int8_t restoreParentsAndSectionLocalState(FSNode *currentNode, FSNode *restoredN
 			return kOpFailure;
 		}
 
-		restoredDir->caseInsensitive = currentDir->caseInsensitive;
+		if (restoredNode->type == FSNodeType::kDirectory) {
+			auto *restoredDir = static_cast<FSNodeDirectory *>(restoredNode);
+			restoredDir->caseInsensitive = currentDir->caseInsensitive;
+		}
 	}
 
 	return kOpSuccess;
@@ -218,18 +205,12 @@ int8_t restoreLoadedNode(const FilesystemOperationContext &fsOpContext, FSNode *
 
 	if (currentNode == nullptr) { return insertLoadedNode(fsOpContext, restoredNode); }
 
-	if (!areCompatibleForRestore(currentNode->type, restoredNode->type)) {
-		safs::log_err("{}: incompatible type replacement for inode {}", __func__, restoredNode->id);
-		FSNode::destroy(restoredNode);
-		return kOpFailure;
-	}
-
 	auto stateStatus = restoreParentsAndSectionLocalState(currentNode, restoredNode);
 
-	 if (stateStatus != kOpSuccess) {
-        FSNode::destroy(restoredNode);
-        return stateStatus;
-    }
+	if (stateStatus != kOpSuccess) {
+		FSNode::destroy(restoredNode);
+		return stateStatus;
+	}
 
 	detachLoadedNodeAccounting(fsOpContext, currentNode);
 	removeNodeFromHash(currentNode);

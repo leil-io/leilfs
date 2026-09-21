@@ -50,15 +50,16 @@ int8_t insertLoadedNode(const FilesystemOperationContext &fsOpContext, FSNode *n
 /// Restores a node pre-image, inserting it when absent or replacing the existing node in place.
 ///
 /// When no node with restoredNode->id exists, behaves like insertLoadedNode(). Otherwise the
-/// existing node is replaced only if the types are compatible (equal, or both file-like) and
-/// the replacement is node-only: the current node must have no parent links, and a directory
-/// must have no edge-owned entries. The current node's accounting is detached and it is
-/// destroyed; the restored node's accounting is attached and it is inserted. The caseInsensitive
-/// flag is carried over for directories. restoredNode is destroyed on any failure.
+/// existing node is replaced when the replacement is node-only: the current node must have no
+/// parent links, and a directory must have no edge-owned entries. Its type may differ because an
+/// inode released after the checkpoint can be reused for a new incarnation before recovery. The
+/// current node's accounting is detached and it is destroyed; the restored node's accounting is
+/// attached and it is inserted. The caseInsensitive flag is carried over when both incarnations
+/// are directories. restoredNode is destroyed on any failure.
 ///
 /// @param fsOpContext  Filesystem operation context.
 /// @param restoredNode Deserialized pre-image to restore. Ownership is consumed in all paths.
-/// @return kOpSuccess on success, kOpFailure on incompatible type or attached edge-owned state.
+/// @return kOpSuccess on success, kOpFailure when edge-owned state is still attached.
 int8_t restoreLoadedNode(const FilesystemOperationContext &fsOpContext, FSNode *restoredNode);
 
 /// Removes a node that the rollback determined should not exist at the target checkpoint.

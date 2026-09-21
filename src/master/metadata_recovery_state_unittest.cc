@@ -45,6 +45,8 @@
 #include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_edge_restore_helpers.h"
 #include "master/metadata_edge_undo_recorder.h"
+#include "master/metadata_node_restore_helpers.h"
+#include "master/metadata_node_undo_recorder.h"
 
 namespace {
 
@@ -132,6 +134,116 @@ kv::Value detachedPathUndoValue(FSNodeType nodeType, std::string_view path) {
 	kv::Value value{static_cast<uint8_t>(nodeType)};
 	value.insert(value.end(), path.begin(), path.end());
 	return value;
+}
+
+kv::Value serializedNode(const FSNode &node) {
+	kv::Value value(node.serializedSize());
+	uint8_t *destination = value.data();
+	node.serialize(&destination);
+	return value;
+}
+
+class NodeRecoveryStateTest : public ::testing::Test {
+protected:
+	void SetUp() override {
+		previousMetadata_ = gMetadata;
+		previousFSOperations_ = std::move(gFSOperations);
+
+		gMetadata = new FilesystemMetadata;
+		hstorage::Storage::reset(new hstorage::MemStorage());
+		gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		    std::make_unique<FilesystemNodeOperationsBase>());
+
+		engine_.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		    checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+	}
+
+	void TearDown() override {
+		gFSOperations.reset();
+		delete gMetadata;
+		gMetadata = previousMetadata_;
+		gFSOperations = std::move(previousFSOperations_);
+	}
+
+	void addLiveNode(FSNode *node) {
+		ASSERT_EQ(metadata::nodes::insertLoadedNode(context_, node), kOpSuccess);
+	}
+
+	void setNodePreimage(const FSNode &node) {
+		engine_.store()[
+		    kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, node.id)] =
+		    serializedNode(node);
+	}
+
+	static constexpr uint64_t kCheckpointVersion = 17;
+
+	FilesystemMetadata *previousMetadata_ = nullptr;
+	std::unique_ptr<IFilesystemOperations> previousFSOperations_;
+	FilesystemOperationContext context_;
+	StoreKVEngine engine_;
+};
+
+TEST_F(NodeRecoveryStateTest, RestoresReusedInodeAcrossNodeTypes) {
+	constexpr inode_t kReusedInode = 41;
+	constexpr uint64_t kCheckpointLength = 4096;
+
+	// The latest live image contains a newer directory incarnation of this inode. NODE rollback
+	// runs before EDGE loading, so it has no attached topology and can be safely replaced by the
+	// regular-file incarnation recorded at the checkpoint.
+	auto *latestDirectory = new FSNodeDirectory;
+	latestDirectory->id = kReusedInode;
+	addLiveNode(latestDirectory);
+
+	FSNodeFile checkpointFile(FSNodeType::kFile);
+	checkpointFile.id = kReusedInode;
+	checkpointFile.length = kCheckpointLength;
+	setNodePreimage(checkpointFile);
+
+	NodeUndoRecorder recorder(&engine_);
+	ASSERT_TRUE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+
+	FSNode *restoredNode =
+	    gFSOperations->nodeOperations()->idToNode(context_, kReusedInode);
+	ASSERT_NE(restoredNode, nullptr);
+	ASSERT_EQ(restoredNode->type, FSNodeType::kFile);
+	EXPECT_EQ(static_cast<FSNodeFile *>(restoredNode)->length, kCheckpointLength);
+	EXPECT_EQ(gMetadata->nodes, 1U);
+	EXPECT_EQ(gMetadata->dirNodes, 0U);
+	EXPECT_EQ(gMetadata->fileNodes, 1U);
+}
+
+TEST_F(NodeRecoveryStateTest, RejectsCrossTypeReplacementWithDirectoryEntries) {
+	constexpr inode_t kReusedInode = 41;
+	constexpr inode_t kChildInode = 42;
+
+	// Cross-type replacement must not discard EDGE-owned state. This deliberately models a caller
+	// presenting a directory after its entries were attached; the NODE helper must reject it even
+	// though normal forkless loading restores nodes before edges.
+	auto *latestDirectory = new FSNodeDirectory;
+	latestDirectory->id = kReusedInode;
+	addLiveNode(latestDirectory);
+	auto *childFile = new FSNodeFile(FSNodeType::kFile);
+	childFile->id = kChildInode;
+	addLiveNode(childFile);
+	ASSERT_EQ(metadata::edges::restoreLoadedEdge(context_, kReusedInode, kChildInode,
+	                                            HString("child")),
+	          kOpSuccess);
+
+	FSNodeFile checkpointFile(FSNodeType::kFile);
+	checkpointFile.id = kReusedInode;
+	setNodePreimage(checkpointFile);
+
+	NodeUndoRecorder recorder(&engine_);
+	EXPECT_FALSE(recorder.restoreToCheckpointVersion(kCheckpointVersion));
+
+	FSNode *currentNode =
+	    gFSOperations->nodeOperations()->idToNode(context_, kReusedInode);
+	ASSERT_EQ(currentNode, latestDirectory);
+	ASSERT_EQ(currentNode->type, FSNodeType::kDirectory);
+	auto *currentDirectory = static_cast<FSNodeDirectory *>(currentNode);
+	auto child = currentDirectory->find(HString("child"));
+	ASSERT_NE(child, currentDirectory->entries.end());
+	EXPECT_EQ(child->second, childFile);
 }
 
 // This test models a hierarchy inversion between a sealed checkpoint and the latest live image
