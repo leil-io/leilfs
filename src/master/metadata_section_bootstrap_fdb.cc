@@ -114,8 +114,10 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	return true;
 }
 
-// Imports each metadata section from metadata.sfs into FDB, then writes META_HEADER last so a
-// partially bootstrapped store is never mistaken for a complete one.
+// Imports each metadata section from metadata.sfs into a headerless FDB store, then writes
+// META_HEADER last so a partially bootstrapped store is never mistaken for a complete one. Once
+// META_HEADER exists, FDB is authoritative even when one of its section keyspaces is empty; a
+// metadata.sfs image must never repopulate such a section.
 //
 // Crash/failure recovery (intentionally NOT atomic — bootstrap is a one-time migration):
 // sections are committed in batches before saveMetadataHeader() runs, so if bootstrap stops
@@ -125,6 +127,18 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 // keyspace used by this master (drop the section-prefix keys, or wipe/recreate the FDB
 // directory) so the store is truly empty; bootstrap then re-runs cleanly from metadata.sfs.
 bool MetadataSectionBootstrapFDB::bootstrapSections() {
+	if (kvEngine_ == nullptr) {
+		safs::log_err("{}: Cannot bootstrap metadata sections without an FDB engine", __func__);
+		return false;
+	}
+
+	auto transaction = kvEngine_->createReadOnlyTransaction();
+	if (transaction->get(kv::toBytes(kMetaHeaderKey)).has_value()) {
+		safs::log_info("{}: Skipping metadata file bootstrap because FDB is already initialized",
+		               __func__);
+		return false;
+	}
+
 	safs::log_info("{}: Bootstrapping metadata sections from file into FDB backend", __func__);
 	if (!prepare(kMetadataFilename)) { return false; }
 
@@ -147,10 +161,9 @@ bool MetadataSectionBootstrapFDB::bootstrapSections() {
 int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
 	auto transaction = kvEngine_->createReadWriteTransaction();
 	if (transaction->get(kv::toBytes(kMetaHeaderKey)).has_value()) {
-		// A missing section can trigger a partial bootstrap for an already initialized store.
-		// Preserve its checkpoint descriptor and catalog instead of replacing them with the
-		// potentially older metadata.sfs values used to restore the section.
-		safs::log_info("Preserving initialized FDB metadata header after partial bootstrap");
+		// Defensive race check: never replace a descriptor and checkpoint catalog that appeared
+		// after bootstrap eligibility was checked with values from metadata.sfs.
+		safs::log_info("Preserving FDB metadata header created while bootstrap was in progress");
 		return kOpSuccess;
 	}
 
@@ -350,9 +363,9 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 
 	auto transaction = kvEngine_->createReadWriteTransaction();
 	if (transaction->get(kv::toBytes(kMetaHeaderKey)).has_value()) {
-		// On a partial bootstrap, the existing checkpoint descriptor remains authoritative.
-		// Only the missing chunk rows imported above belong to this operation.
-		safs::log_info("Preserving initialized FDB chunk metadata after partial bootstrap");
+		// Defensive race check: preserve authoritative chunk metadata if another initializer
+		// published META_HEADER after bootstrap eligibility was checked.
+		safs::log_info("Preserving FDB chunk metadata initialized while bootstrap was in progress");
 		return kOpSuccess;
 	}
 

@@ -379,8 +379,8 @@ TEST(MetadataSectionBootstrapFDBTest, PreservesInitializedStoreMetadata) {
 	constexpr uint32_t kCurrentNextSessionId = 17;
 	const std::vector<uint64_t> currentCheckpointVersions{200, kCurrentVersion};
 
-	// An empty section can request an import even after the store has advanced beyond the source
-	// metadata.sfs image. The partial import must leave the initialized store descriptor and its
+	// Header finalization is also guarded against another initializer publishing META_HEADER after
+	// bootstrap eligibility was checked. It must leave that initialized store descriptor and its
 	// retained-checkpoint catalog untouched.
 	engine.store()[kv::toBytes(kMetaHeaderKey)] = kv::toBytes(SFSSIGNATURE "M 2.9");
 	engine.store()[kv::toBytes(kMetaFormatKey)] = kv::toBytes("1.0");
