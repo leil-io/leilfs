@@ -112,6 +112,11 @@ vcpkg_installed
 # leilfs-api (Go) #
 ##############
 /api/
+src/api
+src/common-go
+src/leil-admin-go
+src/leil-go
+src/leil-monitoring
 tests/test_suites/API_tests
 
 # CMake #
