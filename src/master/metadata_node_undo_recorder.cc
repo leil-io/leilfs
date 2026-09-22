@@ -27,6 +27,7 @@
 
 #include "common/datapack.h"
 #include "kv/kv_utils.h"
+#include "master/filesystem_operations_interface.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_checkpoint_helpers.h"
@@ -143,6 +144,7 @@ void NodeUndoRecorder::beforeMutation(const MetadataMutationContext &context,
 bool NodeUndoRecorder::restoreToCheckpointVersion(uint64_t targetVersion) {
 	// Fresh per-load record of inodes this rollback deletes (consumed by the forkless edge load).
 	removedDuringRestore_.clear();
+	discardedDirectoriesDuringRestore_.clear();
 
 	auto retainedCheckpointVersions = checkpoints::loadCheckpointVersions(kvEngine_);
 	if (retainedCheckpointVersions.empty()) {
@@ -288,7 +290,11 @@ void NodeUndoRecorder::recordNodeUndoRemove(kv::IReadWriteTransaction *transacti
 bool NodeUndoRecorder::applyNodeUndoEntry(const FilesystemOperationContext &fsOpContext, inode_t nodeId,
 	                        const kv::Value &undoValue) {
 	if (undoValue.empty()) {
+		FSNode *currentNode = gFSOperations->nodeOperations()->idToNode(fsOpContext, nodeId);
+		const bool discardedDirectory =
+		    currentNode != nullptr && currentNode->type == FSNodeType::kDirectory;
 		if (metadata::nodes::removeLoadedNode(fsOpContext, nodeId) != kOpSuccess) { return false; }
+		if (discardedDirectory) { discardedDirectoriesDuringRestore_.insert(nodeId); }
 		// Track the deletion so the forkless edge load can skip live edges that point at this
 		// rolled-back inode instead of failing the EDGE section load.
 		removedDuringRestore_.insert(nodeId);
@@ -316,5 +322,17 @@ bool NodeUndoRecorder::applyNodeUndoEntry(const FilesystemOperationContext &fsOp
 		return false;
 	}
 
-	return metadata::nodes::restoreLoadedNode(fsOpContext, node) == kOpSuccess;
+	FSNode *currentNode = gFSOperations->nodeOperations()->idToNode(fsOpContext, nodeId);
+	const bool discardedDirectory =
+	    currentNode != nullptr && currentNode->type == FSNodeType::kDirectory;
+	const bool restoredDirectory = type == FSNodeType::kDirectory;
+	if (metadata::nodes::restoreLoadedNode(fsOpContext, node) != kOpSuccess) { return false; }
+	if (restoredDirectory) {
+		// A still-present checkpoint directory may legitimately own edges. Do not suppress them
+		// based on an intermediate incarnation discarded while traversing newer checkpoints.
+		discardedDirectoriesDuringRestore_.erase(nodeId);
+	} else if (discardedDirectory) {
+		discardedDirectoriesDuringRestore_.insert(nodeId);
+	}
+	return true;
 }

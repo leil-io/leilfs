@@ -48,6 +48,7 @@
 #include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_chunk_undo_recorder.h"
 #include "master/metadata_edge_undo_recorder.h"
+#include "master/metadata_node_restore_helpers.h"
 #include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_section_bootstrap_fdb.h"
 #include "master/metadata_xattr_undo_recorder.h"
@@ -68,6 +69,17 @@ struct MetadataBackendForklessTestAccess {
 
 	static bool restoreEdges(MetadataBackendForkless &backend, uint64_t checkpointVersion) {
 		return backend.restoreEdgesToCheckpointVersion(checkpointVersion) == kOpSuccess;
+	}
+
+	static bool restoreNodes(MetadataBackendForkless &backend, uint64_t checkpointVersion) {
+		return backend.checkpointManager_->restoreSectionToCheckpointVersion(
+		    MetadataSectionKind::Node, checkpointVersion);
+	}
+
+	static int8_t loadEdge(MetadataBackendForkless &backend, inode_t parentId, inode_t childId,
+	                       const std::string &name) {
+		return backend.loadEdge(FilesystemOperationContext{}, parentId, childId, name,
+		                        /*ignoreFlag=*/false, /*init=*/false);
 	}
 };
 
@@ -227,6 +239,132 @@ public:
 private:
 	DurableStore store_;
 };
+
+// Inode 41 was a file at checkpoint 17, then was deleted and reused as a directory. That
+// directory contained an existing file (inode 42) at checkpoint 18 and later renamed its edge.
+// NODE rollback restores inode 41 as a file, but the latest EDGE_ row and checkpoint 18's valid
+// intermediate edge pre-image still describe the later directory. Neither may be attached to the
+// checkpoint-17 file. The EDGEU_17 tombstone confirms it had no such edge at the target boundary.
+// This exercises the complete NODE -> live EDGE -> EDGE undo sequence, not just node replacement.
+TEST(MetadataBackendForklessTest, RestoresEdgesAfterDirectoryInodeReusedFromFile) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    constexpr inode_t kReusedInode = 41;
+		    constexpr inode_t kExistingChild = 42;
+		    constexpr uint64_t kCheckpointVersion = 17;
+		    constexpr uint64_t kNewerCheckpointVersion = 18;
+		    const std::string intermediateName("child");
+		    const std::string latestName("renamed");
+		    const FilesystemOperationContext context;
+
+		    auto *latestDirectory = new FSNodeDirectory;
+		    latestDirectory->id = kReusedInode;
+		    auto *existingChild = new FSNodeFile(FSNodeType::kFile);
+		    existingChild->id = kExistingChild;
+		    if (metadata::nodes::insertLoadedNode(context, latestDirectory) != kOpSuccess ||
+		        metadata::nodes::insertLoadedNode(context, existingChild) != kOpSuccess) {
+			    std::_Exit(1);
+		    }
+
+		    FSNodeFile checkpointFile(FSNodeType::kFile);
+		    checkpointFile.id = kReusedInode;
+		    kv::Value checkpointNode(checkpointFile.serializedSize());
+		    uint8_t *destination = checkpointNode.data();
+		    checkpointFile.serialize(&destination);
+
+		    RecordingKVEngine engine;
+		    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		        checkpoints::serializeCheckpointVersions({kCheckpointVersion,
+		                                                   kNewerCheckpointVersion});
+		    engine.store()[kv::encodeKeyBE(kNodeUndoKeyPrefix, kCheckpointVersion, kReusedInode)] =
+		        checkpointNode;
+		    kv::Key edgeUndoKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, kReusedInode);
+		    edgeUndoKey.insert(edgeUndoKey.end(), intermediateName.begin(), intermediateName.end());
+		    engine.store()[edgeUndoKey] = {};  // Inode 41 was a file at checkpoint 17.
+		    kv::Key intermediateUndoKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kNewerCheckpointVersion, kReusedInode);
+		    intermediateUndoKey.insert(intermediateUndoKey.end(), intermediateName.begin(),
+		                               intermediateName.end());
+		    engine.store()[intermediateUndoKey] = kv::toBytesBE(kExistingChild);
+		    kv::Key latestUndoKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kNewerCheckpointVersion, kReusedInode);
+		    latestUndoKey.insert(latestUndoKey.end(), latestName.begin(), latestName.end());
+		    engine.store()[latestUndoKey] = {};  // The rename created this latest edge.
+
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::prepareCheckpointLoad(backend, &engine,
+		                                                             kCheckpointVersion);
+		    if (!MetadataBackendForklessTestAccess::restoreNodes(backend, kCheckpointVersion)) {
+			    std::_Exit(2);
+		    }
+		    FSNode *restoredNode =
+		        gFSOperations->nodeOperations()->idToNode(context, kReusedInode);
+		    if (restoredNode == nullptr || restoredNode->type != FSNodeType::kFile) { std::_Exit(3); }
+
+		    if (MetadataBackendForklessTestAccess::loadEdge(backend, kReusedInode, kExistingChild,
+		                                                    latestName) != kOpSuccess) {
+			    std::_Exit(4);
+		    }
+		    if (!MetadataBackendForklessTestAccess::restoreEdges(backend, kCheckpointVersion)) {
+			    std::_Exit(5);
+		    }
+		    if (!existingChild->parents.empty() || gMetadata->nodes != 2 || gMetadata->dirNodes != 0) {
+			    std::_Exit(6);
+		    }
+		    std::_Exit(0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
+
+// A file parent with an EDGE_ row is still corruption when NODE rollback has not proven that a
+// later directory incarnation was discarded. Neither live loading nor EDGE undo may silently
+// accept it merely because the current parent is not a directory.
+TEST(MetadataBackendForklessTest, RejectsUnprovenEdgeUnderFileParent) {
+	EXPECT_EXIT(
+	    {
+		    hstorage::Storage::reset(new hstorage::MemStorage());
+		    gMetadata = new FilesystemMetadata;
+		    gFSOperations = std::make_unique<FilesystemOperationsBase>(
+		        std::make_unique<FilesystemNodeOperationsBase>());
+
+		    constexpr inode_t kFileParent = 41;
+		    constexpr inode_t kExistingChild = 42;
+		    constexpr uint64_t kCheckpointVersion = 17;
+		    const std::string childName("child");
+		    const FilesystemOperationContext context;
+		    for (inode_t inode : {kFileParent, kExistingChild}) {
+			    auto *file = new FSNodeFile(FSNodeType::kFile);
+			    file->id = inode;
+			    if (metadata::nodes::insertLoadedNode(context, file) != kOpSuccess) { std::_Exit(1); }
+		    }
+
+		    RecordingKVEngine engine;
+		    engine.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+		        checkpoints::serializeCheckpointVersions({kCheckpointVersion});
+		    kv::Key edgeUndoKey =
+		        kv::encodeKeyBE(kEdgeUndoKeyPrefix, kCheckpointVersion, kFileParent);
+		    edgeUndoKey.insert(edgeUndoKey.end(), childName.begin(), childName.end());
+		    engine.store()[edgeUndoKey] = {};
+
+		    MetadataBackendForkless backend;
+		    MetadataBackendForklessTestAccess::prepareCheckpointLoad(backend, &engine,
+		                                                             kCheckpointVersion);
+		    if (MetadataBackendForklessTestAccess::loadEdge(backend, kFileParent, kExistingChild,
+		                                                    childName) == kOpSuccess) {
+			    std::_Exit(2);
+		    }
+		    std::_Exit(MetadataBackendForklessTestAccess::restoreEdges(backend, kCheckpointVersion)
+		                   ? 3
+		                   : 0);
+	    },
+	    ::testing::ExitedWithCode(0), "");
+}
 
 // The persisted key is the inode, not the path. Reconstruct two trash nodes carrying the same
 // original path and verify neither overwrites the other in the authoritative trash container.

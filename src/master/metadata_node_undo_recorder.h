@@ -121,6 +121,13 @@ public:
 	/// rollback and changelog replay.
 	const std::unordered_set<uint64_t> &removedDuringRestore() const { return removedDuringRestore_; }
 
+	/// Directory incarnations discarded by the latest node rollback whose target state is not a
+	/// directory. Live edges beneath these inodes belong to later incarnations, and EDGE undo must
+	/// not try to attach them to the restored non-directory node.
+	const std::unordered_set<uint64_t> &discardedDirectoriesDuringRestore() const {
+		return discardedDirectoriesDuringRestore_;
+	}
+
 private:
 	/// Handles a NodeSetMutation: reads the current live value and records either the existing
 	/// node pre-image, or a tombstone when the node is being created. Recorded once per node
@@ -157,4 +164,7 @@ private:
 	/// Inodes deleted during the most recent restoreToCheckpointVersion() (see
 	/// removedDuringRestore()). Cleared at the start of each restore.
 	std::unordered_set<uint64_t> removedDuringRestore_;
+
+	/// Directory incarnations discarded while restoring a non-directory checkpoint state.
+	std::unordered_set<uint64_t> discardedDirectoriesDuringRestore_;
 };

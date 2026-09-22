@@ -29,6 +29,8 @@
 #include "master/hstring.h"
 #include "master/metadata_section_undo_recorder.h"
 
+class NodeUndoRecorder;
+
 /// Section-local undo recorder for directory edges and detached paths.
 ///
 /// The forkless backend keeps only the newest directory topology in the live EDGE_ keys, and
@@ -63,7 +65,11 @@ public:
 	/// Creates a recorder bound to the given key-value engine.
 	/// @param kvEngine Key-value engine used to open transactions during restore and to load the
 	///                 retained checkpoint catalog. Not owned.
-	explicit EdgeUndoRecorder(kv::IKVEngine *kvEngine);
+	/// @param nodeUndoRecorder Optional recorder whose completed NODE rollback identifies later
+	///                         directory incarnations that cannot own edges at the target checkpoint.
+	///                         Not owned.
+	explicit EdgeUndoRecorder(kv::IKVEngine *kvEngine,
+	                          const NodeUndoRecorder *nodeUndoRecorder = nullptr);
 
 	/// @return MetadataSectionKind::Edge, the routing key the checkpoint manager uses to dispatch
 	///         edge mutations and restore requests to this recorder.
@@ -123,6 +129,13 @@ public:
 	void resetIntervalState() override {}
 
 private:
+	/// Applies one interval while knowing the final checkpoint target. Intermediate EDGE pre-images
+	/// beneath discarded directory incarnations are irrelevant; at the target interval such a
+	/// parent may have only tombstone pre-images, because it is not a directory at that boundary.
+	std::pair<uint64_t, bool> restoreSingleCheckpointToTarget(
+	    const FilesystemOperationContext &fsOpContext, uint64_t checkpointVersion,
+	    uint64_t targetVersion);
+
 	/// Records the pre-image for one edge identified by (parentId, name), using the durable undo
 	/// key as the first-touch guard. Shared by the set and remove mutation paths.
 	void beforeEdgeMutation(const MetadataMutationContext &context, inode_t parentId,
@@ -145,6 +158,9 @@ private:
 
 	/// Key-value engine used for all durable undo state. Not owned.
 	kv::IKVEngine *kvEngine_{nullptr};
+
+	/// Completed NODE rollback state shared by the owning checkpoint manager. Not owned.
+	const NodeUndoRecorder *nodeUndoRecorder_{nullptr};
 
 	/// Exact detached-path inodes processed by the current/most recent checkpoint restore.
 	DetachedPathKeySet detachedPathsTouchedDuringRestore_;

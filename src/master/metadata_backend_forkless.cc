@@ -877,14 +877,15 @@ int8_t MetadataBackendForkless::loadEdge(const FilesystemOperationContext &fsOpC
 		return kOpSuccess;
 	}
 
-	// Node rollback removes directories created after the target checkpoint before live EDGE_
-	// rows are loaded. Every edge below such a parent is post-checkpoint drift, even when its
-	// child already existed at the checkpoint (for example, an old file moved into a new
-	// directory). Edge rollback and changelog replay will reconstruct the final topology.
+	// NODE rollback may remove a later directory entirely or replace its reused inode with a
+	// non-directory checkpoint incarnation. In either case live EDGE_ rows beneath that later
+	// directory are post-checkpoint drift, even when their children still exist. EDGE rollback
+	// and changelog replay reconstruct the target and current topology respectively.
 	if (parentId != 0 && checkpointManager_ != nullptr &&
-	    checkpointManager_->nodesRemovedDuringRestore().contains(parentId)) {
-		safs::log_debug("{}: {}, {}->{} skipped: parent removed by node rollback", __func__,
-		               parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
+	    (checkpointManager_->nodesRemovedDuringRestore().contains(parentId) ||
+	     checkpointManager_->directoriesDiscardedDuringRestore().contains(parentId))) {
+		safs::log_debug("{}: {}, {}->{} skipped: parent incarnation discarded by node rollback",
+		               __func__, parentId, gFSOperations->nodeOperations()->escapeName(name), childId);
 		return kOpSuccess;
 	}
 

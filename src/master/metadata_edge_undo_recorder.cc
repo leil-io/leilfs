@@ -34,6 +34,7 @@
 #include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_edge_restore_helpers.h"
 #include "master/metadata_edge_undo_recorder.h"
+#include "master/metadata_node_undo_recorder.h"
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
@@ -106,7 +107,9 @@ kv::Value detachedPathUndoValue(FSNodeType nodeType, const kv::Value &path) {
 
 }  // namespace
 
-EdgeUndoRecorder::EdgeUndoRecorder(kv::IKVEngine *kvEngine) : kvEngine_(kvEngine) {}
+EdgeUndoRecorder::EdgeUndoRecorder(kv::IKVEngine *kvEngine,
+                                   const NodeUndoRecorder *nodeUndoRecorder)
+    : kvEngine_(kvEngine), nodeUndoRecorder_(nodeUndoRecorder) {}
 
 void EdgeUndoRecorder::beforeMutation(const MetadataMutationContext &context,
                                       const MetadataMutation &mutation) {
@@ -166,8 +169,8 @@ bool EdgeUndoRecorder::restoreToCheckpointVersion(uint64_t targetVersion) {
 	for (const auto checkpointVersion : std::views::reverse(retainedCheckpointVersions)) {
 		if (checkpointVersion < targetVersion) { break; }
 
-		auto [entries, success] =
-		    restoreSingleCheckpoint(FilesystemOperationContext{}, checkpointVersion);
+		auto [entries, success] = restoreSingleCheckpointToTarget(
+		    FilesystemOperationContext{}, checkpointVersion, targetVersion);
 
 		if (!success) {
 			safs::log_err("{}: failed to restore edge checkpoint version {}", __func__,
@@ -183,6 +186,12 @@ bool EdgeUndoRecorder::restoreToCheckpointVersion(uint64_t targetVersion) {
 
 std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
     const FilesystemOperationContext &fsOpContext, uint64_t checkpointVersion) {
+	return restoreSingleCheckpointToTarget(fsOpContext, checkpointVersion, checkpointVersion);
+}
+
+std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpointToTarget(
+    const FilesystemOperationContext &fsOpContext, uint64_t checkpointVersion,
+    uint64_t targetVersion) {
 	kv::Key prefix = edgeUndoPrefix(checkpointVersion);
 	kv::KeySelector startSelector(prefix, true, 0);
 	kv::KeySelector endSelector(kv::prefixEnd(prefix), true, 0);
@@ -229,20 +238,36 @@ std::pair<uint64_t, bool> EdgeUndoRecorder::restoreSingleCheckpoint(
 				continue;
 			}
 
-			if (pair.value.empty()) {
-				undoEntries.push_back(
-				    {.parentId = parentId, .name = name, .childId = std::nullopt});
-			} else {
+			std::optional<inode_t> childId;
+			if (!pair.value.empty()) {
 				if (pair.value.size() != sizeof(inode_t)) {
 					safs::log_err("{}: malformed edge undo value of size {}", __func__,
 					              pair.value.size());
 					return {0, false};
 				}
 				const uint8_t *ptr = pair.value.data();
-				inode_t childId{};
-				getINode(&ptr, childId);
-				undoEntries.push_back({.parentId = parentId, .name = name, .childId = childId});
+				inode_t decodedChildId{};
+				getINode(&ptr, decodedChildId);
+				if (decodedChildId == 0) {
+					safs::log_err("{}: edge undo pre-image has child inode zero", __func__);
+					return {0, false};
+				}
+				childId = decodedChildId;
 			}
+
+			if (nodeUndoRecorder_ != nullptr &&
+			    nodeUndoRecorder_->discardedDirectoriesDuringRestore().contains(parentId)) {
+				// NODE rollback proved this inode is not a directory at the target checkpoint.
+				// Earlier intervals may contain valid intermediate directory pre-images, but the
+				// target interval cannot: an edge below this parent did not exist at that boundary.
+				if (checkpointVersion == targetVersion && childId.has_value()) {
+					safs::log_err("{}: edge under non-directory checkpoint inode {}", __func__,
+					              parentId);
+					return {0, false};
+				}
+				continue;
+			}
+			undoEntries.push_back({.parentId = parentId, .name = name, .childId = childId});
 		}
 
 		if (!page.hasMore() || page.getPairs().empty()) { break; }

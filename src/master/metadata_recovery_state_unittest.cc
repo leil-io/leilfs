@@ -212,6 +212,55 @@ TEST_F(NodeRecoveryStateTest, RestoresReusedInodeAcrossNodeTypes) {
 	EXPECT_EQ(gMetadata->fileNodes, 1U);
 }
 
+TEST_F(NodeRecoveryStateTest, RejectsTargetEdgePreimageUnderReusedFile) {
+	constexpr inode_t kReusedInode = 41;
+
+	// A later directory incarnation is legitimate, but the target checkpoint contains a file.
+	// Unlike an intermediate checkpoint's edge pre-image, a nonempty EDGEU_ row in the target
+	// interval would claim that this file owned a directory entry at the checkpoint boundary.
+	auto *latestDirectory = new FSNodeDirectory;
+	latestDirectory->id = kReusedInode;
+	addLiveNode(latestDirectory);
+
+	FSNodeFile checkpointFile(FSNodeType::kFile);
+	checkpointFile.id = kReusedInode;
+	setNodePreimage(checkpointFile);
+	engine_.store()[edgeUndoKey(kCheckpointVersion, kReusedInode, "child")] =
+	    kv::toBytesBE(inode_t{42});
+
+	NodeUndoRecorder nodeRecorder(&engine_);
+	ASSERT_TRUE(nodeRecorder.restoreToCheckpointVersion(kCheckpointVersion));
+	ASSERT_TRUE(nodeRecorder.discardedDirectoriesDuringRestore().contains(kReusedInode));
+
+	EdgeUndoRecorder edgeRecorder(&engine_, &nodeRecorder);
+	EXPECT_FALSE(edgeRecorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
+TEST_F(NodeRecoveryStateTest, RejectsZeroIntermediateEdgeChildUnderReusedFile) {
+	constexpr inode_t kReusedInode = 41;
+	constexpr uint64_t kIntermediateVersion = 18;
+
+	// Skipping topology from a later directory incarnation must still validate its undo values.
+	auto *latestDirectory = new FSNodeDirectory;
+	latestDirectory->id = kReusedInode;
+	addLiveNode(latestDirectory);
+	FSNodeFile checkpointFile(FSNodeType::kFile);
+	checkpointFile.id = kReusedInode;
+	setNodePreimage(checkpointFile);
+	engine_.store()[kv::toBytes(kMetaCheckpointVersionsKey)] =
+	    checkpoints::serializeCheckpointVersions({kCheckpointVersion, kIntermediateVersion});
+	engine_.store()[edgeUndoKey(kIntermediateVersion, kReusedInode, "child")] =
+	    kv::toBytesBE(inode_t{0});  // No valid EDGE pre-image can reference inode zero.
+	engine_.store()[edgeUndoKey(kCheckpointVersion, kReusedInode, "child")] = {};
+
+	NodeUndoRecorder nodeRecorder(&engine_);
+	ASSERT_TRUE(nodeRecorder.restoreToCheckpointVersion(kCheckpointVersion));
+	ASSERT_TRUE(nodeRecorder.discardedDirectoriesDuringRestore().contains(kReusedInode));
+
+	EdgeUndoRecorder edgeRecorder(&engine_, &nodeRecorder);
+	EXPECT_FALSE(edgeRecorder.restoreToCheckpointVersion(kCheckpointVersion));
+}
+
 TEST_F(NodeRecoveryStateTest, RejectsCrossTypeReplacementWithDirectoryEntries) {
 	constexpr inode_t kReusedInode = 41;
 	constexpr inode_t kChildInode = 42;

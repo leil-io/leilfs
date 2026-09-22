@@ -217,6 +217,12 @@ const std::unordered_set<uint64_t> &MetadataCheckpointManager::nodesRemovedDurin
 	return nodeUndoRecorder_ ? nodeUndoRecorder_->removedDuringRestore() : kEmpty;
 }
 
+const std::unordered_set<uint64_t> &
+MetadataCheckpointManager::directoriesDiscardedDuringRestore() const {
+	static const std::unordered_set<uint64_t> kEmpty;
+	return nodeUndoRecorder_ ? nodeUndoRecorder_->discardedDirectoriesDuringRestore() : kEmpty;
+}
+
 const EdgeUndoRecorder::DetachedPathKeySet &
 MetadataCheckpointManager::detachedPathsTouchedDuringRestore() const {
 	static const EdgeUndoRecorder::DetachedPathKeySet kEmpty;
@@ -226,7 +232,7 @@ MetadataCheckpointManager::detachedPathsTouchedDuringRestore() const {
 void MetadataCheckpointManager::initializeRecorders() {
 	chunkUndoRecorder_ = std::make_unique<ChunkUndoRecorder>(kvEngine_);
 	nodeUndoRecorder_ = std::make_unique<NodeUndoRecorder>(kvEngine_);
-	edgeUndoRecorder_ = std::make_unique<EdgeUndoRecorder>(kvEngine_);
+	edgeUndoRecorder_ = std::make_unique<EdgeUndoRecorder>(kvEngine_, nodeUndoRecorder_.get());
 	xattrUndoRecorder_ = std::make_unique<XAttrUndoRecorder>(kvEngine_);
 
 	recorders_[static_cast<size_t>(MetadataSectionKind::Chunk)] = chunkUndoRecorder_.get();

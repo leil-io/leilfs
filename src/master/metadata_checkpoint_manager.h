@@ -172,6 +172,10 @@ public:
 	/// when no node recorder is registered.
 	const std::unordered_set<uint64_t> &nodesRemovedDuringRestore() const;
 
+	/// Directory incarnations discarded by NODE rollback whose checkpoint node is not a directory.
+	/// EDGE loading uses this proof to ignore newer topology beneath a reused inode.
+	const std::unordered_set<uint64_t> &directoriesDiscardedDuringRestore() const;
+
 	/// Detached-path inodes processed by the most recent edge-section restore.
 	const EdgeUndoRecorder::DetachedPathKeySet &detachedPathsTouchedDuringRestore() const;
 
