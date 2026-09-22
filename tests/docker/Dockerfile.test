@@ -43,6 +43,9 @@ RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
 RUN mkdir -p /mnt/hdd_0/ /mnt/hdd_1/ /mnt/hdd_2/ /mnt/hdd_3/ /mnt/hdd_4/ /mnt/hdd_5/ /mnt/hdd_6/ /mnt/hdd_7/;
 RUN chown saunafstest:saunafstest -R /mnt/hdd_*;
 
+COPY ./tests/docker/mount_hdds.sh /usr/local/bin/mount_hdds.sh
+RUN chmod +x /usr/local/bin/mount_hdds.sh
+
 RUN if [ "$BASE_IMAGE" = "ubuntu:22.04" ]; then \
         apt --yes update; \
         apt --yes install -y gcc-12 g++-12;    \
@@ -121,4 +124,4 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 WORKDIR /
 ENV TERM=xterm
-ENTRYPOINT ["tini", "--"]
+ENTRYPOINT ["tini", "--", "/usr/local/bin/mount_hdds.sh"]
