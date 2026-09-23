@@ -1,5 +1,20 @@
 This file lists noteworthy changes in LeilFS.
 
+* LeilFS (5.12.0) (2026-09-23)
+ - feat(fdb): add typed errors, throwing reads (#914)
+ - feat(fdb): client runtime, transaction state machine, and retry reuse (#920)
+ - feat(kv): add getSnapshotAsync and addReadConflictKey (#917)
+ - feat(nfs-ganesha): upgrade to V9.15, unify build (#887)
+ - fix(chunkserver): safe disk removal from config (#919)
+ - fix(clang-tidy): enable analyzer checks (#925)
+ - fix(cs): duplicate chunks in the target format (#933)
+ - fix(cs): retry attribute reads and propagate setChunkBlocks status (#929)
+ - fix(doc): correct fstab mount option(#853)
+ - fix(fdb,master): guard setOption null handle, close wakeup race (#935)
+ - fix(mount): fall back to open on create race (#921)
+ - fix(rpm): build current workflow ref (#913)
+ - fix(tests): stabilize fileinfo availability check (#923)
+
 * LeilFS (5.11.0) (2026-07-23)
  - build: add sanitizer presets (#894)
  - build: fix compilation for OpenSSL v4.0.0 (#876)
