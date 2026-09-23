@@ -20,13 +20,57 @@
 #include "common/platform.h"
 #include "protocol/cstoma.h"
 
+#include <array>
+
 #include <gtest/gtest.h>
 
 #include "common/crc.h"
+#include "common/datapack.h"
 #include "errors/sfserr.h"
 #include "unittests/chunk_type_constants.h"
 #include "unittests/inout_pair.h"
 #include "unittests/packet.h"
+
+TEST(CstomaCommunicationTests, ChunkserverId) {
+	const std::array<uint8_t, 16> idIn = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+	                                      0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe};
+	std::array<uint8_t, 16> idOut{};
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, idIn));
+
+	verifyHeader(buffer, SAU_CSTOMA_CHUNKSERVER_ID);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, cstoma::chunkserverId::kDefault);
+	ASSERT_NO_THROW(cstoma::chunkserverId::deserialize(buffer, idOut));
+	EXPECT_EQ(idOut, idIn);
+}
+
+TEST(CstomaCommunicationTests, ChunkserverIdRejectsWrongLength) {
+	const std::array<uint8_t, 16> id{};
+	std::array<uint8_t, 16> parsed{};
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, id));
+	removeHeaderInPlace(buffer);
+
+	buffer.pop_back();
+	EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed));
+	buffer.push_back(0);
+	buffer.push_back(0);
+	EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed));
+}
+
+TEST(CstomaCommunicationTests, ChunkserverIdRejectsWrongVersion) {
+	const std::array<uint8_t, 16> id{};
+	std::array<uint8_t, 16> parsed{};
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, id));
+	removeHeaderInPlace(buffer);
+
+	uint8_t *version = buffer.data();
+	put32bit(&version, cstoma::chunkserverId::kDefault + 1);
+	EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed));
+}
 
 TEST(CstomaCommunicationTests, OverwriteStatusField) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 0xFFFFFFFFFFFFFFFF, 0);
@@ -111,6 +155,27 @@ TEST(CstomaCommunicationTests, RegisterSpace) {
 	SAUNAFS_VERIFY_INOUT_PAIR(toDeleteUsedSpace);
 	SAUNAFS_VERIFY_INOUT_PAIR(toDeleteTotalSpace);
 	SAUNAFS_VERIFY_INOUT_PAIR(toDeleteChunksNumber);
+}
+
+TEST(CstomaCommunicationTests, ProbeChunk) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 0xFFFFFFFFFFFFFFFF, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 52, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint8_t, status, 2, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(
+	    cstoma::probeChunk::serialize(buffer, chunkIdIn, chunkTypeIn, chunkVersionIn, statusIn));
+
+	verifyHeader(buffer, SAU_CSTOMA_PROBE_CHUNK);
+	removeHeaderInPlace(buffer);
+	ASSERT_NO_THROW(cstoma::probeChunk::deserialize(buffer, chunkIdOut, chunkTypeOut,
+	                                                chunkVersionOut, statusOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkVersion);
+	SAUNAFS_VERIFY_INOUT_PAIR(status);
 }
 
 TEST(CstomaCommunicationTests, SetVersion) {

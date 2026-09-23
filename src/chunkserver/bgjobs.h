@@ -22,18 +22,22 @@
 
 #include "common/platform.h"
 
-#include "chunkserver-common/chunk_map.h"
-#include "chunkserver/io_buffers.h"
-#include "common/pcqueue.h"
-
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <list>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#include "chunkserver-common/chunk_map.h"
+#include "chunkserver/io_buffers.h"
+#include "common/metadata_cluster_member.h"
+#include "common/pcqueue.h"
 
 constexpr auto kEmptyCallback = nullptr;
 constexpr auto kEmptyExtra = nullptr;
@@ -77,6 +81,7 @@ public:
 		Delete,             ///< Delete a chunk. Master only.
 		Create,             ///< Create a chunk. Master only.
 		Replicate,          ///< Replicate a chunk. Master only.
+		ProbeVersion,       ///< Read the stored version of a chunk. Master only.
 		Open,               ///< Open a chunk for reading or writing. Client only.
 		Close,              ///< Close a chunk. Client only.
 		GetBlocks,          ///< Get the blocks of a chunk. Client (actually other CS) only.
@@ -106,14 +111,13 @@ public:
 	/// @param name Human readable name for this pool, useful for debugging.
 	/// @param workers The number of worker threads in the pool.
 	/// @param maxJobs The maximum number of jobs that can be queued.
-	/// @param nrListeners The number of listeners that will use this JobPool.
-	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
 	/// @param numPriorities The number of priority levels for the job queue.
-	/// @throws std::runtime_error If the pipe creation fails.
+	/// @throws std::runtime_error If the notifier creation fails.
+	/// @note Listener 0 exists from construction; allocateListener() creates the others and
+	///       returns the wakeup descriptor of any listener, including listener 0.
 	/// @note After construction, call start() to spawn worker threads. This two-phase
 	///       init avoids a vtable-pointer race when constructing derived classes.
-	JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
-	        std::vector<int> &wakeupFDs, uint8_t numPriorities = 1);
+	JobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint8_t numPriorities = 1);
 
 	/// @brief Spawns the worker threads.
 	///
@@ -155,6 +159,21 @@ public:
 	/// This function is a lighter version of allJobsProcessed that can be used for the masterConn's
 	/// jobPool to check if it is idle.
 	bool isEmpty();
+
+	/// @brief Checks whether a listener has no job left, running or waiting behind a chunk lock,
+	/// so its connection slot can be reused.
+	/// @param listenerId The listener to check.
+	/// @return True when the listener owns no job.
+	bool isListenerIdle(uint32_t listenerId);
+
+	/// @brief Allocates a listener slot lazily if not already present.
+	/// Monotonically allocated; never freed during pool lifetime to prevent worker UAF.
+	/// @param listenerId The ID of the listener slot to allocate.
+	/// @return The notification eventfd associated with this listener.
+	int allocateListener(uint32_t listenerId);
+
+	/// @brief Returns the number of currently allocated listeners.
+	uint32_t allocatedListenerCount() const;
 
 	/// @brief Gets the number of jobs in the JobPool.
 	uint32_t getJobCount() const;
@@ -215,13 +234,22 @@ protected:
 
 	/// @brief Structure to hold information about a listener.
 	struct ListenerInfo {
-		int notifierFD;            /// File descriptor for notifications.
+		int notifierFD{-1};        /// File descriptor for notifications.
 		std::mutex notifierMutex;  /// Mutex for event notifications.
 		std::mutex jobsMutex;      /// Mutex for job operations.
 		std::queue<std::pair<uint32_t, uint8_t>> statusQueue;        /// Queue for job statuses.
 		std::unordered_map<uint32_t, std::unique_ptr<Job>> jobHash;  /// Hash map of job.
-		uint32_t nextJobId;                                          /// Next job ID to be assigned.
+		uint32_t nextJobId{1};                                       /// Next job ID to be assigned.
+		std::atomic<uint32_t> deferredJobs{0};  /// Jobs waiting behind a chunk lock.
 	};
+
+	/// @brief Resolves the listener a job must land on, falling back to listener zero when the
+	/// caller names one that does not exist. Never allocates: a job path has no way to recover
+	/// from a failed allocation.
+	/// @param listenerId Corrected in place when it does not name an allocated listener.
+	/// @param caller Name of the calling function, for the warning.
+	/// @return The listener that will own the job, never null.
+	ListenerInfo *listenerForJob(uint32_t &listenerId, const char *caller);
 
 	/// @brief Worker thread function.
 	/// @param poolName Parent pool name, used to name the specific thread.
@@ -240,7 +268,7 @@ protected:
 	/// @param jobId The ID of the job.
 	/// @param status The status of the job.
 	/// @param listenerId The ID of the listener associated with the job.
-	/// @return 1 if a status is not the last one, 0 if it is the last status.
+	/// @return true if a status was received, false if the queue was empty.
 	bool receiveStatus(uint32_t &jobId, uint8_t &status, uint32_t listenerId = 0);
 
 	/// @brief Puts an exit job into the job queue.
@@ -258,10 +286,12 @@ protected:
 	/// @param jobPtrArg A pointer to the data of the job to be retrieved.
 	virtual void getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jobPtrArg);
 
-	std::vector<ListenerInfo> listenerInfos_;  /// Vector of listener information.
-	std::string name_;                         /// Human readable id of the JobPool.
-	uint8_t workers;                           /// Number of worker threads in the pool.
-	std::vector<std::thread> workerThreads;    /// Vector of worker threads.
+	/// @brief Monotonically allocated table of listeners. Lazily allocated on first use,
+	/// never freed during pool lifetime to eliminate worker thread use-after-free hazards.
+	std::array<std::atomic<ListenerInfo *>, kMaxMetadataConnections> listenerInfos_{};
+	std::string name_;                       /// Human readable id of the JobPool.
+	uint8_t workers;                         /// Number of worker threads in the pool.
+	std::vector<std::thread> workerThreads;  /// Vector of worker threads.
 	std::unique_ptr<ProducerConsumerQueueWithPriority> jobsQueue;  /// Queue for jobs.
 	/// Counter for unprocessed jobs, i.e jobs that have been added to the JobPool but have not yet
 	/// been passed by processCompletedJobs and had their callbacks called. This is used to make
@@ -289,11 +319,8 @@ public:
 	/// @param name Human readable name for this pool, useful for debugging.
 	/// @param workers The number of worker threads in the pool.
 	/// @param maxJobs The maximum number of jobs that can be queued.
-	/// @param nrListeners The number of listeners that will use this JobPool.
-	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
-	MasterJobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
-	              std::vector<int> &wakeupFDs)
-	    : JobPool(name, workers, maxJobs, nrListeners, wakeupFDs) {
+	MasterJobPool(const std::string &name, uint8_t workers, uint32_t maxJobs)
+	    : JobPool(name, workers, maxJobs) {
 		startWorkers();
 	}
 
@@ -317,6 +344,16 @@ public:
 	/// @param listenerId The ID of the listener associated with the lock jobs.
 	void changeLockJobsCallback(const LockJobCallbackMaker &lockJobCallbackMaker,
 	                            uint32_t listenerId = 0);
+
+	/// @brief Moves the lock jobs of a listener whose connection slot will be reused to a stable
+	/// listener. The chunk locks and their deferred jobs remain active, but their completions no
+	/// longer keep the retiring listener busy or reach a future connection in the same slot; they
+	/// are delivered through the stable listener like any other completion.
+	/// @param lockJobCallbackMaker Creates the connection-independent completion callback.
+	/// @param listenerId The listener whose lock jobs are moved.
+	/// @param callbackListenerId The stable listener that receives the lock jobs.
+	void detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMaker, uint32_t listenerId,
+	                    uint32_t callbackListenerId = 0);
 
 	/// @brief Starts a chunk lock job for a specific chunk and type.
 	/// This function is triggered when the master server sends a chunk lock request for a chunk
@@ -418,12 +455,9 @@ public:
 	/// @param name Human readable name for this pool, useful for debugging.
 	/// @param workers The number of worker threads in the pool.
 	/// @param maxJobs The maximum number of jobs that can be queued.
-	/// @param nrListeners The number of listeners that will use this JobPool.
-	/// @param wakeupFDs A vector of file descriptors for wakeup notifications.
-	ClientJobPool(const std::string &name, uint8_t workers, uint32_t maxJobs, uint32_t nrListeners,
-	              std::vector<int> &wakeupFDs, IOPriorityMode ioPriorityMode)
-	    : JobPool(name, workers, maxJobs, nrListeners, wakeupFDs,
-	              ioPriorityMode == IOPriorityMode::Fifo ? 2 : 3),
+	ClientJobPool(const std::string &name, uint8_t workers, uint32_t maxJobs,
+	              IOPriorityMode ioPriorityMode)
+	    : JobPool(name, workers, maxJobs, ioPriorityMode == IOPriorityMode::Fifo ? 2 : 3),
 	      ioPriorityMode_(ioPriorityMode) {
 		if (ioPriorityMode_ == IOPriorityMode::Switch) {
 			preferredIOType_.store(kPreferRead);
@@ -634,6 +668,20 @@ uint32_t job_create(MasterJobPool &jobPool, JobPool::JobCallback callback, void 
 uint32_t job_version(MasterJobPool &jobPool, const JobPool::JobCallback &callback, void *extra,
                      uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
                      uint32_t newChunkVersion, uint32_t listenerId = 0);
+
+/// @brief Adds a job that reads the stored version of a chunk part into @p version.
+/// @param jobPool The MasterJobPool instance.
+/// @param callback The callback function to be called when the job is finished.
+/// @param extra Extra data passed to the callback.
+/// @param chunkId The ID of the chunk.
+/// @param chunkType The type of the chunk part.
+/// @param version Receives the stored version; shared with the callback so it survives a
+/// connection close that replaces the callback while the worker still writes it.
+/// @param listenerId The listener that receives the completion.
+/// @return The ID of the added job.
+uint32_t job_probe(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                   uint64_t chunkId, ChunkPartType chunkType, std::shared_ptr<uint32_t> version,
+                   uint32_t listenerId = 0);
 
 /// @brief Adds a truncate job to the JobPool.
 ///

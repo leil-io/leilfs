@@ -168,6 +168,12 @@ void hddGetNewChunks(std::vector<ChunkWithVersionAndType> &chunks,
 	gNewChunks.erase(gNewChunks.begin(), gNewChunks.begin() + size);
 }
 
+void hddDiscardNewChunks() {
+	TRACETHIS();
+	std::lock_guard lockGuard(gMasterReportsLock);
+	gNewChunks.clear();
+}
+
 uint32_t hddGetAndResetErrorCounter() {
 	TRACETHIS();
 	return gErrorCounter.exchange(0);
@@ -1170,6 +1176,16 @@ int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
 	*blocks = chunk->blocks();
 	hddChunkRelease(chunk);
 
+	return SAUNAFS_STATUS_OK;
+}
+
+int hddChunkGetVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t *version) {
+	TRACETHIS1(chunkId);
+	*version = 0;
+	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
+	if (chunk == ChunkNotFound) { return SAUNAFS_ERROR_NOCHUNK; }
+	*version = chunk->version();
+	hddChunkRelease(chunk);
 	return SAUNAFS_STATUS_OK;
 }
 
