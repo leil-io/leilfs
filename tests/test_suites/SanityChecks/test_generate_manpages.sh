@@ -1,8 +1,15 @@
-assert_program_installed gem
+# A full cmake configure dominates this test at about 50 seconds and does not shrink by turning
+# features off.
+timeout_set 150 seconds
 
-# Move to a temp copy of the source tree
-cp -r "${SOURCE_DIR}" "${TEMP_DIR}"
+assert_program_installed gem
+assert_program_installed rsync
+
+# Work on a copy so the doc build cannot touch the checkout. build/ and vcpkg/ are gigabytes of
+# artifacts manpage generation never reads, and copying them dominated the runtime.
 SAUNAFS_FOLDER=$(basename "${SOURCE_DIR}")
+rsync -a --exclude=/build --exclude=/vcpkg --exclude=/vcpkg_installed \
+	"${SOURCE_DIR}/" "${TEMP_DIR}/${SAUNAFS_FOLDER}/"
 cd "${TEMP_DIR}/${SAUNAFS_FOLDER}" || exit 1
 
 BUILD_DIR="${TEMP_DIR}/build_saunafs_doc_$(date +%s)"
