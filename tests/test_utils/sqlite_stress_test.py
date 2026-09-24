@@ -53,6 +53,15 @@ def log_message(msg):
     tid = get_thread_id()
     print(f"{current_timestamp()} tid:{tid} {msg}")
 
+def describe_error(e):
+    """Return the error message with the SQLite result code name, when the runtime exposes it.
+
+    The message alone is ambiguous: "disk I/O error" covers a short read, a failed lock, a
+    failed fsync and a failed write. The code name (Python 3.11+) tells them apart.
+    """
+    name = getattr(e, "sqlite_errorname", None)
+    return f"{e} [{name}]" if name else str(e)
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="SQLite concurrency stress test with optional binary search, error summary, "
@@ -79,14 +88,15 @@ def random_string(length=10):
     return ''.join(random.choice(letters) for _ in range(length))
 
 def categorize_error(msg):
-    """Return a simplified category based on the error message."""
+    """Return a simplified category based on the error message, keeping the result code name."""
     msg_lower = msg.lower()
+    code = msg[msg.rfind(" [SQLITE_"):] if " [SQLITE_" in msg else ""
     if "locked" in msg_lower:
         return "locked"
     elif "disk i/o" in msg_lower:
-        return "disk I/O error"
+        return "disk I/O error" + code
     elif "malformed" in msg_lower:
-        return "database disk image is malformed"
+        return "database disk image is malformed" + code
     else:
         return msg
 
@@ -106,7 +116,7 @@ def try_exec(conn, sql, params=(), context=""):
     try:
         conn.execute(sql, params)
     except sqlite3.Error as e:
-        err_str = str(e)
+        err_str = describe_error(e)
         if "locked" in err_str.lower():
             log_message(f"{context} Correctly detected database locked: {err_str}")
             record_error(err_str)
@@ -125,8 +135,8 @@ def worker_thread(thread_id, db_file, operations_per_thread, error_event):
     try:
         conn = sqlite3.connect(db_file, check_same_thread=False)
     except Exception as e:
-        log_message(f"[Thread {thread_id}] Connection error: {e}")
-        record_error(str(e))
+        log_message(f"[Thread {thread_id}] Connection error: {describe_error(e)}")
+        record_error(describe_error(e))
         error_event.set()
         return
 
@@ -147,7 +157,7 @@ def worker_thread(thread_id, db_file, operations_per_thread, error_event):
                 conn.execute("INSERT INTO test_table (data) VALUES (?);", (data_value,))
                 conn.execute("COMMIT;")
             except sqlite3.Error as e:
-                err_str = str(e)
+                err_str = describe_error(e)
                 if "locked" in err_str.lower():
                     log_message(f"[Thread {thread_id}] Correctly detected database locked on INSERT: {err_str}")
                     record_error(err_str)
@@ -167,7 +177,7 @@ def worker_thread(thread_id, db_file, operations_per_thread, error_event):
                 conn.execute("UPDATE test_table SET data=? WHERE id=?;", (data_value, row_id))
                 conn.execute("COMMIT;")
             except sqlite3.Error as e:
-                err_str = str(e)
+                err_str = describe_error(e)
                 if "locked" in err_str.lower():
                     log_message(f"[Thread {thread_id}] Correctly detected database locked on UPDATE: {err_str}")
                     record_error(err_str)
@@ -183,7 +193,7 @@ def worker_thread(thread_id, db_file, operations_per_thread, error_event):
             try:
                 conn.execute("SELECT id, data FROM test_table ORDER BY RANDOM() LIMIT 1;").fetchall()
             except sqlite3.Error as e:
-                err_str = str(e)
+                err_str = describe_error(e)
                 if "locked" in err_str.lower():
                     log_message(f"[Thread {thread_id}] Correctly detected database locked on SELECT: {err_str}")
                     record_error(err_str)
