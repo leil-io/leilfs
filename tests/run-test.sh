@@ -137,6 +137,15 @@ for log_file in "$ERROR_DIR"/* ; do
 			# it does, which is what we want for the return value
 			if file --mime-encoding "${log_file}" | awk '{exit $2=="binary"}'; then
 				cat "${log_file}"
+			else
+				# TEMPORARY DIAGNOSTIC (do not merge): a binary file here is never printed, so
+				# when one shows up we cannot tell what it is. Identify it instead, in
+				# particular whether it is a core dump, which would mean a process crashed
+				# rather than merely being reported on.
+				echo "(binary error file, contents not printed)"
+				ls -l "${log_file}" | awk '{print "    size: " $5 " bytes"}'
+				echo "    file: $(file -b "${log_file}" 2>&1)"
+				readelf -h "${log_file}" 2>/dev/null | sed -n '1,12p' | sed 's/^/    readelf: /' || true
 			fi
 		fi
 		if [[ $TEST_OUTPUT_DIR ]]; then
