@@ -1,8 +1,19 @@
-assert_program_installed gem
+# Configuring the whole project dominates this test at about 50 seconds, and turning features
+# off barely dents it, so the budget has to cover a full configure. The default of 30 seconds
+# was never raised for this test and left no headroom. Most of the configure is serial, so the
+# base has to suit a machine that sets no multiplier; slower or loaded agents are covered by
+# SAUNAFS_TEST_TIMEOUT_MULTIPLIER, which is 5 on the CI agent this test timed out on.
+timeout_set 150 seconds
 
-# Move to a temp copy of the source tree
-cp -r "${SOURCE_DIR}" "${TEMP_DIR}"
+assert_program_installed gem
+assert_program_installed rsync
+
+# Work on a copy, so nothing the doc build does can touch the checkout. Only the sources are
+# needed: build/ and vcpkg/ are gigabytes of artifacts that manpage generation never reads, and
+# copying them was both the slowest step here and the one that varied most with disk load.
 SAUNAFS_FOLDER=$(basename "${SOURCE_DIR}")
+rsync -a --exclude=/build --exclude=/vcpkg --exclude=/vcpkg_installed \
+	"${SOURCE_DIR}/" "${TEMP_DIR}/${SAUNAFS_FOLDER}/"
 cd "${TEMP_DIR}/${SAUNAFS_FOLDER}" || exit 1
 
 BUILD_DIR="${TEMP_DIR}/build_saunafs_doc_$(date +%s)"
