@@ -159,8 +159,10 @@ struct inodedata {
 	inode_t inode;
 	uint64_t maxfleng = 0;           // inodeLock
 	int status = SAUNAFS_STATUS_OK;  // inodeLock
-	uint16_t flushwaiting = 0;       // inodeLock
-	uint16_t writewaiting = 0;       // inodeLock
+	// Mutated only under inodeLock, as before; atomic so that
+	// write_release_inodedata_if_unused() can read them from a path holding only the global lock.
+	std::atomic<uint16_t> flushwaiting = 0;
+	std::atomic<uint16_t> writewaiting = 0;
 	std::atomic<uint16_t> lcnt = 0;
 	std::condition_variable flushcond;  // wait for !inqueue (flush): using globalLock
 	std::condition_variable writecond;  // wait for flushwaiting==0 (write): using inodeLock
@@ -434,6 +436,31 @@ void write_free_inodedata(inodedata *fid, UniqueLock &) {
 	inodedataMap.erase(inode);
 }
 
+/// Releases an inode that nothing references any more.
+///
+/// An inode can become releasable in two orders: its last reference can be dropped after its
+/// chunk writes finished, or - when a write failed, because write_data_flush() then stops
+/// waiting - while some are still outstanding. Only the first order used to be handled, so an
+/// inode whose last reference went away with a non-empty chunk list was never freed: lcnt can
+/// never drop again, and the completion path frees only the ChunkData. It stayed in
+/// inodedataMap with its error latched, and every later operation on that inode inherited it.
+///
+/// Reads the state without taking the inode mutex: every field consulted is atomic, which keeps
+/// this callable from paths that already hold the global lock without introducing a
+/// global -> inode lock order.
+///
+/// @return True when the inode was freed, after which it must not be touched again.
+/* globalLock: LOCKED, inodeLock: UNLOCKED */
+static bool write_release_inodedata_if_unused(inodedata *id, UniqueLock &globalLock) {
+	if (id->lcnt != 0 || !id->emptyChunkDataList || id->flushwaiting != 0 ||
+	    id->writewaiting != 0) {
+		return false;
+	}
+
+	write_free_inodedata(id, globalLock);
+	return true;
+}
+
 /* chunk */
 
 /* inodeLock: LOCKED*/
@@ -695,6 +722,11 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Unique
 				add_pending_jobs_after_job_processed(parent, globalLock);
 			}
 		}
+
+		// The last reference to this inode may have been dropped while this write was still
+		// outstanding, in which case that path could not free it. This chunk finishing may be
+		// what makes the inode releasable, so it is this path that has to notice.
+		write_release_inodedata_if_unused(parent, globalLock);
 	}
 }
 
@@ -1225,14 +1257,11 @@ static void write_data_lcnt_decrease_check_deleted(inodedata *id, UniqueLock &in
                                                    bool &isDeleted) {
 	// As long as it is not freed, then we don't consider the inodedata deleted
 	isDeleted = false;
-	bool almostDone =
-	    (id->emptyChunkDataList) && (id->flushwaiting == 0) && (id->writewaiting == 0);
 	inodeLock.unlock();
 
 	UniqueLock globalLock(gMutex);
 	id->lcnt--;
-	if (id->lcnt == 0 && almostDone) {
-		write_free_inodedata(id, globalLock);
+	if (write_release_inodedata_if_unused(id, globalLock)) {
 		isDeleted = true;
 		return;
 	}
@@ -1459,17 +1488,42 @@ int write_data_end(void *vid) {
 	int status = write_data_flush(id, globalLock);
 	globalLock.unlock();
 
-	bool almostDone = false;
-	{
-		UniqueLock inodeLock(id->mutex);
-		almostDone = (id->emptyChunkDataList) && (id->flushwaiting == 0) && (id->writewaiting == 0);
-	}
-
 	globalLock.lock();
 	id->lcnt--;
-	if (id->lcnt == 0 && almostDone) { write_free_inodedata(id, globalLock); }
+	write_release_inodedata_if_unused(id, globalLock);
 
 	return status;
 }
+
+namespace testhooks {
+
+bool inodeDataExists(inode_t inode) {
+	UniqueLock globalLock(gMutex);
+	return write_find_inodedata(inode, globalLock) != kNoInodeData;
+}
+
+void latchInodeStatus(void *vid, int status) {
+	auto *id = static_cast<inodedata *>(vid);
+	UniqueLock inodeLock(id->mutex);
+	id->status = status;
+}
+
+bool completeOnePendingChunk(int status) {
+	// A worker takes the job off the queue before finishing it, and that is what hands over
+	// ownership of the ChunkData. Reaching into the inode's list instead would leave a stale
+	// pointer behind for the queue's deleter to free a second time.
+	uint32_t jobId = 0;
+	uint32_t jobType = 0;
+	uint32_t length = 0;
+	uint8_t *data = nullptr;
+	if (!jobsQueue->tryGet(&jobId, &jobType, &data, &length)) { return false; }
+	if (data == reinterpret_cast<uint8_t *>(kNoChunkData)) { return false; }
+
+	UniqueLock globalLock(gMutex);
+	write_job_delayed_end(reinterpret_cast<ChunkData *>(data), status, 0, globalLock);
+	return true;
+}
+
+}  // namespace testhooks
 
 } // namespace WriteAlgorithm

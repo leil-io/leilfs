@@ -44,4 +44,24 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
                         Attributes &attr);
 int write_data(void *vid, uint64_t offset, uint32_t size, const uint8_t *buff, size_t currentSize);
 
+/// Test-only seams.
+///
+/// An inode's lifetime is coordinated between the close path and the write worker. A unit test
+/// cannot drive the worker without a live cluster, so these let it observe the inode table and
+/// step the completion path by hand. Intended for single-threaded test use only.
+namespace testhooks {
+
+/// Whether the inode is still present in the writer's inode table.
+bool inodeDataExists(inode_t inode);
+
+/// Latches a status on the inode, the way a failed write would.
+void latchInodeStatus(void *vid, int status);
+
+/// Finishes one queued chunk write with the given status, exactly as a worker would, taking the
+/// job off the queue so ownership of the chunk transfers the same way.
+/// @return False when no chunk write was queued.
+bool completeOnePendingChunk(int status);
+
+}  // namespace testhooks
+
 }  // namespace WriteAlgorithm
