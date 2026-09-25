@@ -32,6 +32,21 @@ if ! is_program_installed rdma || ! is_program_installed ibv_devinfo; then
 	test_end
 fi
 
+# Some cloud runners already expose a hardware RDMA device (newer Azure generations
+# carry a MANA adapter presenting mana_0). The NFS client resolves the mount address
+# to that device rather than the soft one created below, and rpcrdma refuses a device
+# without fast memory registration:
+#   rpcrdma: 'frwr' mode is not supported by device mana_0
+# The kernel gates frwr on IB_DEVICE_MEM_MGT_EXTENSIONS, which ibv_devinfo reports as
+# MEM_MGT_EXTENSIONS. Nothing here can steer that choice, so skip rather than fail.
+for preexisting_rdma_dev in $(ls /sys/class/infiniband 2>/dev/null); do
+	if ! ibv_devinfo -d "${preexisting_rdma_dev}" -v 2>/dev/null | grep -q MEM_MGT_EXTENSIONS; then
+		echo "SKIP: RDMA device ${preexisting_rdma_dev} lacks fast memory registration (frwr);"
+		echo "      the NFS client would select it over ${rdma_dev} and the mount would fail."
+		test_end
+	fi
+done
+
 # Bind the soft-RDMA device to a real NIC (the default-route interface) and mount
 # via its routable IP. A loopback device (siw/rxe on 'lo', 127.0.0.1) brings the
 # port up but does not deliver the RPC data path for a same-host mount; a real
