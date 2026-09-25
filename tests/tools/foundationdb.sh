@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-readonly workspace="/tmp/saunafs-fdb-test"
+readonly workspace="/tmp/leil-fdb-test"
 readonly fdbmonitor_pattern="fdbmonitor --conffile ${workspace}/conf/foundationdb\.conf"
 
 function wait_until_processes_stop() {
