@@ -33,6 +33,9 @@ NFSV4 {
 	Grace_Period = 10;
 	Lease_Lifetime = 20;
 	Delegations = false;        # Reduce recall/stateid churn
+	# Avoid oversized denied replies from Ganesha's internal blocking queue.
+	# The Linux NFS client retries the conflict instead of decoding it as EIO.
+	Blocking_Locks = false;
 }
 EXPORT
 {
