@@ -508,7 +508,7 @@ create_sfsmds_cfg_() {
 		echo "MATOTS_LISTEN_PORT = ${masterserver_matots_port}"
 	fi
 
-	echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster"
+	echo "FDB_CLUSTER_FILE = /tmp/leil-fdb-test/conf/fdb.cluster"
 	# The default listen host is the wildcard, which is not a dialable address; without a
 	# concrete address to advertise in the cluster registry, an MDS refuses to start.
 	echo "MDS_ADVERTISE_HOST = 127.0.0.1"
@@ -617,7 +617,7 @@ add_metadata_server_() {
 		else
 			test_fail "Wrong personality $personality"
 		fi
-		echo "FDB_CLUSTER_FILE = /tmp/saunafs-fdb-test/conf/fdb.cluster" >>"$masterserver_cfg"
+		echo "FDB_CLUSTER_FILE = /tmp/leil-fdb-test/conf/fdb.cluster" >>"$masterserver_cfg"
 	fi
 
 	saunafs_info_[master${masterserver_id}_shadow_cfg]=$masterserver_shadow_cfg
