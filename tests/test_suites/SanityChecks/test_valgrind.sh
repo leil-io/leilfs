@@ -1,4 +1,26 @@
-valgrind_enable
+# DIAGNOSTIC VARIANT (do not merge): the same workload with valgrind switched off.
+#
+# Under valgrind the core we get is the valgrind process with the client inside it, so
+# every frame resolves to ?? and the abort cannot be identified. Run the workload
+# natively and the core is leil-mount's own, with real symbols. If it never aborts over
+# many loops, that points at valgrind's internals rather than the product.
+#
+# valgrind_enable also applied timeout_set_multiplier 15, so set an explicit budget
+# rather than falling back to the 30 second default.
+timeout_set '5 minutes'
+
+# Without valgrind nothing writes to the error dir, so run-test.sh's core reporting never
+# fires. Find and identify the core here instead; the mount's working directory is under
+# TEMP_DIR precisely so cores have somewhere writable to land.
+report_cores_() {
+	local core
+	for core in $(find "${TEMP_DIR}" -maxdepth 8 -name 'core*' -size +1M 2>/dev/null); do
+		echo "CORE FOUND: ${core} ($(stat -c %s "${core}") bytes)"
+		echo "  file: $(file -b "${core}")"
+		gdb -batch -n -ex 'thread apply all bt' /usr/local/bin/leil-mount "${core}" 2>&1 \
+			| grep -v '^warning:' | sed -n '1,250p' | sed 's/^/  /'
+	done
+}
 
 number_of_mounts=2
 
@@ -32,7 +54,10 @@ MESSAGE="Validating $mnt1dir2/file2" expect_success file-validate "$mnt1dir2/fil
 MESSAGE="Validating $mnt0dir2/file2" expect_success file-validate "$mnt0dir2/file2" &
 wait
 
-rm "$mnt0dir1/file2"
+if ! rm "$mnt0dir1/file2"; then
+	report_cores_
+	test_fail "rm failed - the mount is gone; see any core reported above"
+fi
 
 saunafs_master_daemon restart
 saunafs_chunkserver_daemon 0 restart
@@ -48,3 +73,5 @@ done
 # Here we need to wait for unmount asynchronic tasks
 # the long timeout is set to detect deadlocks
 wait_for '! pgrep -f -u saunafstest sfsmount >/dev/null' '30 minutes' || true
+
+report_cores_
