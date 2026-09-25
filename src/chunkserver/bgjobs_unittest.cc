@@ -20,6 +20,7 @@
 #include "errors/saunafs_error_codes.h"
 
 #include <sys/poll.h>
+#include <chrono>
 #include <thread>
 
 #include "common/slice_traits.h"
@@ -73,7 +74,7 @@ private:
 
 protected:
 	void SetUp() override {
-		jobPool = std::make_unique<JobPool>("TestPool", 4, 10);
+		jobPool = std::make_unique<JobPool>("TestPool", kNrWorkers, 10);
 		jobPool->startWorkers();
 
 		masterJobPool = std::make_unique<MasterJobPool>("TestMasterPool", 4, 10);
@@ -122,6 +123,21 @@ protected:
 		servePollThreads.clear();
 	}
 
+	/// @brief Polls a predicate until it holds or the timeout expires.
+	///
+	/// Preferred over a fixed sleep, which a loaded machine can overrun.
+	/// @return True if the predicate held before the timeout expired.
+	template <typename Predicate>
+	static bool waitUntil(Predicate predicate,
+	                      std::chrono::milliseconds timeout = std::chrono::seconds(10)) {
+		const auto deadline = std::chrono::steady_clock::now() + timeout;
+		while (std::chrono::steady_clock::now() < deadline) {
+			if (predicate()) { return true; }
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+		return predicate();
+	}
+
 	JobPool::ProcessJobCallback mockProcessJob = []() -> uint8_t {
 		usleep(1000);  // Simulate some work by sleeping for 1ms
 		return 0;      // Return success status
@@ -140,6 +156,7 @@ protected:
 	bool terminate;
 	std::mutex mutex_;
 	static constexpr uint32_t kNrListeners = 4;
+	static constexpr uint8_t kNrWorkers = 4;
 	static constexpr uint32_t kNrOperationTypes = 10;
 	std::atomic<int> processingCount[kNrListeners];
 	std::atomic<int> counters[kNrOperationTypes];
@@ -196,20 +213,49 @@ TEST_F(JobPoolTest, DisableJob) {
 	const uint32_t kListenerToDisable = 0;     // Listener ID to disable the job for
 	const uint32_t kListenerToNotDisable = 1;  // Listener ID to not disable the job for
 
+	// SAUNAFS_STATUS_OK is 0, the value SetUp() leaves in the counters, so a callback that never
+	// ran would look like one reporting success. Start from a value no status can produce.
+	constexpr int kCallbackNotCalled = -1;
+	counters[kOpToDisable] = kCallbackNotCalled;
+	counters[kOpToNotDisable] = kCallbackNotCalled;
+
+	// disableJob() only moves a job from Enabled to Disabled, so a worker that claims it first
+	// makes the call a silent no-op and the job completes with STATUS_OK. The fixture's workers
+	// are already running, so use a pool whose workers start only after the job is disabled.
+	auto pool = std::make_unique<JobPool>("TestDisableJobPool", kNrWorkers, 10);
+
+	// Listener 0 exists from construction; the second must be created, or addJob() falls back to
+	// listener 0 and both jobs share a jobId sequence.
+	ASSERT_GE(pool->allocateListener(kListenerToDisable), 0);
+	ASSERT_GE(pool->allocateListener(kListenerToNotDisable), 0);
+
 	uint32_t jobIdToNotDisable =
-	    jobPool->addJob(JobPool::ChunkOperation::Read, mockedJobCallback,
-	                    &counters[kOpToNotDisable], mockProcessJob, kListenerToNotDisable);
+	    pool->addJob(JobPool::ChunkOperation::Read, mockedJobCallback, &counters[kOpToNotDisable],
+	                 mockProcessJob, kListenerToNotDisable);
 	uint32_t jobIdToDisable =
-	    jobPool->addJob(JobPool::ChunkOperation::Read, mockedJobCallback, &counters[kOpToDisable],
-	                    mockProcessJob, kListenerToDisable);
+	    pool->addJob(JobPool::ChunkOperation::Read, mockedJobCallback, &counters[kOpToDisable],
+	                 mockProcessJob, kListenerToDisable);
 
 	// Note the jobIds are equal, but we would only disable the job with the specified listener ID
 	EXPECT_EQ(jobIdToDisable, jobIdToNotDisable);
 
-	jobPool->disableJob(jobIdToDisable, kListenerToDisable);
+	pool->disableJob(jobIdToDisable, kListenerToDisable);
 
-	// Wait for the job to be processed
-	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
+	// Only now can a worker pick either job up.
+	pool->startWorkers();
+
+	auto bothCallbacksRan = [&] {
+		pool->processCompletedJobs(kListenerToDisable);
+		pool->processCompletedJobs(kListenerToNotDisable);
+		return counters[kOpToDisable].load() != kCallbackNotCalled &&
+		       counters[kOpToNotDisable].load() != kCallbackNotCalled;
+	};
+
+	// Wait for both callbacks rather than sleeping for a fixed time.
+	ASSERT_TRUE(waitUntil(bothCallbacksRan))
+	    << "timed out waiting for the callbacks: disabled job reported "
+	    << counters[kOpToDisable].load() << ", other job reported "
+	    << counters[kOpToNotDisable].load();
 
 	EXPECT_EQ(counters[kOpToDisable].load(), SAUNAFS_ERROR_NOTDONE);
 	EXPECT_EQ(counters[kOpToNotDisable].load(), SAUNAFS_STATUS_OK);
