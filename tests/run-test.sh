@@ -139,13 +139,29 @@ for log_file in "$ERROR_DIR"/* ; do
 				cat "${log_file}"
 			else
 				# TEMPORARY DIAGNOSTIC (do not merge): a binary file here is never printed, so
-				# when one shows up we cannot tell what it is. Identify it instead, in
-				# particular whether it is a core dump, which would mean a process crashed
-				# rather than merely being reported on.
+				# when one shows up we cannot tell what it is. Identify it, and when it is a
+				# core dump print a backtrace, since that names the crash rather than leaving
+				# us to infer it from whatever valgrind reported afterwards.
 				echo "(binary error file, contents not printed)"
 				ls -l "${log_file}" | awk '{print "    size: " $5 " bytes"}'
-				echo "    file: $(file -b "${log_file}" 2>&1)"
-				readelf -h "${log_file}" 2>/dev/null | sed -n '1,12p' | sed 's/^/    readelf: /' || true
+				core_id=$(file -b "${log_file}" 2>&1)
+				echo "    file: ${core_id}"
+				if [[ ${core_id} == *"core file"* ]]; then
+					# Parameter expansion rather than sed: the pattern needs a literal
+					# single quote, which inside a sed expression here would be read as
+					# GNU sed's end-of-buffer anchor and never match.
+					core_exe=${core_id#*from \'}
+					core_exe=${core_exe%%\'*}
+					core_exe=${core_exe%% *}
+					core_bin=$(command -v "$(basename "${core_exe:-none}")" 2>/dev/null || true)
+					echo "    core from: ${core_exe:-unknown} -> ${core_bin:-unresolved}"
+					echo "    --- backtrace ---"
+					if [[ ${core_bin} ]]; then
+						gdb -batch -n -ex 'thread apply all bt' "${core_bin}" "${log_file}" 2>&1
+					else
+						gdb -batch -n -ex 'thread apply all bt' --core="${log_file}" 2>&1
+					fi | grep -v '^warning:' | sed -n '1,200p' | sed 's/^/    /'
+				fi
 			fi
 		fi
 		if [[ $TEST_OUTPUT_DIR ]]; then
