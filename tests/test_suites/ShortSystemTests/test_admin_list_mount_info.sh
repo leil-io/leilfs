@@ -1,3 +1,10 @@
+# Two assert_eventually waits of 30 seconds each, a 5 second sleep and a master restart, all
+# rescaled by the machine multiplier. Without an explicit budget the test inherits the 30
+# second default, which rescales to exactly the same value as the first wait, so a wait
+# that never succeeds kills the test on the clock instead of failing with the assertion
+# that would name it.
+timeout_set 150 seconds
+
 MOUNTS=4 \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info
