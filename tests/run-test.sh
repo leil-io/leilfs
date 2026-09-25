@@ -155,12 +155,29 @@ for log_file in "$ERROR_DIR"/* ; do
 					core_exe=${core_exe%% *}
 					core_bin=$(command -v "$(basename "${core_exe:-none}")" 2>/dev/null || true)
 					echo "    core from: ${core_exe:-unknown} -> ${core_bin:-unresolved}"
-					echo "    --- backtrace ---"
+
+					# A core taken from a process running under valgrind belongs to the
+					# valgrind tool, not to the client: the client's text lives inside
+					# valgrind's address space, so gdb resolves every frame to ?? when given
+					# the client binary. Try the tool binary as well, which is the only way
+					# to tell whether the abort is valgrind's own or the client's.
+					vg_tool=$(ls -1 /usr/libexec/valgrind/memcheck-* 2>/dev/null | head -1)
+
 					if [[ ${core_bin} ]]; then
-						gdb -batch -n -ex 'thread apply all bt' "${core_bin}" "${log_file}" 2>&1
-					else
-						gdb -batch -n -ex 'thread apply all bt' --core="${log_file}" 2>&1
-					fi | grep -v '^warning:' | sed -n '1,200p' | sed 's/^/    /'
+						echo "    --- backtrace against ${core_bin} ---"
+						gdb -batch -n -ex 'thread apply all bt' "${core_bin}" "${log_file}" 2>&1 \
+							| grep -v '^warning:' | sed -n '1,120p' | sed 's/^/    /'
+					fi
+					if [[ ${vg_tool} ]]; then
+						echo "    --- backtrace against ${vg_tool} ---"
+						gdb -batch -n -ex 'thread apply all bt' "${vg_tool}" "${log_file}" 2>&1 \
+							| grep -v '^warning:' | sed -n '1,120p' | sed 's/^/    /'
+					fi
+					if [[ -z ${core_bin} && -z ${vg_tool} ]]; then
+						echo "    --- backtrace with no binary ---"
+						gdb -batch -n -ex 'thread apply all bt' --core="${log_file}" 2>&1 \
+							| grep -v '^warning:' | sed -n '1,120p' | sed 's/^/    /'
+					fi
 				fi
 			fi
 		fi
