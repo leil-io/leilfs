@@ -476,6 +476,9 @@ inline void deserialize(const uint8_t** source, uint32_t& bytesLeftInBuffer, std
 	if (bytesLeftInBuffer < size) {
 		throw IncorrectDeserializationException("unexpected end of buffer");
 	}
+	if (size == 0) {
+		throw IncorrectDeserializationException("deserialized string size is zero");
+	}
 	if ((*source)[size - 1] != 0) {
 		throw IncorrectDeserializationException("deserialized string not null-terminated");
 	}
