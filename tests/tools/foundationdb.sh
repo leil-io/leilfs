@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 
 readonly workspace="/tmp/saunafs-fdb-test"
+# Every write path in the tests commits to this cluster, so its data lives on a tmpfs of its
+# own: commit latency must not depend on the node's disk, and the test ramdisk stays free for
+# the tests that fill it. FoundationDB throttles writes when its data volume has less than
+# 1 GB free, so the tmpfs is sized well above the largest test's data (about 650 MB).
+readonly fdb_data_dir="${workspace}/data"
+readonly fdb_data_tmpfs_size="3g"
 readonly fdbmonitor_pattern="fdbmonitor --conffile ${workspace}/conf/foundationdb\.conf"
 
 function wait_until_processes_stop() {
@@ -19,6 +25,23 @@ function wait_until_processes_stop() {
 function create_workspace() {
 	mkdir -p "${workspace}"/{conf,data,logs}
 	chown -R "$(id -un):$(id -gn)" "${workspace}"
+	mount_fdb_data_tmpfs
+}
+
+function mount_fdb_data_tmpfs() {
+	if mountpoint -q "${fdb_data_dir}"; then
+		return 0
+	fi
+	if ! sudo -n /usr/bin/mount -t tmpfs -o "size=${fdb_data_tmpfs_size},mode=1777" tmpfs \
+			"${fdb_data_dir}" 2>/dev/null; then
+		echo "foundationdb.sh: no tmpfs for ${fdb_data_dir}, the cluster data stays on disk" >&2
+	fi
+}
+
+function unmount_fdb_data_tmpfs() {
+	if mountpoint -q "${fdb_data_dir}"; then
+		sudo -n /usr/bin/umount -l "${fdb_data_dir}" 2>/dev/null || true
+	fi
 }
 
 function create_config_file() {
@@ -36,7 +59,7 @@ cluster-file = ${workspace}/conf/fdb.cluster
 command = /usr/sbin/fdbserver
 public_address = 127.0.0.1:\$ID
 listen_address = public
-datadir = ${workspace}/data/\$ID
+datadir = ${fdb_data_dir}/\$ID
 logdir = ${workspace}/logs
 
 [fdbserver.4500]
@@ -65,7 +88,7 @@ function cleanup_fdb_cluster() {
 
 	# Ensure worker processes bound to the test workspace are not left alive;
 	# escalate to SIGKILL for each worker pattern on timeout.
-	local worker_patterns=("fdbserver.*${workspace}/data/" "backup_agent.*${workspace}/logs")
+	local worker_patterns=("fdbserver.*${fdb_data_dir}/" "backup_agent.*${workspace}/logs")
 	for pattern in "${worker_patterns[@]}"; do
 		pkill -f "${pattern}" 2>/dev/null || true
 	done
@@ -76,6 +99,7 @@ function cleanup_fdb_cluster() {
 		fi
 	done
 
+	unmount_fdb_data_tmpfs
 	rm -rf "${workspace:?}" 2>/dev/null || true
 }
 
