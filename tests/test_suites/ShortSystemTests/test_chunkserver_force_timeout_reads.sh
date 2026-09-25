@@ -1,4 +1,8 @@
-timeout_set 90 seconds
+# Runtime is dominated by how many reads exhaust sfschunkservertotalreadto below, which caps
+# the whole read at 30ms, and are then retried. That spreads the test from about 57s to
+# 380s with load, more than the machine multiplier scales the budget by, so the base has
+# to absorb the difference.
+timeout_set 150 seconds
 
 # Use goal 2 to increase the chance of overwhelming the chunkserver read queues
 # Lots of readahead requests should be sent to chunkservers with very low timeout, and we want
