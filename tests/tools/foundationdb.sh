@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-readonly workspace="/tmp/saunafs-fdb-test"
+readonly workspace="/tmp/leil-fdb-test"
 # Every write path in the tests commits to this cluster, so its data lives on a tmpfs of its
 # own: commit latency must not depend on the node's disk, and the test ramdisk stays free for
 # the tests that fill it. FoundationDB throttles writes when its data volume has less than

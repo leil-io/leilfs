@@ -6,7 +6,7 @@
 
 set -eu -o pipefail
 
-readonly workspace="/tmp/saunafs-foundationdb-tmp"
+readonly workspace="/tmp/leil-foundationdb-tmp"
 
 function die() {
 	echo "Error: ${*}" >&2
