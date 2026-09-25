@@ -21,7 +21,9 @@
 #include "common/platform.h"
 
 #include <boost/shared_ptr.hpp>
+#include <cstddef>
 #include <deque>
+#include <mutex>
 
 #include "chunkserver-common/chunk_interface.h"
 #include "common/chunk_with_version_and_type.h"
@@ -33,6 +35,15 @@
 inline std::deque<ChunkWithType> gDamagedChunks;
 inline std::deque<ChunkWithType> gLostChunks;
 inline std::deque<ChunkWithVersionAndType> gNewChunks;
+
+struct ChunkReportOriginRun {
+	std::size_t count;
+	bool fromDiskScan;
+};
+
+/// Consecutive origins of entries in gNewChunks, stored as run lengths. The
+/// counts always add up to gNewChunks.size(). Guarded by gMasterReportsLock.
+inline std::deque<ChunkReportOriginRun> gNewChunkReportOriginRuns;
 inline std::atomic<uint32_t> gErrorCounter = 0;
 inline std::atomic_bool gHddSpaceChanged = false;
 
@@ -45,6 +56,18 @@ inline std::atomic_bool gResetTester = false;
 
 // master reports = damaged chunks, lost chunks, new chunks
 inline std::mutex gMasterReportsLock;
+
+/// Appends a chunk report and records its origin in the same critical section.
+inline void hddEnqueueChunkReport(const ChunkWithVersionAndType &chunk, bool fromDiskScan) {
+	std::lock_guard lockGuard(gMasterReportsLock);
+	gNewChunks.push_back(chunk);
+	if (gNewChunkReportOriginRuns.empty() ||
+	    gNewChunkReportOriginRuns.back().fromDiskScan != fromDiskScan) {
+		gNewChunkReportOriginRuns.push_back({1, fromDiskScan});
+	} else {
+		++gNewChunkReportOriginRuns.back().count;
+	}
+}
 
 /// Avoid and point out possible deadlocks, by waiting for the specified time to
 /// release the condition variable waiting on a Chunk. The number is small
