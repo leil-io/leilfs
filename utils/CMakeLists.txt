@@ -92,3 +92,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
   target_link_libraries(slow_chunk_scan dl)
 endif()
 install(TARGETS slow_chunk_scan DESTINATION ${LIB_SUBDIR})
+
+add_executable(send_wrapped_length_cs_register send_wrapped_length_cs_register.cc)
+target_link_libraries(send_wrapped_length_cs_register leil-common)
+install(TARGETS send_wrapped_length_cs_register RUNTIME DESTINATION ${BIN_SUBDIR})
+
+add_executable(send_wrapped_length_client_register send_wrapped_length_client_register.cc)
+target_link_libraries(send_wrapped_length_client_register leil-common)
+install(TARGETS send_wrapped_length_client_register RUNTIME DESTINATION ${BIN_SUBDIR})

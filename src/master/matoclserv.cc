@@ -2367,7 +2367,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 		uint32_t minTrashTime, maxTrashTime;
 		uint32_t rootUid, rootGid;
 		uint32_t mapAllUid, mapAllGid;
-		uint32_t infoLength, pathLength;
+		uint32_t infoLength, pathLength, bytesAfterInfo;
 		uint8_t rcode;
 		const uint8_t *path;
 		const char *info;
@@ -2427,7 +2427,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 
 			get32bit(&rptr, infoLength);
-			if (length < kRegisterNewSessionMinSize + infoLength) {
+			if (infoLength > length - kRegisterNewSessionMinSize) {
 				safs::log_info("CLTOMA_FUSE_REGISTER/ACL.2 - wrong size ({}/>={} + infoLength({}))",
 				               length, kRegisterNewSessionMinSize, infoLength);
 				eptr->mode = ClientConnectionMode::KILL;
@@ -2437,12 +2437,15 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			info = reinterpret_cast<const char*>(rptr);
 			rptr += infoLength;
 			get32bit(&rptr, pathLength);
-			if (length != kRegisterNewSessionMinSize + infoLength + pathLength &&
-			    length != kRegisterNewSessionMinSize + 16 + infoLength + pathLength) {
+			bytesAfterInfo = length - kRegisterNewSessionMinSize - infoLength;
+			if (pathLength != bytesAfterInfo &&
+			    (bytesAfterInfo < kDefaultMd5DigestSize ||
+			     pathLength != bytesAfterInfo - kDefaultMd5DigestSize)) {
 				safs::log_info(
 				    "CLTOMA_FUSE_REGISTER/ACL.2 - wrong size "
-				    "({}/{} + infoLength({}) + pathLength({}) + 16)",
-				    length, kRegisterNewSessionMinSize, infoLength, pathLength);
+				    "({}/{} + infoLength({}) + pathLength({}) + {})",
+				    length, kRegisterNewSessionMinSize, infoLength, pathLength,
+				    kDefaultMd5DigestSize);
 				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
@@ -2456,7 +2459,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			if (pathLength == 0) {
 				path = (const uint8_t*)"";
 			}
-			if (length == kRegisterNewSessionMinSize + 16 + infoLength + pathLength) {
+			if (pathLength != bytesAfterInfo) {
 				status =
 				    exports_check(eptr->peerIpAddress, eptr->version, 0, path, eptr->randomPassword,
 				                  rptr, &sessionFlags, &rootUid, &rootGid, &mapAllUid, &mapAllGid,
@@ -2555,11 +2558,13 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 
 			get32bit(&rptr, infoLength);
-
-			if (length != kRegisterNewMetaSessionMinSize + infoLength &&
-			    length != kRegisterNewMetaSessionMinSize + 16 + infoLength) {
-				safs::log_info("CLTOMA_FUSE_REGISTER/ACL.5 - wrong size ({}/{} + ileng({}) + 16)",
-				               length, kRegisterNewMetaSessionMinSize, infoLength);
+			bytesAfterInfo = length - kRegisterNewMetaSessionMinSize;
+			if (infoLength != bytesAfterInfo &&
+			    (bytesAfterInfo < kDefaultMd5DigestSize ||
+			     infoLength != bytesAfterInfo - kDefaultMd5DigestSize)) {
+				safs::log_info(
+				    "CLTOMA_FUSE_REGISTER/ACL.5 - wrong size ({}/{} + ileng({}) + {})",
+				    length, kRegisterNewMetaSessionMinSize, infoLength, kDefaultMd5DigestSize);
 				eptr->mode = ClientConnectionMode::KILL;
 				return;
 			}
@@ -2567,7 +2572,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			info = reinterpret_cast<const char*>(rptr);
 			rptr += infoLength;
 
-			if (length == kRegisterNewMetaSessionMinSize + 16 + infoLength) {
+			if (infoLength != bytesAfterInfo) {
 				status = exports_check(eptr->peerIpAddress, eptr->version, 1, nullptr,
 				                       eptr->randomPassword, rptr, &sessionFlags, &rootUid,
 				                       &rootGid, &mapAllUid, &mapAllGid, &minGoal, &maxGoal,
