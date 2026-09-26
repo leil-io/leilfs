@@ -161,8 +161,8 @@ struct inodedata {
 	int status = SAUNAFS_STATUS_OK;  // inodeLock
 	uint16_t flushwaiting = 0;       // inodeLock
 	uint16_t writewaiting = 0;       // inodeLock
-	std::atomic<uint16_t> lcnt = 0;
-	std::condition_variable flushcond;  // wait for !inqueue (flush): using globalLock
+	uint16_t lcnt = 0;               // globalLock
+	std::condition_variable flushcond;  // wait for emptyChunkDataList (flush): using globalLock
 	std::condition_variable writecond;  // wait for flushwaiting==0 (write): using inodeLock
 	std::list<ChunkDataPtr> chunkDataList;
 	// chunks pending to be written to chunkservers, waiting due to the max parallel chunks written
@@ -684,23 +684,29 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Unique
 		inodeLock.unlock();
 
 		globalLock.lock();
-		if (parent->emptyChunkDataList || status != SAUNAFS_STATUS_OK) {
-			parent->flushcond.notify_all();
-
-			add_pending_jobs_after_job_processed(parent, globalLock);
-		} else {// parent->emptyChunkDataList = false and status == SAUNAFS_STATUS_OK
-			if (somebodyIsWriting) {
-				write_enqueue(chunkData, globalLock);
+		if (somebodyIsWriting) {
+			// The writer may still push blocks; on error back off instead of spinning until it leaves
+			if (status != SAUNAFS_STATUS_OK) {
+				write_delayed_enqueue(chunkData, 1, globalLock);
 			} else {
-				add_pending_jobs_after_job_processed(parent, globalLock);
+				write_enqueue(chunkData, globalLock);
 			}
+		} else {
+			add_pending_jobs_after_job_processed(parent, globalLock);
 		}
+		if (parent->emptyChunkDataList) { parent->flushcond.notify_all(); }
 	}
 }
 
 /* globalLock: LOCKED*/
 void write_job_end(ChunkData *chunkData, int status, UniqueLock &globalLock) {
 	write_job_delayed_end(chunkData, status, 0, globalLock);
+}
+
+/* inodeLock: UNLOCKED */
+static bool write_inodedata_failed(inodedata *id) {
+	UniqueLock inodeLock(id->mutex);
+	return id->status != SAUNAFS_STATUS_OK;
 }
 
 class ChunkJobWriter {
@@ -748,6 +754,14 @@ void ChunkJobWriter::processJob(ChunkData *chunkData) {
 	chunkData_ = chunkData;
 	chunkIndex_ = chunkData_->chunkIndex;
 	inodedata *parent = chunkData_->getParent();
+
+	// After an error the data is dropped, so free the chunk without writing it
+	if (write_inodedata_failed(parent)) {
+		UniqueLock globalLock(gMutex);
+		// OK keeps the parent's error without logging it again
+		write_job_end(chunkData_, SAUNAFS_STATUS_OK, globalLock);
+		return;
+	}
 
 	/*  Process the job */
 	ChunkWriter writer(globalChunkserverStats, gChunkConnector, chunkData_->newDataInChainPipe[0],
@@ -852,6 +866,11 @@ void ChunkJobWriter::processJob(ChunkData *chunkData) {
 			                                       parent->inode);
 		}
 		UniqueLock globalLock(gMutex);
+		if (write_inodedata_failed(parent)) {
+			// The inode failed meanwhile, so free the chunk instead of waiting out the backoff
+			write_job_end(chunkData_, SAUNAFS_STATUS_OK, globalLock);
+			return;
+		}
 		int waitTime = 1;
 		if (chunkData_->tryCounter > 10) {
 			waitTime = std::min<int>(10, chunkData_->tryCounter - 9);
@@ -1217,35 +1236,26 @@ static void write_data_flushwaiting_decrease(inodedata *id, UniqueLock &) {
 	if (id->flushwaiting == 0 && id->writewaiting > 0) { id->writecond.notify_all(); }
 }
 
-/* inode: UNLOCKED */
-static void write_data_lcnt_increase(inodedata *id) { id->lcnt++; }
+/* globalLock: LOCKED */
+static void write_data_lcnt_increase(inodedata *id, UniqueLock &) { id->lcnt++; }
 
-/* inode: LOCKED */
-static void write_data_lcnt_decrease_check_deleted(inodedata *id, UniqueLock &inodeLock,
-                                                   bool &isDeleted) {
-	// As long as it is not freed, then we don't consider the inodedata deleted
-	isDeleted = false;
-	bool almostDone =
-	    (id->emptyChunkDataList) && (id->flushwaiting == 0) && (id->writewaiting == 0);
-	inodeLock.unlock();
-
-	UniqueLock globalLock(gMutex);
-	id->lcnt--;
-	if (id->lcnt == 0 && almostDone) {
-		write_free_inodedata(id, globalLock);
-		isDeleted = true;
-		return;
-	}
-	globalLock.unlock();
-
-	inodeLock.lock();
+/* globalLock: LOCKED */
+static void write_data_lcnt_decrease(inodedata *id, UniqueLock &globalLock) {
+	if (--id->lcnt > 0) { return; }
+	// Every holder flushes before letting go, so no chunk can be left
+	sassert(id->emptyChunkDataList);
+	write_free_inodedata(id, globalLock);
 }
 
-/* inode: LOCKED */
-inline void write_data_lcnt_decrease(inodedata *id, UniqueLock &inodeLock) {
-	bool dummy_isDeleted;
-	write_data_lcnt_decrease_check_deleted(id, inodeLock, dummy_isDeleted);
-	(void)dummy_isDeleted;
+/* inode: LOCKED, left UNLOCKED as id may be freed */
+static void write_data_truncate_release(inodedata *id, UniqueLock &inodeLock,
+                                        UniqueLock &globalLock) {
+	write_data_flushwaiting_decrease(id, inodeLock);
+	inodeLock.unlock();
+
+	globalLock.lock();
+	write_data_lcnt_decrease(id, globalLock);
+	globalLock.unlock();
 }
 
 void *write_data_new(inode_t inode) {
@@ -1254,7 +1264,7 @@ void *write_data_new(inode_t inode) {
 	id = write_get_inodedata(inode, globalLock);
 	if (id == kNoInodeData) { return kNoInodeData; }
 
-	write_data_lcnt_increase(id);
+	write_data_lcnt_increase(id, globalLock);
 	return id;
 }
 
@@ -1270,15 +1280,14 @@ static int write_data_flush(void *vid, UniqueLock &globalLock) {
 	inodeLock.unlock();
 
 	globalLock.lock();
-	// If there are no errors (status == SAUNAFS_STATUS_OK) and inode is waiting
-	// in the delayed queue, speed it up
+	// Speed up chunks waiting in the delayed queue; on error they must still run to be freed
 	auto delayedEnqueuedChunkData = delayed_queue_remove(id, globalLock);
-	if (id->status == SAUNAFS_STATUS_OK && !delayedEnqueuedChunkData.empty()) {
+	if (!delayedEnqueuedChunkData.empty()) {
 		write_enqueue(delayedEnqueuedChunkData, globalLock);
 	}
 
-	// Wait for the data to be flushed
-	while (!id->emptyChunkDataList && id->status == SAUNAFS_STATUS_OK) {
+	// Wait for every chunk to finish, even on error, so the caller can free the inodedata
+	while (!id->emptyChunkDataList) {
 		id->flushcond.wait(globalLock);
 	}
 	globalLock.unlock();
@@ -1315,7 +1324,11 @@ int write_data_flush_inode(inode_t inode) {
 	UniqueLock globalLock(gMutex);
 	inodedata *id = write_find_inodedata(inode, globalLock);
 	if (id == kNoInodeData) { return 0; }
-	return write_data_flush(id, globalLock);
+	// Hold a reference so a concurrent close can't free the inodedata under the flush
+	write_data_lcnt_increase(id, globalLock);
+	int status = write_data_flush(id, globalLock);
+	write_data_lcnt_decrease(id, globalLock);
+	return status;
 }
 
 int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, uint64_t length,
@@ -1324,21 +1337,20 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
 
 	// 1. Flush writes but don't finish it completely - it'll be done at the end of truncate
 	inodedata *id = write_get_inodedata(inode, globalLock);
-	globalLock.unlock();
 	if (id == kNoInodeData) { return SAUNAFS_ERROR_IO; }
+	write_data_lcnt_increase(id, globalLock);
+	globalLock.unlock();
 
 	UniqueLock inodeLock(id->mutex);
-	write_data_lcnt_increase(id);
 	write_data_flushwaiting_increase(id, inodeLock);  // this will block any writing to this inode
 	inodeLock.unlock();
 
 	globalLock.lock();
 	int err = write_data_flush(id, globalLock);
 	globalLock.unlock();
-	if (err != 0) {
+	if (err != SAUNAFS_STATUS_OK) {
 		inodeLock.lock();
-		write_data_flushwaiting_decrease(id, inodeLock);
-		write_data_lcnt_decrease(id, inodeLock);
+		write_data_truncate_release(id, inodeLock, globalLock);
 		return err;
 	}
 
@@ -1366,17 +1378,11 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
 	} while (status == SAUNAFS_ERROR_LOCKED || status == SAUNAFS_ERROR_CHUNKLOST ||
 	         status == SAUNAFS_ERROR_NOTDONE);
 	inodeLock.lock();
-	if (status != 0 || !writeNeeded) {
+	if (status != SAUNAFS_STATUS_OK || !writeNeeded) {
 		// Something failed or we have nothing to do more (master server managed to do the truncate)
-		bool isDeleted = false;
-		write_data_flushwaiting_decrease(id, inodeLock);
-		write_data_lcnt_decrease_check_deleted(id, inodeLock, isDeleted);
-		if (status == SAUNAFS_STATUS_OK) {
-			if (!isDeleted) { id->maxfleng = length; }
-			return 0;
-		} else {
-			return status;
-		}
+		if (status == SAUNAFS_STATUS_OK) { id->maxfleng = length; }
+		write_data_truncate_release(id, inodeLock, globalLock);
+		return status;
 	}
 
 	// We have to write zeros in suitable region to update xor/ec parity parts.
@@ -1403,21 +1409,11 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
 		std::vector<uint8_t> zeros(endOffset - length, 0);
 		err = write_blocks(id, length, zeros.size(), zeros.data());
 
-		inodeLock.lock();
-		if (err != 0) {
-			truncateLocatorsDataLock.lock();
-			truncateLocatorsData.erase(id->inode);
-			truncateLocatorsDataLock.unlock();
-			write_data_flushwaiting_decrease(id, inodeLock);
-			write_data_lcnt_decrease(id, inodeLock);
-			return err;
-		}
-		inodeLock.unlock();
-
 		globalLock.lock();
-		// Wait for writing threads to finish
-		err = write_data_flush(id, globalLock);
+		// Wait for writing threads to finish, even if passing the zeros failed
+		int flushErr = write_data_flush(id, globalLock);
 		globalLock.unlock();
+		if (err == SAUNAFS_STATUS_OK) { err = flushErr; }
 
 		inodeLock.lock();
 
@@ -1425,10 +1421,9 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
 		truncateLocatorsData.erase(id->inode);
 		truncateLocatorsDataLock.unlock();
 
-		if (err != 0) {
+		if (err != SAUNAFS_STATUS_OK) {
 			// unlock the chunk here?
-			write_data_flushwaiting_decrease(id, inodeLock);
-			write_data_lcnt_decrease(id, inodeLock);
+			write_data_truncate_release(id, inodeLock, globalLock);
 			return err;
 		}
 	}
@@ -1441,15 +1436,14 @@ int write_data_truncate(inode_t inode, bool opened, uint32_t uid, uint32_t gid, 
 	status = fs_truncateend(inode, uid, gid, length, lockId, attr);
 
 	inodeLock.lock();
-	write_data_flushwaiting_decrease(id, inodeLock);
-	write_data_lcnt_decrease(id, inodeLock);
+	write_data_truncate_release(id, inodeLock, globalLock);
 
 	if (status != SAUNAFS_STATUS_OK) {
 		safs::log_warn("truncateend on file {} to length {}: {}", inode, length,
 		               saunafs_error_string(status));
 		return status;
 	}
-	return 0;
+	return SAUNAFS_STATUS_OK;
 }
 
 int write_data_end(void *vid) {
@@ -1457,18 +1451,7 @@ int write_data_end(void *vid) {
 	inodedata *id = (inodedata *)vid;
 	if (id == kNoInodeData) { return SAUNAFS_ERROR_IO; }
 	int status = write_data_flush(id, globalLock);
-	globalLock.unlock();
-
-	bool almostDone = false;
-	{
-		UniqueLock inodeLock(id->mutex);
-		almostDone = (id->emptyChunkDataList) && (id->flushwaiting == 0) && (id->writewaiting == 0);
-	}
-
-	globalLock.lock();
-	id->lcnt--;
-	if (id->lcnt == 0 && almostDone) { write_free_inodedata(id, globalLock); }
-
+	write_data_lcnt_decrease(id, globalLock);
 	return status;
 }
 
