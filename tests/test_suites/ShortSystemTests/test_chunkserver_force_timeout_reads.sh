@@ -1,7 +1,7 @@
-# Runtime is dominated by how many reads exhaust sfschunkservertotalreadto below, which caps
-# the whole read at 30ms, and are then retried. That spreads the test from about 57s to
-# 380s with load, more than the machine multiplier scales the budget by, so the base has
-# to absorb the difference.
+# Runtime is dominated by reads that hit the chunkserver communication timeout
+# (sfschunkservertotalreadto), which limits each attempt to 30ms before retries.
+# Retries make runtime vary from about 57s to 380s under load, so the base timeout
+# must cover more than the machine multiplier alone provides.
 timeout_set 150 seconds
 
 # Use goal 2 to increase the chance of overwhelming the chunkserver read queues
