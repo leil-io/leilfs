@@ -22,6 +22,8 @@
 
 #include "common/platform.h"
 
+#include <span>
+
 #include "common/compact_vector.h"
 #include "common/exception.h"
 
@@ -59,6 +61,9 @@ public:
 	SAUNAFS_CREATE_EXCEPTION_CLASS(InvalidOperation, Exception);
 
 	ChunkGoalCounters() {}
+	// Rebuilds validated counters in time proportional to entries, not reference counts.
+	// Throws InvalidOperation on too many entries, an invalid goal, a zero count or unsorted goals.
+	explicit ChunkGoalCounters(std::span<const GoalCounter> counters);
 
 	// Adds file with a given goal to calculations
 	void addFile(uint8_t goal);
