@@ -82,8 +82,10 @@ compile_commands.json
 ##############
 src/chunkserver/plugins/zonefs_disk
 src/chunkserver/plugins/ice_disk_energy_manager
+src/chunkserver/plugins/leil_cmr_disk
 tests/ci_build/run-smr-tests.sh
 tests/test_suites/ICETests
+tests/test_suites/LeilCMRTests
 tests/test_suites/SMRTests
 tests/test_suites/WindowsClientTests
 
@@ -112,6 +114,11 @@ vcpkg_installed
 # leilfs-api (Go) #
 ##############
 /api/
+src/api
+src/common-go
+src/leil-admin-go
+src/leil-go
+src/leil-monitoring
 tests/test_suites/API_tests
 
 # CMake #
