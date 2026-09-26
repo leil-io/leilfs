@@ -404,16 +404,16 @@ void write_cb_wake_waiters() {
 bool write_cb_wait_for_block(inodedata *id) {
 	LOG_AVG_TILL_END_OF_SCOPE0("write_cb_wait_for_block");
 	fcbwaiting++;
-	uint64_t totalCachedBlocks = id->totalCachedBlocks;
 	UniqueLock fcbcondLock(fcbcondMutex);
-	while (id->status == SAUNAFS_STATUS_OK &&
-	       (freecacheblocks <= 0
-	        // totalCachedBlocks / (totalCachedBlocks + freecacheblocks) >
-	        // gCachePerInodePercentage / 100 really means "0 > 0"
-	        || totalCachedBlocks * 100 >
-	               (totalCachedBlocks + freecacheblocks) * gCachePerInodePercentage)) {
-		fcbcond.wait(fcbcondLock);
-	}
+	// Re-read the inode's share on every wakeup, as its blocks drain while waiting
+	fcbcond.wait(fcbcondLock, [id] {
+		if (id->status != SAUNAFS_STATUS_OK) { return true; }
+		uint64_t totalCachedBlocks = id->totalCachedBlocks;
+		int64_t freeBlocks = freecacheblocks;
+		// totalCachedBlocks / (totalCachedBlocks + freeBlocks) <= gCachePerInodePercentage / 100
+		return freeBlocks > 0 && totalCachedBlocks * 100 <=
+		                             (totalCachedBlocks + freeBlocks) * gCachePerInodePercentage;
+	});
 	fcbwaiting--;
 	return id->status == SAUNAFS_STATUS_OK;
 }
@@ -678,10 +678,11 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Unique
 		write_delayed_enqueue(chunkData, seconds, globalLock);
 	} else {  // no more work or error occurred
 		bool somebodyIsWriting = chunkData->writesCount > 0;
-		// if this is an error then release all data blocks
-		write_cb_release_blocks(chunkData->dataChain.size());
-
+		// if this is an error then release all data blocks, after dropping them from the
+		// inode's share, which woken writers re-read
+		size_t droppedBlocks = chunkData->dataChain.size();
 		chunkData->clear();
+		write_cb_release_blocks(droppedBlocks);
 		if (!somebodyIsWriting) {
 			// We don't reset maxfleng (id->maxfleng = 0;) for a while longer, to
 			// have its value ready to some quick cache responses in lookup and
