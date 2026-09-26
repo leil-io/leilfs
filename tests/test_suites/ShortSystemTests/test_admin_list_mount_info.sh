@@ -1,3 +1,8 @@
+# The two assert_eventually waits are rescaled by the machine multiplier,
+# but the five-second sleep is not. Set an explicit budget so a stalled
+# poll reports its assertion instead of reaching the hard timeout first.
+timeout_set 150 seconds
+
 MOUNTS=4 \
 	USE_RAMDISK=YES \
 	setup_local_empty_saunafs info

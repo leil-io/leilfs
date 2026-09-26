@@ -26,7 +26,10 @@ testing_thread() {
 
 # The code executed by a following command is supposed to hang, thus we run it in a background:
 testing_thread &
-assert_success wait_for 'test -a "$file_created_on_success"' '15 seconds'
+# wait_for takes its limit literally; unlike assert_eventually it does not rescale. The
+# write it waits on is ~93MB through FUSE, which does slow down with load, so a fixed 15
+# seconds is the one budget here that does not follow the machine.
+assert_success wait_for 'test -a "$file_created_on_success"' "$(timeout_rescale_seconds 15) seconds"
 sleep 5 # let's let the second 'dd' run and (possibly) fail the test
 
 # Kill background processes before exit to avoid false negatives from valgrind

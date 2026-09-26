@@ -1,4 +1,8 @@
-timeout_set 90 seconds
+# Runtime is dominated by reads that hit the chunkserver communication timeout
+# (sfschunkservertotalreadto), which limits each attempt to 30ms before retries.
+# Retries make runtime vary from about 57s to 380s under load, so the base timeout
+# must cover more than the machine multiplier alone provides.
+timeout_set 150 seconds
 
 # Use goal 2 to increase the chance of overwhelming the chunkserver read queues
 # Lots of readahead requests should be sent to chunkservers with very low timeout, and we want
