@@ -1021,12 +1021,15 @@ void *write_worker(void *) {
 /* API | globalLock: INITIALIZED,UNLOCKED */
 void write_data_init(uint32_t cachesize, uint32_t retries, uint32_t workers,
                      uint32_t writewindowsize, uint32_t chunkserverTimeout_ms,
+                     uint32_t chunkserverRoundTripTime_ms,
                      uint32_t cachePerInodePercentage, uint32_t waveTimeout,
                      uint32_t maxChunksWrittenInParallelPerInode, bool useWriteFlushPacket) {
 	uint64_t cachebytecount = uint64_t(cachesize) * 1024 * 1024;
 	uint64_t cacheblockcount = (cachebytecount / SFSBLOCKSIZE);
 	pthread_attr_t thattr;
 
+	gChunkConnector.setRoundTripTime(chunkserverRoundTripTime_ms);
+	gChunkConnector.setChunkserverStats(&globalChunkserverStats);
 	gChunkConnector.setSourceIp(fs_getsrcip());
 	gWriteWindowSize = writewindowsize;
 	gUseWriteFlushPacket = useWriteFlushPacket;
