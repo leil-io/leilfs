@@ -19,6 +19,9 @@ cat <<EOF > ${TEMP_DIR}/ganesha.conf
 NFSV4 {
 	Grace_Period = 5;
 	Lease_Lifetime = 5;
+	# Avoid oversized denied replies from Ganesha's internal blocking queue.
+	# The Linux NFS client retries the conflict instead of decoding it as EIO.
+	Blocking_Locks = false;
 }
 EXPORT
 {

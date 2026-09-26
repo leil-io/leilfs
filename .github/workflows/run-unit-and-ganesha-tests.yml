@@ -134,7 +134,10 @@ jobs:
                   sudo chown saunafstest:saunafstest /mnt/hd{b,c,d}
                   SCRIPT="${GITHUB_WORKSPACE}/tests/ci_build/run-ganesha-tests.sh"
                   chmod +x "${SCRIPT}"
-                  sudo bash -c "ulimit -c unlimited && exec '${SCRIPT}'"
+                  # -E: sudoers resets the environment by default, so without this the job's
+                  # SAUNAFS_TEST_TIMEOUT_MULTIPLIER is gone before run-ganesha-tests.sh gets to
+                  # preserve it for leil-tests, and every test silently runs on a multiplier of 1.
+                  sudo -E bash -c "ulimit -c unlimited && exec '${SCRIPT}'"
 
             - name: Analyze core dump with coredumpctl
               if: failure()
