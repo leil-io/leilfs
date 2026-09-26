@@ -635,16 +635,19 @@ void add_pending_jobs_after_new_job(inodedata *parent, ChunkData *chunkData,
 	add_pending_jobs(parent, globalLock);
 }
 
-/* globalLock: LOCKED*/
+/* globalLock: LOCKED, left UNLOCKED */
 void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, UniqueLock &globalLock) {
 	LOG_AVG_TILL_END_OF_SCOPE0("write_job_delayed_end");
 	LOG_AVG_TILL_END_OF_SCOPE1("write_job_delayed_end#sec", seconds);
 	inodedata *parent = chunkData->getParent();
-	globalLock.unlock();
 
+	// Keep the global lock throughout, so a flush can't see the chunk list empty and free the
+	// parent before this job is done with it
 	UniqueLock inodeLock(parent->mutex);
+	// Unlocking the chunk talks to the master, so it happens once both locks are released
+	std::unique_ptr<WriteChunkLocator> releasedLocator;
 	if (chunkData->locator != nullptr && chunkData->locator->shouldReset()) {
-		chunkData->locator.reset();
+		releasedLocator = std::move(chunkData->locator);
 	}
 
 	if (status != SAUNAFS_STATUS_OK) {
@@ -658,16 +661,10 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Unique
 		seconds = 0;
 	}
 	if (chunkData->writesCount > 0 && status == SAUNAFS_STATUS_OK) {
-		inodeLock.unlock();
-
-		globalLock.lock();
 		write_enqueue(chunkData, globalLock);
 	} else if (!chunkData->dataChain.empty() &&
 	           status == SAUNAFS_STATUS_OK) {  // still have some work to do
 		chunkData->tryCounter = 0;             // on good write reset try counter
-		inodeLock.unlock();
-
-		globalLock.lock();
 		write_delayed_enqueue(chunkData, seconds, globalLock);
 	} else {  // no more work or error occurred
 		bool somebodyIsWriting = chunkData->writesCount > 0;
@@ -681,9 +678,7 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Unique
 			// getattr syscalls
 			write_free_chunkdata(chunkData, inodeLock);
 		}
-		inodeLock.unlock();
 
-		globalLock.lock();
 		if (somebodyIsWriting) {
 			// The writer may still push blocks; on error back off instead of spinning until it leaves
 			if (status != SAUNAFS_STATUS_OK) {
@@ -696,9 +691,11 @@ void write_job_delayed_end(ChunkData *chunkData, int status, int seconds, Unique
 		}
 		if (parent->emptyChunkDataList) { parent->flushcond.notify_all(); }
 	}
+	inodeLock.unlock();
+	globalLock.unlock();
 }
 
-/* globalLock: LOCKED*/
+/* globalLock: LOCKED, left UNLOCKED */
 void write_job_end(ChunkData *chunkData, int status, UniqueLock &globalLock) {
 	write_job_delayed_end(chunkData, status, 0, globalLock);
 }
