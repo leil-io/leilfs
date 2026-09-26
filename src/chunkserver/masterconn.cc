@@ -37,6 +37,7 @@
 #include <ctime>
 #include <exception>
 
+#include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/master_connection.h"
@@ -163,7 +164,18 @@ void masterconn_check_hdd_reports() {
 			std::vector<ChunkWithVersionAndType> chunks_with_version;
 			hddGetNewChunks(chunks_with_version, chunkBulkSize);
 			if (!chunks_with_version.empty()) {
-				eptr->createAttachedPacket(cstoma::chunkNew::build(chunks_with_version));
+				// Registration only carries the chunks the background disk scan had found by
+				// the time it ran, which is next to none of them. The rest surface here, and
+				// reporting them as new chunks does not tell the master that registration is
+				// still going on, so it resumes dumping metadata in the middle of the very
+				// inventory the skip exists to protect. While the scan is still running these
+				// are registration, so send them as such and keep that window open.
+				if (hddScansInProgress()) {
+					eptr->createAttachedPacket(
+					    cstoma::registerChunks::build(chunks_with_version));
+				} else {
+					eptr->createAttachedPacket(cstoma::chunkNew::build(chunks_with_version));
+				}
 			}
 		} else {
 			// A new-chunk report never creates membership on an identity-registered connection,
