@@ -1,7 +1,7 @@
 print_timeout_diagnostics() {
 	{
 		echo "===== Timeout diagnostics: processes ====="
-		ps -eo user,pid,ppid,stat,etime,wchan:32,args --forest || true
+		ps -eo user,pid,ppid,stat,etime,wchan:32,comm --forest || true
 
 		echo "===== Timeout diagnostics: test mounts ====="
 		findmnt -rn -o TARGET,SOURCE,FSTYPE,OPTIONS 2>/dev/null \

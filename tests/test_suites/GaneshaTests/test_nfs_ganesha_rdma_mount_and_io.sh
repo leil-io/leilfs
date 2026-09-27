@@ -32,21 +32,6 @@ if ! is_program_installed rdma || ! is_program_installed ibv_devinfo; then
 	test_end
 fi
 
-# Some cloud runners already expose a hardware RDMA device (newer Azure generations
-# carry a MANA adapter presenting mana_0). The NFS client resolves the mount address
-# to that device rather than the soft one created below, and rpcrdma refuses a device
-# without fast memory registration:
-#   rpcrdma: 'frwr' mode is not supported by device mana_0
-# The kernel gates frwr on IB_DEVICE_MEM_MGT_EXTENSIONS, which ibv_devinfo reports as
-# MEM_MGT_EXTENSIONS. Nothing here can steer that choice, so skip rather than fail.
-for preexisting_rdma_dev in $(ls /sys/class/infiniband 2>/dev/null); do
-	if ! ibv_devinfo -d "${preexisting_rdma_dev}" -v 2>/dev/null | grep -q MEM_MGT_EXTENSIONS; then
-		echo "SKIP: RDMA device ${preexisting_rdma_dev} lacks fast memory registration (frwr);"
-		echo "      the NFS client would select it over ${rdma_dev} and the mount would fail."
-		test_end
-	fi
-done
-
 # Bind the soft-RDMA device to a real NIC (the default-route interface) and mount
 # via its routable IP. A loopback device (siw/rxe on 'lo', 127.0.0.1) brings the
 # port up but does not deliver the RPC data path for a same-host mount; a real
@@ -61,6 +46,26 @@ if [[ -z ${rdma_netdev} || -z ${server_ip} ]]; then
 	echo "SKIP: no routable IPv4 interface for the RDMA data path."
 	test_end
 fi
+
+# Some Azure runners expose mana_0 on the selected route. It can take precedence
+# over the soft device below, but rpcrdma rejects it when it lacks fast memory
+# registration. Ignore unsupported devices on unrelated interfaces.
+while read -r preexisting_rdma_dev; do
+	if ! ibv_devinfo -d "${preexisting_rdma_dev}" -v 2>/dev/null | grep -q MEM_MGT_EXTENSIONS; then
+		printf 'SKIP: RDMA device %s on %s lacks fast memory registration (frwr);\n' \
+			"${preexisting_rdma_dev}" "${rdma_netdev}"
+		echo "      the NFS client may select it instead of ${rdma_dev}."
+		test_end
+	fi
+done < <(rdma link show 2>/dev/null | awk -v netdev="${rdma_netdev}" '
+	{
+		for (i = 1; i < NF; ++i) {
+			if ($i == "netdev" && $(i + 1) == netdev) {
+				split($2, device_and_port, "/")
+				print device_and_port[1]
+			}
+		}
+	}' | sort -u)
 
 # Cleanup and the single EXIT trap are defined before any RDMA device or daemon
 # is created, so a failure at any point tears them down. Registering a second
