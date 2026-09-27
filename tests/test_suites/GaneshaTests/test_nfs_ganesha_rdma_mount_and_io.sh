@@ -192,16 +192,6 @@ sudo "${ganesha_bin}" -f "${ganesha_config}" -L "${ganesha_log}"
 
 # Wait for the NFSv4 control port. showmount/check_rpc_service speak the v3 MOUNT
 # protocol, which an NFSv4-only export does not register.
-wait_for_tcp_port() {
-	local port=$1 tries=30
-	while ((tries-- > 0)); do
-		if ss -ltn 2>/dev/null | grep -qE "[:.]${port}([[:space:]]|$)"; then
-			return 0
-		fi
-		sleep 1
-	done
-	return 1
-}
 if ! wait_for_tcp_port 2049; then
 	cat "${ganesha_log}"
 	test_fail "Ganesha did not open the NFSv4 control port 2049"

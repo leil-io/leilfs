@@ -132,7 +132,11 @@ EOF
 
 sudo /usr/bin/ganesha.nfsd -f "${ganesha_config}" -L "${ganesha_log}"
 
-check_rpc_service
+echo "Waiting for Ganesha on TCP port 2049"
+if ! wait_for_tcp_port 2049 20; then
+	tail -n 200 "${ganesha_log}" || true
+	test_fail "Ganesha did not open TCP port 2049"
+fi
 for nfs_version in 4.1 4.2; do
 	run_session_mount "${nfs_version}"
 done
