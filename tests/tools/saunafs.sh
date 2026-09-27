@@ -1,3 +1,6 @@
+# The timeout watchdog forks before setup and must inherit this array.
+declare -gA saunafs_info_
+
 # Usage: setup_local_empty_saunafs out_var
 # Configures and starts master, chunkserver and mounts
 # If out_var provided an associative array with name $out_var
@@ -31,7 +34,7 @@ setup_local_empty_saunafs() {
 	local shadow_start_param=${SHADOW_START_PARAM:-}
 	local user_id=${USER_ID:=$(id -u)}
 	local group_id=${GROUP_ID:=$(id -g)}
-	declare -gA saunafs_info_
+	saunafs_info_[api_server_count]=0
 	saunafs_info_[chunkserver_count]=$number_of_chunkservers
 	saunafs_info_[admin_password]=${ADMIN_PASSWORD:-password}
 	saunafs_info_[metadata_backend]="${metadata_backend}"
