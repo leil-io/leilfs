@@ -953,6 +953,7 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 	inode_t inode;
 	Attributes attr;
 	bool cacheHit = false;
+	bool masterLookup = false;
 	int status;
 
 	// Captured before the master request, see DirEntryCache::generation().
@@ -1000,6 +1001,7 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 		cacheHit = true;
 	} else {  // dentry miss
 		stats_inc(OP_LOOKUP);
+		masterLookup = true;
 		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
 			fs_lookup(parent, std::string(name, nameLen), ctx.uid, ctx.gid, &inode, attr));
 	}
@@ -1020,10 +1022,29 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 	}
 	uint64_t maxFileLen =
 	    (attr[0] == TYPE_FILE) ? WriteAlgorithm::write_data_getmaxfleng(inode) : 0;
+	// The record length is read before the generation on purpose: a flush that ends the
+	// record between the two reads stamps the inode, so the generation catches it.
+	bool answerUncacheable = false;
+	if (masterLookup && attr[0] == TYPE_FILE && !gDirEntryCache.isCurrent(cacheGeneration, inode)) {
+		// The inode was invalidated while the answer was in flight, so the answer may predate
+		// a flush whose write record is already gone: ask once more, past it. A second
+		// overlap makes the reply uncacheable for the kernel.
+		cacheGeneration = gDirEntryCache.generation();
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(
+		    status, ctx,
+		    fs_lookup(parent, std::string(name, nameLen), ctx.uid, ctx.gid, &inode, attr));
+		if (status != SAUNAFS_STATUS_OK) {
+			oplog_printf(ctx, "lookup (%" PRIiNode ",%s): %s", parent, name,
+			             saunafs_error_string(status));
+			throw RequestException(status);
+		}
+		maxFileLen = (attr[0] == TYPE_FILE) ? WriteAlgorithm::write_data_getmaxfleng(inode) : 0;
+		answerUncacheable = !gDirEntryCache.isCurrent(cacheGeneration, inode);
+	}
 	EntryParam e;
 	e.ino = inode;
 	uint8_t modeAttr = attr_get_mattr(attr);
-	e.attr_timeout = (modeAttr & MATTR_NOACACHE) ? 0.0 : attr_cache_timeout;
+	e.attr_timeout = ((modeAttr & MATTR_NOACACHE) || answerUncacheable) ? 0.0 : attr_cache_timeout;
 	if (modeAttr & MATTR_NOECACHE) {
 		e.entry_timeout = 0.0;
 	} else {
@@ -1107,13 +1128,27 @@ AttrReply getattr(Context &ctx, inode_t ino) {
 	}
 
 	maxfleng = WriteAlgorithm::write_data_getmaxfleng(ino);
+	// Same order and reason as in lookup(): record length first, then the generation.
+	bool answerUncacheable = false;
+	if (!fromCache && attr[0] == TYPE_FILE && !gDirEntryCache.isCurrent(cacheGeneration, ino)) {
+		cacheGeneration = gDirEntryCache.generation();
+		RETRY_ON_ERROR_WITH_UPDATED_CREDENTIALS(status, ctx,
+		                                        fs_getattr(ino, ctx.uid, ctx.gid, attr));
+		if (status != SAUNAFS_STATUS_OK) {
+			oplog_printf(ctx, "getattr (%" PRIiNode "): %s", ino, saunafs_error_string(status));
+			throw RequestException(status);
+		}
+		maxfleng = WriteAlgorithm::write_data_getmaxfleng(ino);
+		answerUncacheable = !gDirEntryCache.isCurrent(cacheGeneration, ino);
+	}
 	memset(&o_stbuf, 0, sizeof(struct stat));
 	attr_to_stat(ino,attr,&o_stbuf);
 	if (attr[0]==TYPE_FILE && maxfleng>(uint64_t)(o_stbuf.st_size)) {
 		update_attr_size(attr, maxfleng);
 		o_stbuf.st_size=maxfleng;
 	}
-	attr_timeout = (attr_get_mattr(attr)&MATTR_NOACACHE)?0.0:attr_cache_timeout;
+	attr_timeout =
+	    ((attr_get_mattr(attr) & MATTR_NOACACHE) || answerUncacheable) ? 0.0 : attr_cache_timeout;
 #ifdef _WIN32
 	patch_uid_gid_fields(o_stbuf);
 #endif

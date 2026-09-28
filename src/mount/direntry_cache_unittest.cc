@@ -449,6 +449,28 @@ TEST(DirEntryCache, InvalidationDuringLookupIsNotUndone) {
 	ASSERT_FALSE(cache.lookup(SaunaClient::Context(0, 0, 0, 0), 5, attr));
 }
 
+TEST(DirEntryCache, IsCurrentFollowsInodeInvalidation) {
+	DirEntryCacheIntrospect cache(5000000);
+
+	// A reader captures the generation before asking the master.
+	uint64_t generation_before_request = cache.generation();
+	ASSERT_TRUE(cache.isCurrent(generation_before_request, 5));
+
+	// A flush of that inode while the request is in flight makes the answer suspect, an
+	// invalidation of another inode does not.
+	cache.lockAndInvalidateInode(7);
+	ASSERT_TRUE(cache.isCurrent(generation_before_request, 5));
+	ASSERT_FALSE(cache.isCurrent(generation_before_request, 7));
+	cache.lockAndInvalidateInode(5);
+	ASSERT_FALSE(cache.isCurrent(generation_before_request, 5));
+
+	// A generation captured after the flush is current until the next invalidation.
+	uint64_t generation_after_flush = cache.generation();
+	ASSERT_TRUE(cache.isCurrent(generation_after_flush, 5));
+	cache.clear();
+	ASSERT_FALSE(cache.isCurrent(generation_after_flush, 5));
+}
+
 TEST(DirEntryCache, CurrentGenerationStillInserts) {
 	DirEntryCacheIntrospect cache(5000000);
 

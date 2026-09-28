@@ -200,9 +200,20 @@ public:
 	 *
 	 * A caller reads this before asking the master and passes it back to insert, which drops
 	 * data fetched before an invalidation of an inode the entry is keyed by. That is what stops a
-	 * reply in flight from reviving an entry the invalidation erased.
+	 * reply in flight from reviving an entry the invalidation erased. isCurrent answers the same
+	 * question for the reply itself.
 	 */
 	uint64_t generation() const { return generation_; }
+
+	/*! \brief Whether nothing keyed by inode was invalidated since generation was captured.
+	 *
+	 * Takes the shared lock. A caller that fetched an answer after the capture uses it to tell
+	 * whether that answer may predate a flush of the inode.
+	 */
+	bool isCurrent(uint64_t generation, inode_t inode) {
+		shared_lock<SharedMutex> guard(rwlock_);
+		return currentSince(generation, inode);
+	}
 
 	/*! \brief Distinct inodes whose last invalidation is remembered before the table resets. */
 	static constexpr size_t kMaxTrackedInvalidations = 16384;
@@ -773,7 +784,7 @@ protected:
 
 	/*! \brief Whether nothing keyed by inode was invalidated after generation was captured.
 	 *
-	 * Caller holds the write lock. kAnyGeneration is always current.
+	 * Caller holds the lock, shared or unique. kAnyGeneration is always current.
 	 */
 	bool currentSince(uint64_t generation, inode_t inode) const {
 		if (generation == kAnyGeneration) { return true; }
