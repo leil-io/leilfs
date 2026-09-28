@@ -23,6 +23,19 @@ retry_command_with_attempts() {
 	return 1
 }
 
+# Wait until a service starts listening on a TCP port.
+wait_for_tcp_port() {
+	local port=$1
+	local attempts=${2:-30}
+	while ((attempts-- > 0)); do
+		if ss -ltn 2>/dev/null | grep -qE "[:.]${port}([[:space:]]|$)"; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
 # Create PID file for Ganesha
 create_ganesha_pid_file() {
 	if [ ! -f "${GANESHA_PID_FILE}" ]; then

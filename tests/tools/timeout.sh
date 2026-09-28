@@ -1,3 +1,21 @@
+print_timeout_diagnostics() {
+	{
+		echo "===== Timeout diagnostics: processes ====="
+		ps -eo user,pid,ppid,stat,etime,wchan:32,comm --forest || true
+
+		echo "===== Timeout diagnostics: test mounts ====="
+		findmnt -rn -o TARGET,SOURCE,FSTYPE,OPTIONS 2>/dev/null \
+			| awk '$3 ~ /^(nfs|fuse)/' || true
+
+		local log
+		for log in "${TEMP_DIR}"/ganesha*.log; do
+			[[ -f ${log} ]] || continue
+			echo "===== Timeout diagnostics: ${log} (last 200 lines) ====="
+			tail -n 200 "${log}" || true
+		done
+	} >&2
+}
+
 timeout_killer_thread() {
 	# Python3 is used here to perform floating-point multiplication in timeout computation
 	assert_program_installed python3
@@ -48,14 +66,21 @@ timeout_killer_thread() {
 				"$value_string" )
 
 			test_add_failure "$test_timeout_message"
+			# Keep the timeout as the result even if diagnostics or cleanup fail.
 			test_freeze_result
+			print_timeout_diagnostics || true
 			# Stop LeilFS and FDB before the sweep. fdb_cluster_started is set
 			# after this subshell forks, so cleanup_fdb_cluster runs
-			# unconditionally (safe no-op without a cluster). killall stays
-			# last: it kills this shell too.
-			terminate_fs_processes
-			cleanup_fdb_cluster
-			killall -9 -u $(whoami)
+			# unconditionally (safe no-op without a cluster). Cleanup is
+			# best-effort; the timeout above remains the test failure.
+			if ! terminate_fs_processes; then
+				echo 'WARNING: filesystem cleanup failed after timeout' >&2
+			fi
+			if ! cleanup_fdb_cluster; then
+				echo 'WARNING: FDB cleanup failed after timeout' >&2
+			fi
+			# killall stays last: it kills this shell too.
+			killall -9 -u "$(whoami)" || true
 		fi
 	done
 }

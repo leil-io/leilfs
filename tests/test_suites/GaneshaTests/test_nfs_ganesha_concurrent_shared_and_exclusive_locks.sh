@@ -19,6 +19,9 @@ cat <<EOF > ${TEMP_DIR}/ganesha.conf
 NFSV4 {
 	Grace_Period = 5;
 	Lease_Lifetime = 5;
+	# Avoid oversized denied replies from Ganesha's internal blocking queue.
+	# The Linux NFS client retries the conflict instead of decoding it as EIO.
+	Blocking_Locks = false;
 }
 EXPORT
 {
@@ -110,7 +113,7 @@ echo "Attempt to acquire a shared lock on the range [200, 250] in dir/file_test"
 readlock "dir/file_test" 200 50
 sharedLocks[2]=$!
 
-# Wait a little bit for the server to queue the shared lock
+# Give the Linux NFS client time to retry the denied shared lock.
 sleep 2
 
 # Verify 2 locks are active: one shared lock and an exclusive one
