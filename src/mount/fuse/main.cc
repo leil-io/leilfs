@@ -297,6 +297,9 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 		}
 		fs_init_threads(params.io_retries, params.max_wait_retry_time,
 		                params.mastercomm_sleep_time_divisor);
+		// A meta mount skips fs_init, so it fills the session fields itself before reporting
+		mount_info_init(getuid(), getgid(), get_username_by_uid(getuid()), getpid(),
+		                SAUNAFS_PACKAGE_VERSION, GIT_COMMIT);
 	}
 
 	struct fuse_session *se;

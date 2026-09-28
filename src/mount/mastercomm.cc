@@ -39,6 +39,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -1446,6 +1447,9 @@ void* fs_nop_thread(void *arg) {
 	int now;
 	inode_t inodeswritecnt = 0;
 	bool lastDisconnectedStatus = disconnect || (fd < 0);
+	// The tweaks registered before this thread starts never move the epoch captured below,
+	// so the first send has its own trigger
+	bool mountInfoSent = false;
 	(void)arg;
 
 #ifdef ENABLE_EXIT_ON_USR1
@@ -1522,28 +1526,34 @@ void* fs_nop_thread(void *arg) {
 			}
 
 			const uint64_t currentTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
-			if (currentTweaksGlobalEpoch > lastTweaksGlobalEpoch ||
-			    lastDisconnectedStatus) {
+			if (currentTweaksGlobalEpoch > lastTweaksGlobalEpoch || lastDisconnectedStatus ||
+			    !mountInfoSent) {
+				// Before mount_info_init the session fields are blank, so the first send waits;
+				// the readiness check and the snapshot share the one lock that guards them.
 				if (masterVersion >= kFirstVersionWithMountInfoOnMonitoring && !disconnect) {
-					std::string mountInfoStr;
+					std::optional<std::string> mountInfoStr;
 					{
 						std::lock_guard lock(gMountInfoMtx);
-						gMountInfo.buildMountInfoStr();
-						mountInfoStr = gMountInfo.getMountInfoStr();
+						if (gMountInfo.isInitialized()) {
+							gMountInfo.buildMountInfoStr();
+							mountInfoStr = gMountInfo.getMountInfoStr();
+						}
 					}
+					if (mountInfoStr) {
+						auto message = cltoma::updateMountInfo::build(*mountInfoStr);
+						uint32_t messageLength = message.size();
+						std::vector<uint8_t> mountInfoPacket(messageLength);
+						std::copy(message.begin(), message.end(), mountInfoPacket.begin());
 
-					auto message = cltoma::updateMountInfo::build(mountInfoStr);
-					uint32_t messageLength = message.size();
-					std::vector<uint8_t> mountInfoPacket(messageLength);
-					std::copy(message.begin(), message.end(), mountInfoPacket.begin());
-
-					if (fs_write(fd, mountInfoPacket.data(), messageLength,
-					             kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageLength) {
-						safs::log_warn("Failed to send mount info to master");
-						disconnect = true;
-					} else {
-						stats_inc(MASTER_BYTESSENT, statsptr, messageLength);
-						stats_inc(MASTER_PACKETSSENT, statsptr);
+						if (fs_write(fd, mountInfoPacket.data(), messageLength,
+						             kDefaultTcpCommTimeoutMSeconds) != (int32_t)messageLength) {
+							safs::log_warn("Failed to send mount info to master");
+							disconnect = true;
+						} else {
+							stats_inc(MASTER_BYTESSENT, statsptr, messageLength);
+							stats_inc(MASTER_PACKETSSENT, statsptr);
+							mountInfoSent = true;
+						}
 					}
 				}
 

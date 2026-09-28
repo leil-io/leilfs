@@ -122,7 +122,8 @@ lost-session branch, calling `fs_connect(false)` to establish a new session
 
 For FUSE **meta mode**, startup is intentionally smaller and bypasses
 `SaunaClient::fs_init`: `masterproxy_init()`, `symlink_cache_init()`,
-`fs_init_master_connection()`, `fs_init_threads()`.
+`fs_init_master_connection()`, `fs_init_threads()`, then `mount_info_init()`,
+which fills the session fields the nop thread reports.
 
 ## Local Master Proxy (`masterproxy.*`)
 
@@ -162,8 +163,10 @@ message ID in `fs_receive_thread`.
 - `fs_nop_thread`:
   - sends periodic `ANTOAN_NOP`,
   - periodically reports reserved inodes (`CLTOMA_FUSE_RESERVED_INODES`),
-  - sends mount-info updates (`cltoma::updateMountInfo`) on tweak/global-change
-    events only when connected and supported by current master version,
+  - sends mount-info updates (`cltoma::updateMountInfo`) once after
+    `mount_info_init` has filled the session fields, then on tweak/global-change
+    events and after a reconnect, only when connected and supported by the
+    current master version,
   - reacts to tweak changes (for example I/O limits reload, TLS config
     reconnect trigger).
 

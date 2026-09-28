@@ -97,6 +97,10 @@ void MountInfo::buildMountInfoStr() {
 	mountInfoStr_ = mountInfoStream.str();
 }
 
+bool MountInfo::isInitialized() const { return initialized_; }
+
+void MountInfo::markInitialized() { initialized_ = true; }
+
 // Global functions
 void mount_info_init(
 #ifdef _WIN32
@@ -117,6 +121,7 @@ void mount_info_init(
 	gMountInfo.setPid(pid);
 	gMountInfo.setVersion(version);
 	gMountInfo.setCommitId(commitId);
+	gMountInfo.markInitialized();
 }
 
 #ifdef _WIN32
