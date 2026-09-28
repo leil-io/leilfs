@@ -818,6 +818,14 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 		matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
 		members.erase(members.begin() + idx);
 		return true;
+	} catch (const std::exception &e) {
+		// Any other exception from a body (malformed durable state, codec errors) fails this
+		// member with EIO instead of taking the whole server down with std::terminate.
+		ctx.finishTransactionEffects(FilesystemTransactionOutcome::kAborted);
+		safs::log_err("matoclserv: exception in batch member: {}", e.what());
+		matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+		members.erase(members.begin() + idx);
+		return true;
 	}
 }
 
@@ -1403,7 +1411,7 @@ uint8_t matoclserv_fuse_write_chunk_respond(matoclserventry *eptr,
                                             uint32_t lockId) {
 	uint32_t chunkVersion;
 	std::vector<ChunkTypeWithAddress> allChunkCopies;
-	uint8_t status = gChunkOperations->getVersionAndLocations(
+	uint8_t status = gChunkOperations->getWriteVersionAndLocations(
 	    chunkId, eptr->peerIpAddress, chunkVersion, kMaxNumberOfChunkCopies, allChunkCopies);
 
 	remove_unsupported_ec_parts(eptr->version, allChunkCopies);
