@@ -127,7 +127,7 @@ def runSanity() {
         --auth /etc/apt/auth.conf.d/ \
         --workers ${SANITY_WORKERS} \
         --multiplier ${MACHINE_MULTIPLIER} \
-        --cpus 1 \
+        --cpus ${SANITY_CPUS} \
         --xml-path ${resultsFile}
         """
     publishJunit(resultsFile)
@@ -140,19 +140,22 @@ def runShort() {
         --suite ShortSystemTests \
         --workers ${SHORT_WORKERS} \
         --multiplier ${MACHINE_MULTIPLIER} \
-        --cpus 2 \
+        --cpus ${SHORT_CPUS} \
         --xml-path ${resultsFile}
         """
     publishJunit(resultsFile)
 }
 def runMachine() {
     def resultsFile = "test_results_machine.xml"
+    // Without a cpus option, leil-tests limits each container to the agent's CPU count.
+    def cpusOption = env.SINGLE_MACHINE_CPUS ? "--cpus ${env.SINGLE_MACHINE_CPUS}" : ""
     sh """ ./leil-tests/leil-tests \
         --auth /etc/apt/auth.conf.d/ \
         --suite SingleMachineTests \
         --workers 1 \
         --skip-on-fail \
         --multiplier ${MACHINE_MULTIPLIER} \
+        ${cpusOption} \
         --xml-path ${resultsFile}
         """
     publishJunit(resultsFile)
@@ -165,7 +168,7 @@ def runLong() {
         --suite LongSystemTests \
         --multiplier ${MACHINE_MULTIPLIER} \
         --skip-on-fail \
-        --cpus 2 \
+        --cpus ${LONG_CPUS} \
         --xml-path ${resultsFile}
         """
     publishJunit(resultsFile)
@@ -425,7 +428,8 @@ pipeline {
                     environment {
                         SANITY_WORKERS = "${env.SANITY_WORKERS ?: '4'}"
                         SHORT_WORKERS = "${env.SHORT_WORKERS ?: '4'}"
-
+                        SANITY_CPUS = "${env.SANITY_CPUS ?: '1'}"
+                        SHORT_CPUS = "${env.SHORT_CPUS ?: '2'}"
                         MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
                         REGISTRY_IMAGE_NAME = "${REGISTRY_URL}/ubuntu24.04-leil-test:$GIT_COMMIT"
                     }
@@ -524,6 +528,7 @@ pipeline {
                     agent { label "test && ubuntu-2404" }
                     environment {
                         LONG_WORKERS = "${env.LONG_WORKERS ?: '4'}"
+                        LONG_CPUS = "${env.LONG_CPUS ?: '2'}"
                         MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
                     }
                     stages {
