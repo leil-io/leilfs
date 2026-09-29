@@ -34,10 +34,12 @@
 #include "common/type_defs.h"
 #include "kv/itransaction.h"
 #include "kv/kv_utils.h"
+#include "master/filesystem_node_types.h"
 #include "master/hstring.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_backend_common.h"
 #include "master/metadata_backend_interface.h"
+#include "master/metadata_checkpoint_helpers.h"
 #include "master/metadata_writer_fdb.h"
 #include "slogger/slogger.h"
 
@@ -66,6 +68,7 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	maxInodeId_ = 0;
 	metadataVersion_ = 0;
 	nextSessionId_ = 0;
+	detachedNodeTypes_.clear();
 
 	sectionMarkers_.clear();
 
@@ -111,8 +114,10 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	return true;
 }
 
-// Imports each metadata section from metadata.sfs into FDB, then writes META_HEADER last so a
-// partially bootstrapped store is never mistaken for a complete one.
+// Imports each metadata section from metadata.sfs into a headerless FDB store, then writes
+// META_HEADER last so a partially bootstrapped store is never mistaken for a complete one. Once
+// META_HEADER exists, FDB is authoritative even when one of its section keyspaces is empty; a
+// metadata.sfs image must never repopulate such a section.
 //
 // Crash/failure recovery (intentionally NOT atomic — bootstrap is a one-time migration):
 // sections are committed in batches before saveMetadataHeader() runs, so if bootstrap stops
@@ -122,6 +127,18 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 // keyspace used by this master (drop the section-prefix keys, or wipe/recreate the FDB
 // directory) so the store is truly empty; bootstrap then re-runs cleanly from metadata.sfs.
 bool MetadataSectionBootstrapFDB::bootstrapSections() {
+	if (kvEngine_ == nullptr) {
+		safs::log_err("{}: Cannot bootstrap metadata sections without an FDB engine", __func__);
+		return false;
+	}
+
+	auto transaction = kvEngine_->createReadOnlyTransaction();
+	if (transaction->get(kv::toBytes(kMetaHeaderKey)).has_value()) {
+		safs::log_info("{}: Skipping metadata file bootstrap because FDB is already initialized",
+		               __func__);
+		return false;
+	}
+
 	safs::log_info("{}: Bootstrapping metadata sections from file into FDB backend", __func__);
 	if (!prepare(kMetadataFilename)) { return false; }
 
@@ -143,6 +160,12 @@ bool MetadataSectionBootstrapFDB::bootstrapSections() {
 
 int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
 	auto transaction = kvEngine_->createReadWriteTransaction();
+	if (transaction->get(kv::toBytes(kMetaHeaderKey)).has_value()) {
+		// Defensive race check: never replace a descriptor and checkpoint catalog that appeared
+		// after bootstrap eligibility was checked with values from metadata.sfs.
+		safs::log_info("Preserving FDB metadata header created while bootstrap was in progress");
+		return kOpSuccess;
+	}
 
 	transaction->set(kv::toBytes(kMetaHeaderKey), kv::toBytes(SFSSIGNATURE "M 2.9"));
 	transaction->set(kv::toBytes(kMetaFormatKey), kv::toBytes("1.0"));
@@ -158,6 +181,14 @@ int8_t MetadataSectionBootstrapFDB::saveMetadataHeader() {
 	kv::Value nextSessionIdValue;
 	serialize(nextSessionIdValue, nextSessionId_);
 	transaction->set(kv::toBytes(kMetaNextSessionKey), nextSessionIdValue);
+
+	// The imported metadata image is the first restorable checkpoint. Publish its catalog entry in
+	// the same transaction as META_HEADER so a completed bootstrap can never expose a header
+	// without the checkpoint version needed by every section undo recorder.
+	std::vector<uint64_t> checkpointVersions{metadataVersion_};
+	if (checkpoints::saveCheckpointVersions(transaction.get(), checkpointVersions) != kOpSuccess) {
+		return kOpFailure;
+	}
 
 	if (!transaction->commit()) {
 		safs::log_err("Failed to commit bootstrapped metadata header to FDB");
@@ -220,6 +251,8 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 	const uint8_t *ptr = section->begin;
 	uint64_t nodeCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (NODEU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -257,8 +290,10 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 			return kOpFailure;
 		}
 
-		// Enqueue node update with checkpointVersion=0 to avoid NODEU_ entries.
 		writer.enqueue(std::make_unique<NodeUpdateEvent>(node));
+		if (type == FSNodeType::kTrash || type == FSNodeType::kReserved) {
+			detachedNodeTypes_[node->id] = typeU8;
+		}
 
 		FSNode::destroy(node);
 		nodeCount++;
@@ -289,6 +324,8 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 	uint64_t nextChunkId = get64bit(&ptr);
 	uint64_t chunkCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (CHNU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -310,7 +347,6 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 
 		if (chunkId == 0) { break; }
 
-		// Enqueue chunk update event for FDB with no checkpoint version to avoid undo logging
 		writer.enqueue(std::make_unique<ChunkUpdateEvent>(chunkId, chunkVersion, lockedTo, lockId));
 
 		chunkCount++;
@@ -326,6 +362,13 @@ int8_t MetadataSectionBootstrapFDB::loadChunkSection() {
 	}
 
 	auto transaction = kvEngine_->createReadWriteTransaction();
+	if (transaction->get(kv::toBytes(kMetaHeaderKey)).has_value()) {
+		// Defensive race check: preserve authoritative chunk metadata if another initializer
+		// published META_HEADER after bootstrap eligibility was checked.
+		safs::log_info("Preserving FDB chunk metadata initialized while bootstrap was in progress");
+		return kOpSuccess;
+	}
+
 	kv::Value nextChunkIdValue(sizeof(uint64_t));
 	uint8_t *nextChunkPtr = nextChunkIdValue.data();
 	put64bit(&nextChunkPtr, nextChunkId);
@@ -354,6 +397,8 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 	const uint8_t *ptr = section->begin;
 	uint64_t edgeCount = 0;
 
+	// MetadataWriterFDB instance is created without a checkpoint manager, so the enqueued events
+	// will not perform undo logging (EDGEU_ entries) and will be flushed directly to FDB.
 	MetadataWriterFDB writer(kvEngine_);
 	size_t pending = 0;
 
@@ -389,7 +434,18 @@ int8_t MetadataSectionBootstrapFDB::loadEdgesSection() {
 		std::string name(reinterpret_cast<const char *>(ptr), edgeNameSize);
 		ptr += edgeNameSize;
 
-		writer.enqueue(std::make_unique<EdgeUpdateEvent>(parentId, HString(name), childId));
+		if (parentId == 0) {
+			const auto type = detachedNodeTypes_.find(childId);
+			if (type == detachedNodeTypes_.end()) {
+				safs::log_err("Bootstrapping detached path: inode {} is not trash or reserved",
+				              childId);
+				return kOpFailure;
+			}
+			writer.enqueue(std::make_unique<DetachedPathUpdateEvent>(
+			    childId, static_cast<FSNodeType>(type->second), HString(name)));
+		} else {
+			writer.enqueue(std::make_unique<EdgeUpdateEvent>(parentId, HString(name), childId));
+		}
 		edgeCount++;
 
 		if (++pending >= kFlushThreshold) {

@@ -1951,6 +1951,8 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 
 			addTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 			              gMetadata->trashReservedToId, childNode, path);
+			gMetadata->detachedPathChangedSignal.emit(childNode->id, FSNodeType::kTrash,
+			                                          HString(path));
 
 			gMetadata->trashSpace += fileNode->length;
 			gMetadata->trashNodes++;
@@ -1963,6 +1965,8 @@ void FilesystemNodeOperationsBase::unlink(const FilesystemOperationContext &fsOp
 
 			addReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 			                 gMetadata->trashReservedToId, childNode, path);
+			gMetadata->detachedPathChangedSignal.emit(childNode->id, FSNodeType::kReserved,
+			                                          HString(path));
 
 			gMetadata->reservedSpace += fileNode->length;
 			gMetadata->reservedNodes++;
@@ -1983,6 +1987,7 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 
 		// If the file has active sessions, move it to Reserved instead of deleting
 		if (!fileNode->sessionIds.empty()) {
+			const HString path = gMetadata->trash.at(TrashPathKey(node)).get();
 			fileNode->type = FSNodeType::kReserved;
 			fsnodes_update_checksum(fileNode);
 
@@ -1995,12 +2000,14 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 			moveTrashToReservedEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 			                         gMetadata->reserved, gMetadata->reservedHandlesIndex,
 			                         gMetadata->trashReservedToId, node);
+			gMetadata->detachedPathChangedSignal.emit(node->id, FSNodeType::kReserved, path);
 
 			return 0;  // Return 0 to indicate the node was moved to Reserved, not deleted
 		}
 
 		removeTrashEntry(gMetadata->trash, gMetadata->trashHandlesIndex,
 		                 gMetadata->trashReservedToId, node);
+		gMetadata->detachedPathRemovedSignal.emit(node->id);
 		node->ctime = timeStamp;
 		fsnodes_update_checksum(node);
 
@@ -2019,6 +2026,7 @@ int FilesystemNodeOperationsBase::purge(const FilesystemOperationContext &fsOpCo
 
 		removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 		                    gMetadata->trashReservedToId, node->id);
+		gMetadata->detachedPathRemovedSignal.emit(node->id);
 
 		fileNode->ctime = timeStamp;
 		fsnodes_update_checksum(fileNode);
@@ -2080,6 +2088,7 @@ uint8_t FilesystemNodeOperationsBase::undel(const FilesystemOperationContext &fs
 				removeReservedEntry(gMetadata->reserved, gMetadata->reservedHandlesIndex,
 				                    gMetadata->trashReservedToId, node->id);
 			}
+			gMetadata->detachedPathRemovedSignal.emit(node->id);
 
 			node->type = FSNodeType::kFile;
 			node->ctime = timeStamp;

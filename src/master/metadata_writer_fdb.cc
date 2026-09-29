@@ -28,6 +28,7 @@
 #include "kv/kv_utils.h"
 #include "master/kv_common_keys.h"
 #include "master/metadata_checkpoint_manager.h"
+#include "master/metadata_section_undo_recorder.h"
 
 ChunkUpdateEvent::ChunkUpdateEvent(uint64_t _chunkId, uint32_t _version, uint32_t _lockedTo,
                                    uint32_t _lockId)
@@ -49,6 +50,20 @@ void ChunkUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	put32bit(&ptr, lockedTo);
 	put32bit(&ptr, lockId);
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = ChunkSetMutation{
+		    .chunkId = chunkId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->set(key, value);
 }
 
@@ -62,6 +77,22 @@ void ChunkRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 
 	// Key: CHNL_<ChunkId>
 	kv::Key key = kv::encodeKeyBE(kChunkLatestKeyPrefix, chunkId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		// ChunkSetMutation records the pre-image (or a tombstone) generically, which is exactly the
+		// undo a removal needs: rollback restores the chunk that existed before this checkpoint.
+		MetadataMutation mutation = ChunkSetMutation{
+		    .chunkId = chunkId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
 
 	context.transaction->remove(key);
 }
@@ -80,6 +111,21 @@ void NodeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 
 	// Key: NODE_<nodeId>
 	auto key = kv::encodeKeyBE(kNodeKeyPrefix, nodeId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = NodeSetMutation{
+		    .inode = nodeId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->set(key, serializedNode);
 }
 
@@ -93,6 +139,21 @@ void NodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 
 	// Key: NODE_<nodeId>
 	auto key = kv::encodeKeyBE(kNodeKeyPrefix, nodeId);
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = NodeRemoveMutation{
+		    .inode = nodeId,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->remove(key);
 }
 
@@ -137,6 +198,22 @@ void EdgeUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
 	kv::appendStr(key, name);
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = EdgeSetMutation{
+		    .parentId = parentId,
+		    .childId = childId,
+		    .name = name,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	// Value: childId
 	kv::Value value(kv::toBytesBE(childId));
 
@@ -156,7 +233,86 @@ void EdgeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	auto key = kv::encodeKeyBE(kEdgeKeyPrefix, parentId);
 	kv::appendStr(key, name);
 
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = EdgeRemoveMutation{
+		    .parentId = parentId,
+		    .name = name,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
 	context.transaction->remove(key);
+}
+
+DetachedPathUpdateEvent::DetachedPathUpdateEvent(inode_t _inode, FSNodeType _nodeType,
+                                                 HString _path)
+    : inode(_inode), nodeType(_nodeType), path(std::move(_path)) {}
+
+void DetachedPathUpdateEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("DetachedPathUpdateEvent requires a valid transaction in the context");
+		return;
+	}
+	if (nodeType != FSNodeType::kTrash && nodeType != FSNodeType::kReserved) {
+		safs::log_err("DetachedPathUpdateEvent received invalid node type {} for inode {}",
+		              static_cast<char>(nodeType), inode);
+		return;
+	}
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = DetachedPathSetMutation{
+		    .inode = inode,
+		    .nodeType = nodeType,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
+	const auto trashKey = kv::encodeKeyBE(kTrashPathKeyPrefix, inode);
+	const auto reservedKey = kv::encodeKeyBE(kReservedPathKeyPrefix, inode);
+	const kv::Value value(path.begin(), path.end());
+	if (nodeType == FSNodeType::kTrash) {
+		context.transaction->remove(reservedKey);
+		context.transaction->set(trashKey, value);
+	} else {
+		context.transaction->remove(trashKey);
+		context.transaction->set(reservedKey, value);
+	}
+}
+
+DetachedPathRemoveEvent::DetachedPathRemoveEvent(inode_t _inode) : inode(_inode) {}
+
+void DetachedPathRemoveEvent::applyEvent(const MetadataWriteContext &context) {
+	if (context.transaction == nullptr) {
+		safs::log_err("DetachedPathRemoveEvent requires a valid transaction in the context");
+		return;
+	}
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = DetachedPathRemoveMutation{.inode = inode};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
+
+	context.transaction->remove(kv::encodeKeyBE(kTrashPathKeyPrefix, inode));
+	context.transaction->remove(kv::encodeKeyBE(kReservedPathKeyPrefix, inode));
 }
 
 XAttrUpdateEvent::XAttrUpdateEvent(inode_t _inode, std::span<const uint8_t> _name,
@@ -172,6 +328,21 @@ void XAttrUpdateEvent::applyEvent(const MetadataWriteContext &context) {
 	// Key: XATR_<inode><attributeName>
 	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	key.insert(key.end(), name.begin(), name.end());
+
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = XAttrSetMutation{
+		    .inode = inode,
+		    .name = name,
+		    .liveKey = key,
+		};
+
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
+	}
 
 	// Value: raw attribute value bytes
 	context.transaction->set(key, value);
@@ -190,24 +361,22 @@ void XAttrRemoveEvent::applyEvent(const MetadataWriteContext &context) {
 	auto key = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
 	key.insert(key.end(), name.begin(), name.end());
 
-	context.transaction->remove(key);
-}
+	if (context.checkpointManager != nullptr && context.checkpointVersion > 0) {
+		MetadataMutation mutation = XAttrRemoveMutation{
+		    .inode = inode,
+		    .name = name,
+		    .liveKey = key,
+		};
 
-XAttrInodeRemoveEvent::XAttrInodeRemoveEvent(inode_t _inode) : inode(_inode) {}
-
-void XAttrInodeRemoveEvent::applyEvent(const MetadataWriteContext &context) {
-	if (context.transaction == nullptr) {
-		safs::log_err("XAttrInodeRemoveEvent requires a valid transaction in the context");
-		return;
+		context.checkpointManager->recordPreMutation(
+		    MetadataMutationContext{
+		        .transaction = context.transaction,
+		        .checkpointVersion = context.checkpointVersion,
+		    },
+		    mutation);
 	}
 
-	// Remove all keys with prefix XATR_<inode>. Use prefixEnd() for the exclusive
-	// upper bound so a max-valued inode cannot overflow inode+1 and produce an
-	// invalid range.
-	auto startKey = kv::encodeKeyBE(kXAttrKeyPrefix, inode);
-	auto endKey = kv::prefixEnd(startKey);
-
-	context.transaction->removeRange(startKey, endKey);
+	context.transaction->remove(key);
 }
 
 MetadataWriterFDB::MetadataWriterFDB(kv::IKVEngine *kvEngine,

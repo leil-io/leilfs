@@ -29,7 +29,9 @@
 #include <vector>
 
 #include "kv/ikv_engine.h"
+#include "master/filesystem_node_types.h"
 #include "master/filesystem_operation_context.h"
+#include "master/hstring.h"
 #include "master/kv_connector_interface.h"
 #include "master/metadata_backend_interface.h"
 #include "master/metadata_checkpoint_manager.h"
@@ -238,13 +240,14 @@ private:
 	/// @return kOpSuccess on success, kOpFailure or SAUNAFS_ERROR_ERANGE on error.
 	int8_t loadXAttr(bool ignoreFlag);
 
-	/// Loads EDGE_ metadata
-	/// Loads all edges from the KV store and reconstructs the in-memory directory tree.
+	/// Loads EDGE_ metadata and inode-keyed detached paths.
+	/// Loads all directory edges and trash/reserved paths from the KV store.
 	///
 	/// Edges are stored as `EDGE_<ParentId><Name>: <ChildId>` entries. This method paginates
 	/// through the full EDGE_ keyspace, deserializes each entry, and calls loadEdge() to
-	/// attach the child node to its parent directory (or to the trash/reserved containers
-	/// when parentId is 0).
+	/// attach the child node to its parent directory. It then loads MDS-compatible
+	/// `TRSH_PATH_<inode>: <path>` and `RSVD_PATH_<inode>: <path>` rows before applying the
+	/// shared edge/detached-path checkpoint undo history.
 	///
 	/// @param ignoreFlag When true, missing parent/child nodes are tolerated and orphan nodes
 	///                   are attached to the root directory instead of causing a failure.
@@ -253,17 +256,15 @@ private:
 
 	/// Load a single edge into the in-memory filesystem tree.
 	///
-	/// Depending on parentId:
-	/// - parentId == 0: the child is inserted into the trash or reserved container based on
-	///   its node type.
-	/// - parentId != 0: the child is inserted into the parent directory's entry map, its
-	///   parent back-pointer is set, and directory statistics are propagated upward.
+	/// The child is inserted into the parent directory's entry map, its parent back-pointer is
+	/// set, and directory statistics are propagated upward. Parent id 0 is invalid because
+	/// detached paths use their dedicated inode-keyed key families.
 	///
 	/// On the first call, pass `init = true` to reset the internal "current parent"
-	/// tracker used to detect out-of-order edges).
+	/// tracker used to detect out-of-order edges.
 	///
 	/// @param fsOpContext Filesystem operation context (transaction).
-	/// @param parentId   Inode of the parent directory (0 for trash/reserved).
+	/// @param parentId   Inode of the parent directory.
 	/// @param childId    Inode of the child node.
 	/// @param name       Edge name (filename component).
 	/// @param ignoreFlag When true, tolerate missing nodes (see loadEdges()).
@@ -271,6 +272,41 @@ private:
 	/// @return kOpSuccess on success, kOpFailure on error.
 	int8_t loadEdge(const FilesystemOperationContext &fsOpContext, inode_t parentId,
 	                inode_t childId, const std::string &name, bool ignoreFlag, bool init = false);
+
+	/// Loads TRSH_PATH_ or RSVD_PATH_ metadata.
+	/// Loads all detached paths of one node type from the KV store into the matching in-memory
+	/// container.
+	///
+	/// Paths are stored as `<KeyPrefix><InodeId>: <Path>` entries. This method paginates through
+	/// the full keyspace, validates each key and value, and calls loadDetachedPath() to restore
+	/// every decoded entry.
+	///
+	/// @param fsOpContext Filesystem operation context (transaction).
+	/// @param nodeType    Node type and destination container represented by the key prefix.
+	/// @param keyPrefix   Prefix of the detached-path keyspace to load.
+	/// @param ignoreFlag  When true, entries whose inode is missing are skipped.
+	/// @return kOpSuccess on success, kOpFailure on malformed metadata or restoration error.
+	int8_t loadDetachedPaths(const FilesystemOperationContext &fsOpContext, FSNodeType nodeType,
+	                         std::string_view keyPrefix, bool ignoreFlag);
+
+	/// Loads a single detached path into the matching in-memory container.
+	///
+	/// The inode is resolved against the checkpoint-restored NODE state. Nodes removed by NODE
+	/// rollback are skipped. If the stored path type differs from the restored node type, loading
+	/// is deferred until EDGE rollback verifies that the entry is covered by checkpoint undo.
+	///
+	/// @param fsOpContext Filesystem operation context (transaction).
+	/// @param inode       Inode encoded in the detached-path key.
+	/// @param nodeType    Trash or reserved type represented by the entry.
+	/// @param path        Detached path stored in the entry value.
+	/// @param ignoreFlag  When true, a missing inode not removed by rollback is skipped.
+	/// @return kOpSuccess on success or deferred loading, kOpFailure on error.
+	int8_t loadDetachedPath(const FilesystemOperationContext &fsOpContext, inode_t inode,
+	                        FSNodeType nodeType, const std::string &path, bool ignoreFlag);
+
+	/// Rolls the EDGE section back and verifies that every live detached path deferred due to a
+	/// mismatch with the checkpoint-restored NODE type is covered by applicable durable EDGE undo.
+	int8_t restoreEdgesToCheckpointVersion(uint64_t targetVersion);
 
 	/// Loads CHNK_ metadata
 	/// Loads all chunks from the KV store and reconstructs the in-memory chunk table.
@@ -318,12 +354,21 @@ private:
 	/// @param name     Edge name (filename component) to remove.
 	void onEdgeRemoved(inode_t parentId, const HString &name);
 
-	/// Enqueue an xattr inode removal event to the metadata writer.
+	/// Enqueue an inode-keyed trash/reserved path update using the MDS-compatible key families.
 	///
-	/// Called when all xattrs of an inode are removed. The event removes all `XATR_<inode><name>`
-	/// keys for the given inode from the KV store on the next flush.
-	/// @param inode Inode of the xattr entries to remove.
-	void onXAttrInodeRemoved(inode_t inode);
+	/// Called when a detached path is created or modified. The event writes the MDS-compatible
+	/// `TRSH_PATH_<inode>` or `RSVD_PATH_<inode>` row and removes the opposite row so a transition
+	/// between the containers is atomic.
+	///
+	/// @param inode    Inode of the detached path.
+	/// @param nodeType Type of the filesystem node.
+	/// @param path     Path string of the detached path.
+	void onDetachedPathChanged(inode_t inode, FSNodeType nodeType, const HString &path);
+
+	/// Enqueue removal of the inode's trash and reserved path rows.
+	///
+	/// @param inode    Inode of the detached path to remove.
+	void onDetachedPathRemoved(inode_t inode);
 
 	/// Enqueue an xattr creation or update event to the metadata writer.
 	///
@@ -344,6 +389,19 @@ private:
 	/// @param inode Inode that owns the xattr.
 	/// @param name  Attribute name bytes.
 	void onXAttrRemoved(inode_t inode, std::span<const uint8_t> name);
+
+	/// Enqueue a chunk update event to the metadata writer.
+	///
+	/// @param chunkId  Chunk whose metadata changed.
+	/// @param version  Chunk version.
+	/// @param lockedTo Lock expiry timestamp.
+	/// @param lockId   Lock id.
+	void onChunkChanged(uint64_t chunkId, uint32_t version, uint32_t lockedTo, uint32_t lockId);
+
+	/// Enqueue a chunk removal event to the metadata writer.
+	///
+	/// @param chunkId Chunk that was removed.
+	void onChunkRemoved(uint64_t chunkId);
 
 	/// Provides connection to the key-value store (FoundationDB for this implementation)
 	std::shared_ptr<IKVConnector> kvConnector_;
@@ -372,8 +430,14 @@ private:
 
 	inode_t currentLoadParentId_ = 0;
 
+	/// Live detached rows whose node type differs from the checkpoint-restored NODE body. They are
+	/// deferred until EDGE rollback proves each inode is covered by durable undo.
+	EdgeUndoRecorder::DetachedPathKeySet deferredIncompatibleDetachedPaths_;
+
 #ifndef METARESTORE
 	/// Bootstrapper for metadata sections
 	std::unique_ptr<MetadataSectionBootstrapFDB> sectionBootstrapper_ = nullptr;
 #endif  // #ifndef METARESTORE
+
+	friend struct MetadataBackendForklessTestAccess;
 };

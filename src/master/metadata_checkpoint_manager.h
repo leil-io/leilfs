@@ -18,15 +18,23 @@
 
 #pragma once
 
+#include "common/platform.h"
+
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 #include "common/special_inode_defs.h"
 #include "common/type_defs.h"
 #include "kv/ikv_engine.h"
+#include "master/metadata_chunk_undo_recorder.h"
+#include "master/metadata_edge_undo_recorder.h"
+#include "master/metadata_node_undo_recorder.h"
 #include "master/metadata_section_undo_recorder.h"
+#include "master/metadata_xattr_undo_recorder.h"
 
 /// Snapshot descriptor bound to one metadata checkpoint boundary.
 ///
@@ -157,6 +165,20 @@ public:
 	/// The value is 0 before any checkpoint has been sealed (and during bootstrap).
 	uint64_t activeCheckpointVersion() const { return activeCheckpointVersion_; }
 
+	/// Inodes removed from the in-memory node table during the most recent node-section restore.
+	///
+	/// The forkless edge load consults this set to skip live edges whose child was rolled back
+	/// away (post-checkpoint drift) instead of failing the EDGE section load. Returns an empty set
+	/// when no node recorder is registered.
+	const std::unordered_set<uint64_t> &nodesRemovedDuringRestore() const;
+
+	/// Directory incarnations discarded by NODE rollback whose checkpoint node is not a directory.
+	/// EDGE loading uses this proof to ignore newer topology beneath a reused inode.
+	const std::unordered_set<uint64_t> &directoriesDiscardedDuringRestore() const;
+
+	/// Detached-path inodes processed by the most recent edge-section restore.
+	const EdgeUndoRecorder::DetachedPathKeySet &detachedPathsTouchedDuringRestore() const;
+
 private:
 	/// Registers the per-section undo recorders into recorders_.
 	///
@@ -229,6 +251,11 @@ private:
 	/// Recorders indexed by MetadataSectionKind; null entries mean the section has no
 	/// registered recorder. Recorders are not owned by this array.
 	std::array<ISectionUndoRecorder *, kMetadataSectionKindCount> recorders_{};
+
+	std::unique_ptr<ChunkUndoRecorder> chunkUndoRecorder_;
+	std::unique_ptr<NodeUndoRecorder> nodeUndoRecorder_;
+	std::unique_ptr<EdgeUndoRecorder> edgeUndoRecorder_;
+	std::unique_ptr<XAttrUndoRecorder> xattrUndoRecorder_;
 
 	/// Last sealed checkpoint version; 0 before any checkpoint has been sealed.
 	uint64_t activeCheckpointVersion_{0};

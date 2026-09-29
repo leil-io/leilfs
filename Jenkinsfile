@@ -171,6 +171,22 @@ def runLong() {
     publishJunit(resultsFile)
 }
 
+// Runs the forkless-backend suite. METADATA_BACKEND is exported for tests that do not select the
+// backend themselves; tests in ForklessTests are expected to set it in their own setup call so
+// they stay runnable outside this stage.
+def runForkless() {
+    def resultsFile = "test_results_forkless.xml"
+    sh """ METADATA_BACKEND=FORKLESS ./leil-tests/leil-tests \
+        --auth /etc/apt/auth.conf.d/ \
+        --workers ${FORKLESS_WORKERS} \
+        --suite ForklessTests \
+        --multiplier ${MACHINE_MULTIPLIER} \
+        --cpus 2 \
+        --xml-path ${resultsFile}
+        """
+    publishJunit(resultsFile)
+}
+
 def publishJunit(resultsFile) {
     junit(
         skipMarkingBuildUnstable: false,
@@ -506,6 +522,69 @@ pipeline {
                                 '''
                             sh """
                                 docker image rm ${env.REGISTRY_IMAGE_NAME} || true
+                                docker image rm leil-test:latest || true
+                                """
+                        }
+                    }
+                }
+                stage('Forkless tests (Ubuntu 24.04)') {
+                    agent { label "test && ubuntu-2404" }
+                    environment {
+                        FORKLESS_WORKERS = "${env.FORKLESS_WORKERS ?: '4'}"
+                        MACHINE_MULTIPLIER = "${env.MACHINE_MULTIPLIER ?: '5'}"
+                    }
+                    stages {
+                        stage("Checkout source") {
+                            steps {
+                                checkoutSource()
+                            }
+                        }
+                        stage('Build leil-tests') {
+                            steps {
+                                buildLeilTests()
+                            }
+                        }
+                        stage('Build image') {
+                            steps {
+                                script {
+                                    buildImage("ubuntu:24.04")
+                                }
+                            }
+                        }
+                        stage('Run forkless tests') {
+                            steps {
+                                runForkless()
+                            }
+                        }
+                    }
+                    post {
+                        unstable {
+                            script {
+                                slackBadMessage(
+                                    "Forkless tests failed to pass on ${BRANCH_NAME}",
+                                    "Forkless tests failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                )
+                            }
+                        }
+                        failure {
+                            script {
+                                slackBadMessage(
+                                    "Forkless tests pipeline failed on ${BRANCH_NAME}",
+                                    "Forkless tests pipeline failed on branch ${BRANCH_NAME}, build number ${BUILD_NUMBER}"
+                                )
+                            }
+                        }
+                        // Clean after build
+                        cleanup {
+                            cleanWs(cleanWhenNotBuilt: true,
+                                deleteDirs: true,
+                                disableDeferredWipeout: true,
+                                notFailBuild: true,
+                            )
+                            sh '''
+                                docker rm $(docker stop $(docker ps -a -q --filter ancestor=leil-test --format="{{.ID}}")) || true
+                                '''
+                            sh """
                                 docker image rm leil-test:latest || true
                                 """
                         }

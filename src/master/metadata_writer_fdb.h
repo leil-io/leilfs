@@ -147,6 +147,36 @@ private:
 	HString name;
 };
 
+/// Update event for a detached trash or reserved path.
+/// Writes the MDS-compatible `TRSH_PATH_<inode>` or `RSVD_PATH_<inode>` row and removes the
+/// opposite row so a transition between the containers is atomic.
+class DetachedPathUpdateEvent : public IMetadataUpdateEvent {
+public:
+	DetachedPathUpdateEvent(inode_t _inode, FSNodeType _nodeType, HString _path);
+	~DetachedPathUpdateEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	inode_t inode;
+	FSNodeType nodeType;
+	HString path;
+};
+
+/// Removal event for a detached trash or reserved path.
+/// Removes both possible inode-keyed rows so the operation is idempotent across container
+/// transitions.
+class DetachedPathRemoveEvent : public IMetadataUpdateEvent {
+public:
+	explicit DetachedPathRemoveEvent(inode_t _inode);
+	~DetachedPathRemoveEvent() override = default;
+
+	void applyEvent(const MetadataWriteContext &context) override;
+
+private:
+	inode_t inode;
+};
+
 /// Update event for xattr creation or value change.
 /// Writes XATR_<InodeId><AttributeName>: <AttributeValue> to FDB.
 class XAttrUpdateEvent : public IMetadataUpdateEvent {
@@ -175,19 +205,6 @@ public:
 private:
 	inode_t inode;
 	std::vector<uint8_t> name;
-};
-
-/// Removal event for all xattrs of an inode.
-/// Removes the range XATR_<InodeId> .. XATR_<InodeId+1> from FDB.
-class XAttrInodeRemoveEvent : public IMetadataUpdateEvent {
-public:
-	explicit XAttrInodeRemoveEvent(inode_t _inode);
-	~XAttrInodeRemoveEvent() override = default;
-
-	void applyEvent(const MetadataWriteContext &context) override;
-
-private:
-	inode_t inode;
 };
 
 /// Metadata writer that preserves changelog ordering

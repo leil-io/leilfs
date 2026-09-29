@@ -135,32 +135,34 @@ void xattr_recalculate_checksum() {
 	}
 }
 
-void xattr_removeinode(inode_t inode) {
+void xattr_removeinode(inode_t inode, bool emitSignals) {
 	XAttributeInodeEntry *xattrInodeEntry = nullptr;
-	bool hadEntries = false;
 
 	auto hash = get_xattr_inode_hash(inode);
 	auto &bucket = gMetadata->xattrInodeHash[hash];
 	for (auto attributeIterator = bucket.begin(); attributeIterator != bucket.end();) {
 		xattrInodeEntry = attributeIterator->get();
 		if (xattrInodeEntry->inode == inode) {
-			hadEntries = true;
 			while (!xattrInodeEntry->xattrDataEntries.empty()) {
-				xattr_removeentry(xattrInodeEntry, xattrInodeEntry->xattrDataEntries.front());
+				auto *entry = xattrInodeEntry->xattrDataEntries.front();
+				// Emit before erasing: each queued event owns its name and retains deletion order.
+				// Per-key undo capture can be split across bounded FDB transactions.
+				if (emitSignals && gXAttrRemovedSignal.size() > 0) {
+					gXAttrRemovedSignal.emit(inode, xattrBytesView(entry->attributeName.data(),
+					                                                  entry->attributeName.size()));
+				}
+				xattr_removeentry(xattrInodeEntry, entry);
 			}
 			attributeIterator = bucket.erase(attributeIterator);
 		} else {
 			++attributeIterator;
 		}
 	}
-
-	if (hadEntries) {
-		gXAttrInodeRemovedSignal.emit(inode);
-	}
 }
 
 uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t *attributeName,
-                      uint32_t attributeValueLength, const uint8_t *attributeValue, uint8_t mode) {
+                      uint32_t attributeValueLength, const uint8_t *attributeValue, uint8_t mode,
+                      bool emitSignals) {
 	XAttributeInodeEntry *xattrInodeEntry = nullptr;
 
 	if (attributeValueLength > SFS_XATTR_SIZE_MAX) {
@@ -192,7 +194,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 				xattrInodeEntry->attributeNameLength -= attributeNameLength + 1U;
 				xattrInodeEntry->attributeValueLength -= xattrDataEntry->attributeValue.size();
 
-				if (gXAttrRemovedSignal.size() > 0) {
+				if (emitSignals && gXAttrRemovedSignal.size() > 0) {
 					gXAttrRemovedSignal.emit(inode,
 					                         xattrBytesView(attributeName, attributeNameLength));
 				}
@@ -207,7 +209,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 						               xattrInodeEntry->inode, xattrInodeEntry->attributeNameLength,
 						               xattrInodeEntry->attributeValueLength);
 					}
-					xattr_removeinode(inode);
+					xattr_removeinode(inode, emitSignals);
 				}
 				return SAUNAFS_STATUS_OK;
 			}
@@ -229,7 +231,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 			xattrInodeEntry->attributeValueLength += attributeValueLength;
 			xattr_update_checksum(xattrDataEntry.get());
 
-			if (gXAttrChangedSignal.size() > 0) {
+			if (emitSignals && gXAttrChangedSignal.size() > 0) {
 				gXAttrChangedSignal.emit(inode, xattrBytesView(attributeName, attributeNameLength),
 				                         xattrBytesView(xattrDataEntry->attributeValue.data(),
 				                                        xattrDataEntry->attributeValue.size()));
@@ -279,7 +281,7 @@ uint8_t xattr_setattr(inode_t inode, uint8_t attributeNameLength, const uint8_t 
 		gMetadata->xattrInodeHash[inodeHash].push_back(std::move(xattrInodeEntry));
 	}
 
-	if (gXAttrChangedSignal.size() > 0) {
+	if (emitSignals && gXAttrChangedSignal.size() > 0) {
 		gXAttrChangedSignal.emit(inode, xattrBytesView(attributeName, attributeNameLength),
 		                         xattrBytesView(xattrDataEntryPointer->attributeValue.data(),
 		                                        xattrDataEntryPointer->attributeValue.size()));
