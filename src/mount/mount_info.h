@@ -73,6 +73,9 @@ public:
 	void setArguments(const std::string &args);
 	void setMountOptions(const std::map<std::string, std::string> &options);
 	void buildMountInfoStr();
+	/// True once mount_info_init has filled the session fields; the caller holds gMountInfoMtx
+	bool isInitialized() const;
+	void markInitialized();
 
 private:
 	std::string startedDateUtc_;
@@ -89,6 +92,7 @@ private:
 	std::string arguments_;
 	std::unique_ptr<std::map<std::string, std::string>> mountOptions_;
 	std::string mountInfoStr_;
+	bool initialized_ = false;  // guarded by gMountInfoMtx like the fields above
 };
 
 // Global variables and utility functions
