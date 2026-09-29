@@ -4426,6 +4426,22 @@ uint8_t FilesystemOperationsBase::quotaSet(const FsContext &context,
 	return quotas::fs_quota_set(context, fsOpContext, entries);
 }
 
+uint8_t FilesystemOperationsBase::quotaDelete(const FsContext &context,
+                                              const FilesystemOperationContext &fsOpContext,
+                                              const std::vector<QuotaEntryKey> &keys) {
+	// A zero limit clears the tuple, and quotaSet's removeEmpty step erases the
+	// owner's row entirely once every rigor/resource is back at zero. Routed
+	// through the virtual quotaSet (not the quotas::fs_quota_set free function
+	// directly) so a backend override, e.g. FilesystemOperationsKV, deletes
+	// through its own quota store instead of the in-memory one.
+	std::vector<QuotaEntry> entries;
+	entries.reserve(keys.size());
+	for (const QuotaEntryKey &key : keys) {
+		entries.push_back(QuotaEntry{key, 0});
+	}
+	return quotaSet(context, fsOpContext, entries);
+}
+
 uint8_t FilesystemOperationsBase::quotaGetInfo(const FsContext &context,
                                                const std::vector<QuotaEntry> &entries,
                                                std::vector<std::string> &result) {

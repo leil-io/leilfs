@@ -1866,6 +1866,20 @@ public:
 	                         const FilesystemOperationContext &fsOpContext,
 	                         const std::vector<QuotaEntry> &entries) = 0;
 
+	/// Deletes quota entries and writes corresponding SETQUOTA changelog records.
+	///
+	/// Equivalent to quotaSet with each key's limit set to zero: this clears the
+	/// tuple and, once every rigor/resource for the owner is zero, removes the
+	/// owner's row entirely.
+	///
+	/// @param context Session context used for permission checks.
+	/// @param fsOpContext Filesystem operation context carrying a read-write transaction.
+	/// @param keys Quota entry keys to delete.
+	/// @return SAUNAFS_STATUS_OK on success or an access/validation/storage error.
+	virtual uint8_t quotaDelete(const FsContext &context,
+	                            const FilesystemOperationContext &fsOpContext,
+	                            const std::vector<QuotaEntryKey> &keys) = 0;
+
 	/// Returns display information strings for quota entries.
 	///
 	/// For inode owners this is a resolved path when the inode exists; for other owner types it is

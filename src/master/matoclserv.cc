@@ -6359,6 +6359,32 @@ void matoclserv_fuse_setquota(matoclserventry *eptr, const uint8_t *data, uint32
 	matoclserv_submit_op(eptr, std::move(runSetQuota), sendSetQuotaReply);
 }
 
+void matoclserv_fuse_deletequota(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	uint32_t messageId, uid, gid;
+	std::vector<QuotaEntryKey> keys;
+	cltoma::fuseDeleteQuota::deserialize(data, length, messageId, uid, gid, keys);
+
+	uint8_t status = matoclserv_check_group_cache(eptr, gid);
+
+	OpReplay runDeleteQuota = [eptr, uid, gid, keys](FilesystemOperationContext &ctx) -> uint8_t {
+		FsContext context = matoclserv_get_context(eptr, uid, gid);
+		return gFSOperations->quotaDelete(context, ctx, keys);
+	};
+
+	auto sendDeleteQuotaReply = [eptr, messageId](uint8_t replyStatus) {
+		MessageBuffer reply;
+		matocl::fuseDeleteQuota::serialize(reply, messageId, replyStatus);
+		matoclserv_createpacket(eptr, std::move(reply));
+	};
+
+	if (status != SAUNAFS_STATUS_OK) {  // group-cache error: reply without running the op
+		sendDeleteQuotaReply(status);
+		return;
+	}
+
+	matoclserv_submit_op(eptr, std::move(runDeleteQuota), sendDeleteQuotaReply);
+}
+
 void matoclserv_fuse_getquota(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	uint32_t version, messageId, uid, gid;
 	std::vector<QuotaEntry> results;
@@ -7198,6 +7224,9 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 					break;
 				case SAU_CLTOMA_FUSE_SET_QUOTA:
 					matoclserv_fuse_setquota(eptr, data, length);
+					break;
+				case SAU_CLTOMA_FUSE_DELETE_QUOTA:
+					matoclserv_fuse_deletequota(eptr, data, length);
 					break;
 				case SAU_CLTOMA_FUSE_GET_QUOTA:
 					matoclserv_fuse_getquota(eptr, data, length);

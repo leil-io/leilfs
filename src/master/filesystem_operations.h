@@ -519,6 +519,12 @@ public:
 	                 [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
 	                 const std::vector<QuotaEntry> &entries) override;
 
+	/// Deletes quota tuples by delegating to quotaSet with a zero limit per key.
+	/// @see IFilesystemOperations::quotaDelete
+	uint8_t quotaDelete(const FsContext &context,
+	                    const FilesystemOperationContext &fsOpContext,
+	                    const std::vector<QuotaEntryKey> &keys) override;
+
 	/// Builds display information for quota entries.
 	/// @see IFilesystemOperations::quotaGetInfo
 	uint8_t quotaGetInfo(const FsContext &context, const std::vector<QuotaEntry> &entries,
