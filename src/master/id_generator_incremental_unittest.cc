@@ -57,3 +57,14 @@ TEST(IdGeneratorIncrementalTests, BasicFunctionality) {
 	EXPECT_EQ(idGen.getNextId(), 0x100000000ULL);
 	EXPECT_EQ(idGen.getCurrentId(), 0x100000001ULL); // 2^32 + 1
 }
+
+TEST(IdGeneratorIncrementalTests, InitializeResetsCounter) {
+	IdGeneratorIncremental<uint64_t> idGenerator;
+
+	EXPECT_EQ(idGenerator.getNextId(), 1ULL);
+	EXPECT_EQ(idGenerator.getNextId(), 2ULL);
+	EXPECT_EQ(idGenerator.getCurrentId(), 3ULL);
+
+	EXPECT_TRUE(idGenerator.initialize());
+	EXPECT_EQ(idGenerator.getCurrentId(), 1ULL);
+}

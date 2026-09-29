@@ -36,8 +36,11 @@ public:
 	/// Default constructor
 	IdGeneratorIncremental() = default;
 
-	/// This implementation does not need custom initialization.
-	bool initialize() override { return true; }
+	/// Reset the counter before loading metadata, which restores the next ID.
+	bool initialize() override {
+		id_ = 1;
+		return true;
+	}
 
 	/// Compatibility method for interface that supports timestamp-based generation.
 	/// This implementation ignores parameters and delegates to parameterless version.
