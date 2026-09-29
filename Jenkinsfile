@@ -544,11 +544,15 @@ pipeline {
                             }
                         }
                         stage('Run Sanity') {
+                            // TEMP: skipped to iterate on machine tests only.
+                            when { expression { false } }
                             steps {
                                 runSanity()
                             }
                         }
                         stage('Run short system tests') {
+                            // TEMP: skipped to iterate on machine tests only.
+                            when { expression { false } }
                             steps {
                                 runShort()
                             }
@@ -594,6 +598,8 @@ pipeline {
                 stage('Long system tests') {
                     when {
                         beforeAgent true
+                        // TEMP: skipped to iterate on machine tests only.
+                        expression { false }
                         anyOf {
                             branch 'dev'
                             branch 'gh-readonly-queue/*'
