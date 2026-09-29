@@ -25,7 +25,13 @@
 #include <optional>
 #include <vector>
 
+#include "common/metadata_cluster_member.h"
 #include "common/metadataserver_list_entry.h"
+
+/// Optional registration-time discovery. Failures throw; an empty snapshot is still a success.
+/// The public backends leave this unset and never send discovery packets.
+using MetadataClusterSnapshotHook = std::function<MetadataClusterSnapshot()>;
+extern MetadataClusterSnapshotHook gMetadataClusterSnapshotHook;
 
 /// Returns the list of other known metadata servers. Defaults to today's Master/Shadow
 /// logic (matomlserv_shadows), a leil-mds reassigns this at startup to read its
