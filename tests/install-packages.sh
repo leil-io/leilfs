@@ -55,6 +55,7 @@ common_packages=(
 	tidy
 	time
 	valgrind
+	vmtouch
 	wget
 	bison
 	flex
