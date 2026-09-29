@@ -149,28 +149,53 @@ void hddGetLostChunks(std::vector<ChunkWithType> &chunks, std::size_t limit) {
 	gLostChunks.erase(gLostChunks.begin(), gLostChunks.begin() + size);
 }
 
-void hddReportNewChunkToMaster(uint64_t id, uint32_t version, bool todel,
-                               ChunkPartType type) {
+static void hddQueueChunkReport(uint64_t id, uint32_t version, bool todel, ChunkPartType type,
+                                bool fromDiskScan) {
 	TRACETHIS();
-	uint32_t versionWithTodelFlag =
-	    common::combineVersionWithTodelFlag(version, todel);
-	std::lock_guard lockGuard(gMasterReportsLock);
-	gNewChunks.push_back(
-	    ChunkWithVersionAndType(id, versionWithTodelFlag, type));
+	uint32_t versionWithTodelFlag = common::combineVersionWithTodelFlag(version, todel);
+	hddEnqueueChunkReport(ChunkWithVersionAndType(id, versionWithTodelFlag, type), fromDiskScan);
 }
 
-void hddGetNewChunks(std::vector<ChunkWithVersionAndType> &chunks,
-                     std::size_t limit) {
+void hddReportNewChunkToMaster(uint64_t id, uint32_t version, bool todel, ChunkPartType type) {
+	hddQueueChunkReport(id, version, todel, type, false);
+}
+
+static void hddReportScannedChunkToMaster(uint64_t id, uint32_t version, bool todel,
+                                          ChunkPartType type) {
+	hddQueueChunkReport(id, version, todel, type, true);
+}
+
+void hddGetNewChunks(std::vector<ChunkWithVersionAndType> &chunks, std::size_t limit,
+                     bool *fromScan) {
 	TRACETHIS();
 	std::lock_guard lockGuard(gMasterReportsLock);
 	std::size_t size = std::min(gNewChunks.size(), limit);
-	chunks.assign(gNewChunks.begin(), gNewChunks.begin() + size);
-	gNewChunks.erase(gNewChunks.begin(), gNewChunks.begin() + size);
+	auto batchEnd = gNewChunks.begin() + size;
+	chunks.assign(gNewChunks.begin(), batchEnd);
+
+	bool batchContainsScannedChunk = false;
+	std::size_t remaining = size;
+	while (remaining > 0) {
+		sassert(!gNewChunkReportOriginRuns.empty());
+		auto &run = gNewChunkReportOriginRuns.front();
+		const auto consumed = std::min(remaining, run.count);
+		if (run.fromDiskScan) { batchContainsScannedChunk = true; }
+		run.count -= consumed;
+		remaining -= consumed;
+		if (run.count == 0) { gNewChunkReportOriginRuns.pop_front(); }
+	}
+	gNewChunks.erase(gNewChunks.begin(), batchEnd);
+
+	// A mixed batch can safely be reported as registration: both packet types
+	// update the same inventory, while registration also keeps metadata dumps
+	// deferred until the disk-scan backlog has drained.
+	if (fromScan != nullptr) { *fromScan = batchContainsScannedChunk; }
 }
 
 void hddDiscardNewChunks() {
 	TRACETHIS();
 	std::lock_guard lockGuard(gMasterReportsLock);
+	gNewChunkReportOriginRuns.clear();
 	gNewChunks.clear();
 }
 
@@ -2505,9 +2530,8 @@ static inline void hddAddChunkFromDiskScan(IDisk *disk,
 	}
 
 	if (isNewChunk) {
-		hddReportNewChunkToMaster(chunk->id(), chunk->version(),
-		                          chunk->owner()->isMarkedForDeletion(),
-		                          chunk->type());
+		hddReportScannedChunkToMaster(chunk->id(), chunk->version(),
+		                              chunk->owner()->isMarkedForDeletion(), chunk->type());
 	}
 
 	hddChunkRelease(chunk);

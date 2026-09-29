@@ -161,9 +161,17 @@ void masterconn_check_hdd_reports() {
 
 		if (eptr->sendsInventory()) {
 			std::vector<ChunkWithVersionAndType> chunks_with_version;
-			hddGetNewChunks(chunks_with_version, chunkBulkSize);
+			bool chunksFromScan = false;
+			hddGetNewChunks(chunks_with_version, chunkBulkSize, &chunksFromScan);
 			if (!chunks_with_version.empty()) {
-				eptr->createAttachedPacket(cstoma::chunkNew::build(chunks_with_version));
+				// Registration includes only chunks found before it is sent. Report later
+				// scan discoveries as registration too, keeping metadata dumps deferred
+				// until the scan backlog drains.
+				if (chunksFromScan) {
+					eptr->createAttachedPacket(cstoma::registerChunks::build(chunks_with_version));
+				} else {
+					eptr->createAttachedPacket(cstoma::chunkNew::build(chunks_with_version));
+				}
 			}
 		} else {
 			// A new-chunk report never creates membership on an identity-registered connection,

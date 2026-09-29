@@ -36,8 +36,10 @@ uint32_t hddGetAndResetErrorCounter();
 void hddGetDamagedChunks(std::vector<ChunkWithType>& chunks, std::size_t limit);
 void hddGetLostChunks(std::vector<ChunkWithType>& chunks, std::size_t limit);
 void hddReportLostChunk(uint64_t chunkid, ChunkPartType chunk_type);
-void hddGetNewChunks(std::vector<ChunkWithVersionAndType>& chunks,
-                     std::size_t limit);
+/// @param fromScan Optional; set when the returned batch contains chunks queued
+///                 by a disk scan, which the master must see as registration.
+void hddGetNewChunks(std::vector<ChunkWithVersionAndType> &chunks, std::size_t limit,
+                     bool *fromScan = nullptr);
 void hddDiscardNewChunks();
 
 /* Both must be called with the disks mutex locked */
