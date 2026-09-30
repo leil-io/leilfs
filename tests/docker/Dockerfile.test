@@ -52,6 +52,21 @@ COPY vcpkg.json .
 RUN vcpkg/bootstrap-vcpkg.sh;
 RUN --mount=type=cache,target=/leilfs/vcpkg/downloads/,sharing=locked --mount=type=cache,target=/leilfs/vcpkg/packages/,sharing=locked vcpkg/vcpkg install;
 
+# Optional Go components: downstream builds may add Go sources under api/.
+# A literal COPY api/ would fail when api/ is absent, but a wildcard that
+# matches nothing is a no-op under BuildKit (already required for --mount).
+# Kept before the other sources so their changes don't re-run the Go install.
+COPY api*/ ./api/
+ARG GO_VERSION=1.22.2
+RUN if [ -f api/CMakeLists.txt ]; then \
+        curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+            | tar -C /usr/local -xz; \
+    fi
+ENV PATH="/usr/local/go/bin:${PATH}"
+# /leilfs/.git only holds the vcpkg submodule, so Go's VCS stamping fails on
+# it; versions are stamped through -ldflags instead.
+ENV GOFLAGS="-buildvcs=false"
+
 COPY CMakeLists.txt .
 COPY cmake ./cmake
 COPY config.h.in .
