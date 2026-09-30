@@ -69,6 +69,12 @@ TEST(SerializationTests, DeserializeStringNonEmptyVariable) {
 	ASSERT_ANY_THROW(deserialize(buffer, stringVariableOut));
 }
 
+TEST(SerializationTests, DeserializeStringWithZeroLength) {
+	std::vector<uint8_t> buffer = {0, 0, 0, 0};
+	std::string stringOut;
+	ASSERT_THROW(deserialize(buffer, stringOut), IncorrectDeserializationException);
+}
+
 TEST(SerializationTests, SerializeUniquePtr) {
 	SAUNAFS_DEFINE_INOUT_PAIR(std::unique_ptr<std::string>, ptr,
 			new std::string("chocolate-like product"), nullptr);
