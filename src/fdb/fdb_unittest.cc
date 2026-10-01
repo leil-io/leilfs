@@ -1471,6 +1471,45 @@ TEST_F(FDBKVEngineTest, FaultInjectionPostCommitOverrideCommitAppliesExactlyOnce
 	}
 }
 
+TEST_F(FDBKVEngineTest, FaultInjectionReachesTheWrappedTransactionThroughTheKvAdapter) {
+	// The same maybe-committed script as above, attached through the kv adapter the engine
+	// hands out, so tests that only see kv::IReadWriteTransaction can inject faults too.
+	const kv::Key key = kv::toBytes("fi_adapter_post_commit");
+	const kv::Value increment = kv::toBytesLE(uint64_t{1});
+	{  // Clean slate.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+
+	// Declared first so the script outlives the transaction that points at it.
+	fdb::FaultInjection fault;
+	fault.postCommitErrors = {kCommitUnknownResult};
+
+	auto transaction = kvEngine->createReadWriteTransaction();
+	auto *adapter = dynamic_cast<fdb::FDBTransaction *>(transaction.get());
+	ASSERT_NE(adapter, nullptr);
+	adapter->setFaultInjection(&fault);
+
+	transaction->atomicAdd(key, increment);
+	EXPECT_FALSE(transaction->commit());
+	EXPECT_TRUE(transaction->commitOutcomeUnknown());
+	EXPECT_EQ(adapter->error(), kCommitUnknownResult);
+
+	{  // The write is durable despite the reported failure.
+		auto verify = kvEngine->createReadWriteTransaction();
+		auto got = verify->get(key);
+		ASSERT_TRUE(got.has_value());
+		EXPECT_EQ(kv::fromBytesLE<uint64_t>(*got), uint64_t{1});
+	}
+
+	{  // Cleanup.
+		auto cleanup = kvEngine->createReadWriteTransaction();
+		cleanup->remove(key);
+		ASSERT_TRUE(cleanup->commit());
+	}
+}
+
 TEST_F(FDBKVEngineTest, FaultInjectionPostCommitOverrideAsyncAppliesOnceAndIsNotRetryable) {
 	const kv::Key key = kv::toBytes("fi_post_commit_async");
 	const kv::Value increment = kv::toBytesLE(uint64_t{1});
