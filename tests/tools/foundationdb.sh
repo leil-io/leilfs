@@ -99,6 +99,17 @@ function cleanup_fdb_cluster() {
 		fi
 	done
 
+	# A server process that died leaves only "Fatal Error" on stderr. Its trace file names the
+	# error, and the OS error events, at info severity, name the file and the errno. When a
+	# process died, print both from every process, merged by time with the newest kept, before
+	# the traces go; the expected file-not-found probes of a starting process come along. A
+	# healthy cluster writes no fatal event, so a passing test prints nothing.
+	if grep -q -E '<Event Severity="40"' "${workspace}"/logs/trace*.xml 2>/dev/null; then
+		grep -h -E '<Event Severity="40"| UnixErrorCode="| Errno="' "${workspace}"/logs/trace*.xml |
+			awk 'match($0, /Time="[0-9.]+"/) { print substr($0, RSTART + 6, RLENGTH - 7) "\t" $0 }' |
+			sort -k1,1g | cut -f 2- | tail -n 200 || true
+	fi
+
 	unmount_fdb_data_tmpfs
 	rm -rf "${workspace:?}" 2>/dev/null || true
 }
