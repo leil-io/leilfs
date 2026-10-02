@@ -50,6 +50,7 @@ void sau_set_default_init_params(struct sau_init_params *params,
 	params->report_reserved_period = SaunaClient::FsInitParams::kDefaultReportReservedPeriod;
 
 	params->io_retries = SaunaClient::FsInitParams::kDefaultIoRetries;
+	params->chunkserver_latency_sort = SaunaClient::FsInitParams::kDefaultChunkserverLatencySort;
 	params->chunkserver_round_time_ms = SaunaClient::FsInitParams::kDefaultRoundTime;
 	params->chunkserver_connect_timeout_ms = SaunaClient::FsInitParams::kDefaultChunkserverConnectTo;
 	params->chunkserver_wave_read_timeout_ms = SaunaClient::FsInitParams::kDefaultChunkserverWaveReadTo;
@@ -235,6 +236,7 @@ sau_t *sau_init_with_params(struct sau_init_params *params) {
 	COPY_PARAM(delayed_init);
 	COPY_PARAM(report_reserved_period);
 	COPY_PARAM(io_retries);
+	COPY_PARAM(chunkserver_latency_sort);
 	COPY_PARAM(chunkserver_round_time_ms);
 	COPY_PARAM(chunkserver_connect_timeout_ms);
 	COPY_PARAM(chunkserver_wave_read_timeout_ms);
