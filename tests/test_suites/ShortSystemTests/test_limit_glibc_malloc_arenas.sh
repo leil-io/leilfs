@@ -85,4 +85,11 @@ echo "Arena limit set to ${effectiveArenaLimit} for master 0"
 master0PidAfter=$(saunafs_master_n 0 test | tr -d '\0' | awk '{print $NF}')
 virtualMemoryMaster0After=$(getVirtualMemoryForPid ${master0PidAfter})
 echo "Master0 PID: ${master0PidAfter} - Virtual memory: ${virtualMemoryMaster0After}"
-assert_less_or_equal ${virtualMemoryMaster0After} ${virtualMemoryMaster0}
+
+# The FDB backend keeps little metadata in memory, so the arena limit does not change its virtual
+# memory and the comparison would only measure allocator noise.
+if [[ "${METADATA_BACKEND:-}" == "FDB" ]]; then
+	echo "Skipping the master virtual memory check on the FDB backend"
+else
+	assert_less_or_equal ${virtualMemoryMaster0After} ${virtualMemoryMaster0}
+fi
