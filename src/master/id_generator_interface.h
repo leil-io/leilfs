@@ -48,6 +48,8 @@ public:
 	IIdGenerator &operator=(IIdGenerator &&) = delete;
 
 	/// Overload to implement custom initialization if needed for concrete generators
+	/// @throws kv::TransactionError from KV-backed implementations when they cannot reserve
+	///   their first ids.
 	virtual bool initialize() = 0;
 
 	/// Get next free inode number.
@@ -56,10 +58,13 @@ public:
 	/// @param requestedId  Requested id: >0 - specific id, 0 - get any free id
 	///
 	/// @return 0 - no more free ids, >0 - allocated id (may differ from requested if already taken)
+	/// @throws kv::TransactionError from KV-backed implementations, which fail by throwing
+	///   instead of returning 0.
 	virtual T getNextId(uint32_t timeStamp, T requestedId) = 0;
 
 	/// Gets next free id and prepares/obtains the next one.
 	/// The way to obtain it is implementation-specific.
+	/// @throws kv::TransactionError from KV-backed implementations.
 	virtual T getNextId() = 0;
 };
 

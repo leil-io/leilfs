@@ -170,6 +170,10 @@ public:
 	/// fdb::Transaction::error() for the sync/async distinction.
 	fdb_error_t error() const { return tr_.error(); }
 
+	/// TEST-ONLY: attaches a fault-injection script to the wrapped transaction.
+	/// @see fdb::Transaction::setFaultInjection for the contract.
+	void setFaultInjection(FaultInjection *fault) { tr_.setFaultInjection(fault); }
+
 private:
 	fdb::Transaction tr_;
 	uint64_t mutationCount_{0};

@@ -63,8 +63,8 @@ inline constexpr std::string_view kSessionRangeStartKey = "META_NEXT_SESSION_RAN
 
 /// Cluster-wide counter used to allocate stable mds_id values.
 /// Format: META_NEXT_MDS_ID : <uint32_t LE>
-/// Each MDS bootstrap does atomicAdd(+1) on this key then reads the
-/// post-increment value as its assigned mds_id. Value 0 means "no mds_id
+/// Each MDS bootstrap reads this key and writes value + 1 in one transaction,
+/// taking the new value as its assigned mds_id. Value 0 means "no mds_id
 /// has ever been allocated"; allocated ids start at 1.
 inline constexpr std::string_view kMetaNextMdsIdKey = "META_NEXT_MDS_ID";
 
