@@ -218,6 +218,9 @@ public:
 	virtual uint32_t getChunkInfoSerializedSize() = 0;
 	virtual void storeChunkInfo(uint8_t *buff) = 0;
 	virtual uint32_t getMissingCount() = 0;
+	/// Prepares one validated admin request's health counters before any are read.
+	/// Backends with current counters need no preparation; getters remain memory-only.
+	virtual void prepareChunkHealthReport() = 0;
 	virtual void storeChunkCounters(uint8_t *buff, uint8_t matrixid) = 0;
 	virtual uint32_t count() = 0;
 	virtual const ChunksReplicationState &getReplicationState() = 0;

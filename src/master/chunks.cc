@@ -54,6 +54,7 @@
 #include "common/flat_set.h"
 #include "common/goal.h"
 #include "common/hashfn.h"
+#include "common/linear_assignment_cache.h"
 #include "common/loop_watchdog.h"
 #include "common/massert.h"
 #include "common/saunafs_version.h"
@@ -231,6 +232,7 @@ static uint32_t HashSteps;
 static uint32_t HashCPS;
 static uint32_t ChunksLoopPeriod;
 static uint32_t ChunksLoopTimeout;
+static uint32_t gChunksLoopPassTime;
 static double   gAcceptableDifference;
 static bool     RebalancingBetweenLabels = false;
 
@@ -439,7 +441,7 @@ public:
 			all.addPart(part.type, csdb_find(part.csid)->label);
 		}
 
-		all.optimize(gUseLinearAssignmentOptimizer, &gLinearAssignmentCache);
+		chunk_optimize_copies(all);
 
 		allFullCopies_ = std::min(kMaxStatCount, all.getFullCopiesCount());
 		allAvailabilityState_ = all.getState();
@@ -1781,7 +1783,7 @@ ChunkRepairPlan chunk_plan_repair(uint64_t ochunkid, uint8_t correct_only) {
 	for (auto &version_and_calculator : calculators) {
 		uint32_t version = version_and_calculator.first;
 		ChunkCopiesCalculator &calculator = version_and_calculator.second;
-		calculator.optimize(gUseLinearAssignmentOptimizer, &gLinearAssignmentCache);
+		chunk_optimize_copies(calculator);
 		// calculator.isRecoveryPossible() won't work below, because target goal is empty.
 		if (calculator.getFullCopiesCount() > 0) {
 			best_version = version;
@@ -3118,7 +3120,7 @@ void ChunkWorker::doChunkJobs(Chunk *c, uint16_t serverCount) {
 			++invalid_parts;
 		}
 	}
-	calc.optimize(gUseLinearAssignmentOptimizer, &gLinearAssignmentCache);
+	chunk_optimize_copies(calc);
 
 	// step 1a. count number of chunk parts on servers with the same ip
 	IpCounter ip_occurrence;
@@ -3449,6 +3451,20 @@ uint32_t chunk_maintenance_ticks_per_pass() {
 
 uint32_t chunk_maintenance_tick_budget_ms() { return ChunksLoopTimeout; }
 
+bool chunk_operations_delay_passed() {
+	return starttime + gOperationsDelayInit <= eventloop_time();
+}
+
+uint32_t chunk_loop_pass_time() { return gChunksLoopPassTime; }
+
+uint32_t chunk_loop_period_ms() { return ChunksLoopPeriod; }
+
+bool chunk_maintenance_enabled() { return gChunkMaintenanceEnabled; }
+
+void chunk_optimize_copies(ChunkCopiesCalculator &calculator) {
+	calculator.optimize(gUseLinearAssignmentOptimizer, &gLinearAssignmentCache);
+}
+
 void chunk_set_maintenance_enabled(bool enabled) { gChunkMaintenanceEnabled = enabled; }
 
 void chunk_jobs_main(void) {
@@ -3687,6 +3703,7 @@ void chunk_reload(void) {
 		HashSteps = 1 + ((kChunkHashSize) / scaled_looptime);
 		HashCPS   = (uint64_t)ChunksLoopPeriod * HashCPS / 1000;
 	}
+	gChunksLoopPassTime = looptime;
 	double endangeredChunksPriority = cfg_ranged_get("ENDANGERED_CHUNKS_PRIORITY", 0.0, 0.0, 1.0);
 	gEndangeredChunksServingLimit = HashSteps * endangeredChunksPriority;
 	gEndangeredChunksMaxCapacity = cfg_get("ENDANGERED_CHUNKS_MAX_CAPACITY", static_cast<uint64_t>(1024*1024UL));
@@ -3769,6 +3786,7 @@ int chunk_strinit(void) {
 		HashSteps = 1 + ((kChunkHashSize) / scaled_looptime);
 		HashCPS   = (uint64_t)ChunksLoopPeriod * HashCPS / 1000;
 	}
+	gChunksLoopPassTime = looptime;
 	double endangeredChunksPriority = cfg_ranged_get("ENDANGERED_CHUNKS_PRIORITY", 0.0, 0.0, 1.0);
 	gEndangeredChunksServingLimit = HashSteps * endangeredChunksPriority;
 	gEndangeredChunksMaxCapacity = cfg_get("ENDANGERED_CHUNKS_MAX_CAPACITY", static_cast<uint64_t>(1024*1024UL));

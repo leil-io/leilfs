@@ -1880,25 +1880,29 @@ void matoclserv_chunks_health(matoclserventry *eptr, const uint8_t *data, uint32
 	PacketVersion version = 0;
 	deserializePacketVersionNoHeader(data, length, version);
 
-	MessageBuffer buffer;
-
+	bool regularChunksOnly = false;
 	if (version == cltoma::chunksHealth::kStandard) {
-		bool regularChunksOnly = false;
 		cltoma::chunksHealth::deserialize(data, length, regularChunksOnly);
+	} else if (version == cltoma::chunksHealth::kWithFreshness) {
+		cltoma::chunksHealth::deserialize(data, length);
+	} else {
+		safs::log_info("SAU_CLTOMA_CHUNKS_HEALTH - wrong packet version {}", version);
+		eptr->mode = ClientConnectionMode::KILL;
+		return;
+	}
+
+	gChunkOperations->prepareChunkHealthReport();
+	MessageBuffer buffer;
+	if (version == cltoma::chunksHealth::kStandard) {
 		matocl::chunksHealth::serialize(buffer, regularChunksOnly,
 		                                gChunkOperations->getAvailabilityState(),
 		                                gChunkOperations->getReplicationState());
 	} else if (version == cltoma::chunksHealth::kWithFreshness) {
-		cltoma::chunksHealth::deserialize(data, length);
 		auto freshness = gChunkOperations->getHealthFreshness();
 		matocl::chunksHealth::serialize(
 		    buffer, gChunkOperations->getAvailabilityState(),
 		    gChunkOperations->getReplicationState(), freshness.has_value(),
 		    freshness.value_or(ChunkHealthFreshness()), static_cast<uint32_t>(eventloop_time()));
-	} else {
-		safs::log_info("SAU_CLTOMA_CHUNKS_HEALTH - wrong packet version {}", version);
-		eptr->mode = ClientConnectionMode::KILL;
-		return;
 	}
 
 	matoclserv_createpacket(eptr, std::move(buffer));
@@ -2131,6 +2135,7 @@ void matoclserv_info(matoclserventry *eptr, const uint8_t *data, uint32_t length
 		return;
 	}
 
+	gChunkOperations->prepareChunkHealthReport();
 	statistics.version = saunafsVersion(SAUNAFS_PACKAGE_VERSION_MAJOR,
 			SAUNAFS_PACKAGE_VERSION_MINOR, SAUNAFS_PACKAGE_VERSION_MICRO);
 
@@ -2236,6 +2241,7 @@ void matoclserv_chunks_matrix(matoclserventry *eptr, const uint8_t *data, uint32
 		matrixId = 0;
 	}
 
+	gChunkOperations->prepareChunkHealthReport();
 	ptr = matoclserv_createpacket(eptr, MATOCL_CHUNKS_MATRIX,
 	                              CHUNK_MATRIX_SIZE * CHUNK_MATRIX_SIZE * sizeof(uint32_t));
 
