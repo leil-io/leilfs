@@ -123,7 +123,7 @@ static void sfs_fsinit(void *userdata, struct fuse_conn_info *conn) {
 
 	fuse_conn_info_opts *conn_opts = (fuse_conn_info_opts *)userdata;
 	fuse_apply_conn_info_opts(conn_opts, conn);
-	// Advertising ACL support would keep the kernel making the calls sfsacl=0 avoids.
+	// Advertising ACL support would keep the kernel making the calls enableacl=0 avoids.
 	if (gMountOptions.acl) {
 		conn->want |= FUSE_CAP_POSIX_ACL;
 	} else {

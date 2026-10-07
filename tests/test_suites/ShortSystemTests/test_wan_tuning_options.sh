@@ -1,5 +1,5 @@
-# Covers the mount options added for high-latency links: sfsxattrs, sfsacl, the
-# sfswan preset that combines them, and sfschunkserverlatencysort.
+# Covers the mount options added for high-latency links: enablexattrs, enableacl,
+# chunkserverlatencysort, and the wanpreset option that combines them.
 
 assert_program_installed setfacl getfacl setfattr getfattr
 
@@ -22,12 +22,12 @@ CHUNKSERVERS=3 \
 	USE_RAMDISK=YES \
 	SFSEXPORTS_EXTRA_OPTIONS=nomasterpermcheck,ignoregid \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
-	MOUNT_0_EXTRA_CONFIG="sfswan" \
-	MOUNT_1_EXTRA_CONFIG="sfschunkserverlatencysort=1" \
-	MOUNT_2_EXTRA_CONFIG="sfsacl=0" \
-	MOUNT_3_EXTRA_CONFIG="sfsxattrs=0" \
-	MOUNT_4_EXTRA_CONFIG="sfswan=0" \
-	MOUNT_6_EXTRA_CONFIG="sfswan|sfsacl=1|sfsxattrs=1" \
+	MOUNT_0_EXTRA_CONFIG="wanpreset" \
+	MOUNT_1_EXTRA_CONFIG="chunkserverlatencysort=1" \
+	MOUNT_2_EXTRA_CONFIG="enableacl=0" \
+	MOUNT_3_EXTRA_CONFIG="enablexattrs=0" \
+	MOUNT_4_EXTRA_CONFIG="wanpreset=0" \
+	MOUNT_6_EXTRA_CONFIG="wanpreset|enableacl=1|enablexattrs=1" \
 	setup_local_empty_saunafs info
 
 wan="${info[mount0]}"
@@ -47,29 +47,29 @@ assert_success setfattr -n user.colour -v blue file
 assert_matches "user:saunafstest_1:rwx" "$(getfacl -cpE file)"
 assert_equals blue "$(getfattr --only-values -n user.colour file)"
 
-# sfswan expands to every one of the individual options rather than being parsed
+# wanpreset expands to every one of the individual options rather than being parsed
 # and ignored, and a mount without it keeps the defaults.
-expect_equals 0 "$(mount_option sfsacl "$wan")"
-expect_equals 0 "$(mount_option sfsxattrs "$wan")"
-expect_equals 1 "$(mount_option sfschunkserverlatencysort "$wan")"
+expect_equals 0 "$(mount_option enableacl "$wan")"
+expect_equals 0 "$(mount_option enablexattrs "$wan")"
+expect_equals 1 "$(mount_option chunkserverlatencysort "$wan")"
 expect_matches '^60(\.0*)?$' "$(mount_option sfsdirentrycacheto "$wan")"
 expect_equals 10000000 "$(mount_option sfsdirentrycachesize "$wan")"
 
-expect_equals 1 "$(mount_option sfsacl "$default")"
-expect_equals 1 "$(mount_option sfsxattrs "$default")"
-expect_equals 0 "$(mount_option sfschunkserverlatencysort "$default")"
+expect_equals 1 "$(mount_option enableacl "$default")"
+expect_equals 1 "$(mount_option enablexattrs "$default")"
+expect_equals 0 "$(mount_option chunkserverlatencysort "$default")"
 
 # Options given after the preset win, and the rest of the preset survives them,
-# so sfswan is a starting point rather than a lock.
-expect_equals 1 "$(mount_option sfsacl "$wan_overridden")"
-expect_equals 1 "$(mount_option sfsxattrs "$wan_overridden")"
-expect_equals 1 "$(mount_option sfschunkserverlatencysort "$wan_overridden")"
+# so wanpreset is a starting point rather than a lock.
+expect_equals 1 "$(mount_option enableacl "$wan_overridden")"
+expect_equals 1 "$(mount_option enablexattrs "$wan_overridden")"
+expect_equals 1 "$(mount_option chunkserverlatencysort "$wan_overridden")"
 expect_matches '^60(\.0*)?$' "$(mount_option sfsdirentrycacheto "$wan_overridden")"
 expect_equals 10000000 "$(mount_option sfsdirentrycachesize "$wan_overridden")"
 
-# sfswan=0 mounts successfully and leaves every one of those options exactly as
+# wanpreset=0 mounts successfully and leaves every one of those options exactly as
 # the stock mount has them, so it can sit in a config file.
-for option in sfsacl sfsxattrs sfschunkserverlatencysort sfsdirentrycacheto \
+for option in enableacl enablexattrs chunkserverlatencysort sfsdirentrycacheto \
 		sfsdirentrycachesize; do
 	expect_equals "$(mount_option "$option" "$default")" \
 		"$(mount_option "$option" "$wan_disabled")"
@@ -99,7 +99,7 @@ for mount in "$no_xattrs" "$wan"; do
 done
 
 # With only ACLs disabled the ACLs become invisible but ordinary attributes still work,
-# which is what separates sfsacl from sfsxattrs.
+# which is what separates enableacl from enablexattrs.
 expect_matches "Operation not supported" \
 	"$(getfattr -n system.posix_acl_access "$no_acls/file" 2>&1 || true)"
 expect_failure setfacl -m u:saunafstest_2:rwx "$no_acls/file"

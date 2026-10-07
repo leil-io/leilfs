@@ -48,7 +48,7 @@ CHUNKSERVERS=1 \
 	USE_RAMDISK=YES \
 	MASTER_EXTRA_CONFIG="MAGIC_DEBUG_LOG = $TEMP_DIR/master.log|LOG_FLUSH_ON=TRACE" \
 	MOUNT_EXTRA_CONFIG="sfscachemode=NEVER" \
-	MOUNT_1_EXTRA_CONFIG="sfswan" \
+	MOUNT_1_EXTRA_CONFIG="wanpreset" \
 	setup_local_empty_saunafs info
 
 default="${info[mount0]}"
