@@ -21,7 +21,9 @@
 
 #include "common/platform.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <unordered_map>
 
@@ -35,7 +37,8 @@
 // these operations with the global ChunkserverStats instance.
 //
 // If there is a choice between multiple chunkservers capable of performing some operation, the
-// chunkserver with lowest pending operation count should be chosen.
+// chunkserver with lowest pending operation count should be chosen. Latency sorting, when
+// enabled, additionally biases the choice towards nearby chunkservers.
 //
 // Code that determines a chunkserver to be defective should call markDefective(). Others should
 // prefer to use chunkservers not marked as defective, if possible. The defective flag is cleared
@@ -63,14 +66,37 @@ public:
 			return pendingWrites_;
 		}
 
+		bool hasRoundTripTime() const {
+			return hasRoundTripTime_;
+		}
+
+		uint32_t roundTripTime_ms() const {
+			return roundTripTime_ms_;
+		}
+
 		float score() const;
 
 	private:
 		static constexpr int defectiveTimeout_ms = 2000;
 
+		/// Round trip time treated as neutral: faster scores up, slower scores down.
+		static constexpr uint32_t kReferenceRoundTripTime_ms = 100;
+
+		/// Weight of the latency bias in score().
+		static constexpr float kLatencyInfluence = 0.2f;
+
+		/// Denominator of the exponential moving average of round trip times.
+		static constexpr uint32_t kRoundTripTimeSmoothingFactor = 8;
+
+		// A single defect halves score(); the bias must stay too small to undo that.
+		static_assert(kLatencyInfluence < 1.f / 3.f,
+				"kLatencyInfluence >= 1/3 would let a defective chunkserver outrank a healthy one");
+
 		uint32_t pendingReads_;
 		uint32_t pendingWrites_;
 		uint32_t defects_;
+		uint32_t roundTripTime_ms_;
+		bool hasRoundTripTime_;
 		Timeout defectiveTimeout_;
 
 		friend class ChunkserverStats;
@@ -86,11 +112,19 @@ public:
 	void registerWriteOperation(const NetworkAddress& address);
 	void unregisterWriteOperation(const NetworkAddress& address);
 
+	/// Enables or disables latency sorting. Set once before any I/O thread is started.
+	void setUseRoundTripTime(bool useRoundTripTime);
+	bool useRoundTripTime() const;
+
+	/// Feeds one round trip time observation. A no-op while latency sorting is disabled.
+	void updateRoundTripTime(const NetworkAddress& address, uint32_t roundTripTime_ms);
+
 	void markDefective(const NetworkAddress& address);
 	void markWorking(const NetworkAddress& address);
 
 private:
 	std::mutex mutex_;
+	std::atomic<bool> useRoundTripTime_{false};
 	std::unordered_map<NetworkAddress, ChunkserverEntry> chunkserverEntries_;
 };
 
@@ -120,6 +154,7 @@ public:
 	void registerWriteOperation(const NetworkAddress& address);
 	void unregisterWriteOperation(const NetworkAddress& address);
 
+	void updateRoundTripTime(const NetworkAddress& address, uint32_t roundTripTime_ms);
 	void markDefective(const NetworkAddress& address);
 	void markWorking(const NetworkAddress& address);
 

@@ -84,6 +84,9 @@ typedef struct sau_init_params {
 	bool verbose;
 
 	const char *io_limits_config_file;
+
+	/* Appended rather than grouped above, to leave existing offsets alone. */
+	bool chunkserver_latency_sort;
 } sau_init_params_t;
 
 #define SAUNAFS_MAX_GOAL_NAME 64

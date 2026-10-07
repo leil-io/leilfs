@@ -20,15 +20,20 @@
 #include "common/platform.h"
 #include "common/chunkserver_stats.h"
 
+#include <algorithm>
 #include <mutex>
 #include <unordered_map>
 
 // ChunkserverEntry implementation
 
 constexpr int ChunkserverStats::ChunkserverEntry::defectiveTimeout_ms;
+constexpr uint32_t ChunkserverStats::ChunkserverEntry::kReferenceRoundTripTime_ms;
+constexpr float ChunkserverStats::ChunkserverEntry::kLatencyInfluence;
+constexpr uint32_t ChunkserverStats::ChunkserverEntry::kRoundTripTimeSmoothingFactor;
 
 ChunkserverStats::ChunkserverEntry::ChunkserverEntry(): pendingReads_(0), pendingWrites_(0),
-		defects_(0), defectiveTimeout_(std::chrono::milliseconds(defectiveTimeout_ms)) {
+		defects_(0), roundTripTime_ms_(0), hasRoundTripTime_(false),
+		defectiveTimeout_(std::chrono::milliseconds(defectiveTimeout_ms)) {
 }
 
 // ChunkserverStats implementation
@@ -59,6 +64,35 @@ void ChunkserverStats::unregisterWriteOperation(const NetworkAddress& address) {
 	chunkserverEntries_[address].pendingWrites_--;
 }
 
+void ChunkserverStats::setUseRoundTripTime(bool useRoundTripTime) {
+	useRoundTripTime_.store(useRoundTripTime);
+}
+
+bool ChunkserverStats::useRoundTripTime() const {
+	return useRoundTripTime_.load();
+}
+
+void ChunkserverStats::updateRoundTripTime(const NetworkAddress& address,
+		uint32_t roundTripTime_ms) {
+	// Dropped here so no reader has to filter out round trip times it must ignore.
+	if (!useRoundTripTime_.load(std::memory_order_relaxed)) {
+		return;
+	}
+
+	std::unique_lock<std::mutex> lock(mutex_);
+	ChunkserverEntry& chunkserver = chunkserverEntries_[address];
+	roundTripTime_ms = std::max<uint32_t>(1, roundTripTime_ms);
+	if (!chunkserver.hasRoundTripTime_) {
+		chunkserver.roundTripTime_ms_ = roundTripTime_ms;
+		chunkserver.hasRoundTripTime_ = true;
+		return;
+	}
+
+	constexpr uint32_t kFactor = ChunkserverEntry::kRoundTripTimeSmoothingFactor;
+	chunkserver.roundTripTime_ms_ = std::max<uint32_t>(1,
+			(chunkserver.roundTripTime_ms_ * (kFactor - 1) + roundTripTime_ms) / kFactor);
+}
+
 void ChunkserverStats::markWorking(const NetworkAddress& address) {
 	std::unique_lock<std::mutex> lock(mutex_);
 	chunkserverEntries_[address].defects_ = 0;
@@ -74,10 +108,19 @@ void ChunkserverStats::markDefective(const NetworkAddress& address) {
 }
 
 float ChunkserverStats::ChunkserverEntry::score() const {
+	// Maps the round trip time onto [-1, 1] around the reference latency.
+	float latencyBias = 0.f;
+	if (hasRoundTripTime_) {
+		const float reference = static_cast<float>(kReferenceRoundTripTime_ms);
+		const float rtt = static_cast<float>(roundTripTime_ms_);
+		latencyBias = (reference - rtt) / (reference + rtt);
+	}
+	const float latencyFactor = 1.f + kLatencyInfluence * latencyBias;
+
 	if (defects_ > 0 && !defectiveTimeout_.expired()) {
-		return 1. / (defects_ + 1);
+		return latencyFactor / (defects_ + 1);
 	} else {
-		return 1;
+		return latencyFactor;
 	}
 }
 
@@ -114,6 +157,11 @@ void ChunkserverStatsProxy::registerWriteOperation(const NetworkAddress& address
 void ChunkserverStatsProxy::unregisterWriteOperation(const NetworkAddress& address) {
 	stats_.unregisterWriteOperation(address);
 	writeOperations_[address]--;
+}
+
+void ChunkserverStatsProxy::updateRoundTripTime(const NetworkAddress& address,
+		uint32_t roundTripTime_ms) {
+	stats_.updateRoundTripTime(address, roundTripTime_ms);
 }
 
 void ChunkserverStatsProxy::markDefective(const NetworkAddress& address) {

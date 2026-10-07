@@ -38,6 +38,7 @@
 #include "common/read_plan_executor.h"
 #include "common/time_utils.h"
 #include "mount/chunk_reader.h"
+#include "mount/global_chunkserver_stats.h"
 #include "mount/mastercomm.h"
 #include "mount/memory_info.h"
 #include "mount/mount_info.h"
@@ -792,6 +793,7 @@ void read_data_init(uint32_t retries,
 	gPrefetchXorStripes = prefetchXorStripes;
 	gBandwidthOveruse = bandwidth_overuse;
 	gChunkConnector.setRoundTripTime(chunkserverRoundTripTime_ms);
+	gChunkConnector.setChunkserverStats(&globalChunkserverStats);
 	gChunkConnector.setSourceIp(fs_getsrcip());
 	pthread_attr_init(&thattr);
 	pthread_attr_setstacksize(&thattr,0x100000);
