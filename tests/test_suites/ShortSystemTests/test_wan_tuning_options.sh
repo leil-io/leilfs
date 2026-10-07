@@ -1,8 +1,6 @@
 # Covers the mount options added for high-latency links: enablexattrs, enableacl,
 # chunkserverlatencysort, and the wanpreset option that combines them.
 
-assert_program_installed setfacl getfacl setfattr getfattr
-
 # Attribute names of a file, one per line, sorted; empty if there are none. Fails
 # if the listing does, so a refused listing cannot read as an empty one.
 xattr_names() {
@@ -38,14 +36,8 @@ wan_disabled="${info[mount4]}"
 default="${info[mount5]}"
 wan_overridden="${info[mount6]}"
 
-# Give a file an ACL and an ordinary attribute through a mount left at the defaults.
 cd "$default"
 touch file
-chmod 644 file
-assert_success setfacl -m u:saunafstest_1:rwx file
-assert_success setfattr -n user.colour -v blue file
-assert_matches "user:saunafstest_1:rwx" "$(getfacl -cpE file)"
-assert_equals blue "$(getfattr --only-values -n user.colour file)"
 
 # wanpreset expands to every one of the individual options rather than being parsed
 # and ignored, and a mount without it keeps the defaults.
@@ -74,49 +66,67 @@ for option in enableacl enablexattrs chunkserverlatencysort sfsdirentrycacheto \
 	expect_equals "$(mount_option "$option" "$default")" \
 		"$(mount_option "$option" "$wan_disabled")"
 done
-expect_equals blue "$(getfattr --only-values -n user.colour "$wan_disabled/file")"
 
-# The override reaches behaviour too: attributes and ACLs both work there.
-overridden_acl="$(getfacl -cpE "$wan_overridden/file")"
-expect_matches "user:saunafstest_1:rwx" "$overridden_acl"
-expect_equals blue "$(getfattr --only-values -n user.colour "$wan_overridden/file")"
-
-# With xattrs disabled every attribute request is refused and the list is empty.
-for mount in "$no_xattrs" "$wan"; do
-	expect_failure setfattr -n user.shape -v round "$mount/file"
-	expect_matches "Operation not supported" \
-		"$(setfattr -n user.shape -v round "$mount/file" 2>&1 || true)"
-	expect_matches "Operation not supported" \
-		"$(getfattr -n user.colour "$mount/file" 2>&1 || true)"
-	expect_failure setfattr -x user.colour "$mount/file"
-	# Listing reports nothing rather than failing, so a caller walking a tree keeps going.
-	names="$(xattr_names "$mount/file")"
-	expect_empty "$names"
-	# Ordinary file operations are untouched by the option.
+# Ordinary file operations are untouched by disabling ACLs and xattrs.
+for mount in "$no_acls" "$no_xattrs" "$wan"; do
 	contents="$(cat "$mount/file")"
 	expect_empty "$contents"
 	assert_success touch "$mount/file"
 done
 
-# With only ACLs disabled the ACLs become invisible but ordinary attributes still work,
-# which is what separates enableacl from enablexattrs.
-expect_matches "Operation not supported" \
-	"$(getfattr -n system.posix_acl_access "$no_acls/file" 2>&1 || true)"
-expect_failure setfacl -m u:saunafstest_2:rwx "$no_acls/file"
-acl_text="$(getfacl -cpE "$no_acls/file")"
-expect_equals 0 "$(grep -c saunafstest_1 <<< "$acl_text" || true)"
+# The Windows client is reached through a drvfs mount, which does not pass POSIX ACLs
+# or extended attributes through, so their behaviour is only checked on Linux.
+if [[ ${info[is_windows_system]} -eq 0 ]]; then
+	assert_program_installed setfacl getfacl setfattr getfattr
 
-names="$(xattr_names "$no_acls/file")"
-expect_equals 0 "$(grep -c posix_acl <<< "$names" || true)"
-expect_matches "user.colour" "$names"
-expect_equals blue "$(getfattr --only-values -n user.colour "$no_acls/file")"
-assert_success setfattr -n user.shape -v round "$no_acls/file"
+	# Give the file an ACL and an ordinary attribute through a mount left at the defaults.
+	cd "$default"
+	chmod 644 file
+	assert_success setfacl -m u:saunafstest_1:rwx file
+	assert_success setfattr -n user.colour -v blue file
+	assert_matches "user:saunafstest_1:rwx" "$(getfacl -cpE file)"
+	assert_equals blue "$(getfattr --only-values -n user.colour file)"
 
-# None of the refusals reached the master: the ACL and the attribute are still there.
-cd "$default"
-expect_matches "user:saunafstest_1:rwx" "$(getfacl -cpE file)"
-expect_equals blue "$(getfattr --only-values -n user.colour file)"
-expect_equals round "$(getfattr --only-values -n user.shape file)"
+	expect_equals blue "$(getfattr --only-values -n user.colour "$wan_disabled/file")"
+
+	# The override reaches behaviour too: attributes and ACLs both work there.
+	overridden_acl="$(getfacl -cpE "$wan_overridden/file")"
+	expect_matches "user:saunafstest_1:rwx" "$overridden_acl"
+	expect_equals blue "$(getfattr --only-values -n user.colour "$wan_overridden/file")"
+
+	# With xattrs disabled every attribute request is refused and the list is empty.
+	for mount in "$no_xattrs" "$wan"; do
+		expect_failure setfattr -n user.shape -v round "$mount/file"
+		expect_matches "Operation not supported" \
+			"$(setfattr -n user.shape -v round "$mount/file" 2>&1 || true)"
+		expect_matches "Operation not supported" \
+			"$(getfattr -n user.colour "$mount/file" 2>&1 || true)"
+		expect_failure setfattr -x user.colour "$mount/file"
+		# Listing reports nothing rather than failing, so a caller walking a tree keeps going.
+		names="$(xattr_names "$mount/file")"
+		expect_empty "$names"
+	done
+
+	# With only ACLs disabled the ACLs become invisible but ordinary attributes still work,
+	# which is what separates enableacl from enablexattrs.
+	expect_matches "Operation not supported" \
+		"$(getfattr -n system.posix_acl_access "$no_acls/file" 2>&1 || true)"
+	expect_failure setfacl -m u:saunafstest_2:rwx "$no_acls/file"
+	acl_text="$(getfacl -cpE "$no_acls/file")"
+	expect_equals 0 "$(grep -c saunafstest_1 <<< "$acl_text" || true)"
+
+	names="$(xattr_names "$no_acls/file")"
+	expect_equals 0 "$(grep -c posix_acl <<< "$names" || true)"
+	expect_matches "user.colour" "$names"
+	expect_equals blue "$(getfattr --only-values -n user.colour "$no_acls/file")"
+	assert_success setfattr -n user.shape -v round "$no_acls/file"
+
+	# None of the refusals reached the master: the ACL and the attribute are still there.
+	cd "$default"
+	expect_matches "user:saunafstest_1:rwx" "$(getfacl -cpE file)"
+	expect_equals blue "$(getfattr --only-values -n user.colour file)"
+	expect_equals round "$(getfattr --only-values -n user.shape file)"
+fi
 
 # Latency sorting must not disturb reads and writes, including when the set of
 # chunkservers to score changes underneath it.
