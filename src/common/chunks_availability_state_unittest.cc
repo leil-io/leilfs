@@ -126,3 +126,70 @@ TEST(ChunksReplicationStateTests, MaximumValues) {
 	EXPECT_EQ(2U, s.chunksToReplicate(10, ChunksReplicationState::kMaxPartsCount - 1));
 	EXPECT_EQ(2U, s.chunksToDelete(10, ChunksReplicationState::kMaxPartsCount - 1));
 }
+
+TEST(ChunksAvailabilityStateTests, RejectsInvalidGoalsInEveryState) {
+	for (const uint8_t goal : {uint8_t{41}, uint8_t{255}}) {
+		for (size_t state = 0; state < ChunksAvailabilityState::kStateCount; ++state) {
+			std::array<std::map<uint8_t, uint64_t>, ChunksAvailabilityState::kStateCount> maps;
+			maps[state][goal] = 1;
+			std::vector<uint8_t> buffer;
+			serialize(buffer, maps);
+			ChunksAvailabilityState decoded;
+			EXPECT_THROW(deserialize(buffer, decoded), IncorrectDeserializationException);
+		}
+	}
+}
+
+TEST(ChunksReplicationStateTests, RejectsInvalidGoalsInBothMaps) {
+	using PartCounts = std::array<uint64_t, ChunksReplicationState::kMaxPartsCount>;
+	for (const uint8_t goal : {uint8_t{41}, uint8_t{255}}) {
+		for (size_t state = 0; state < 2; ++state) {
+			std::array<std::map<uint8_t, PartCounts>, 2> maps;
+			maps[state][goal][1] = 1;
+			std::vector<uint8_t> buffer;
+			serialize(buffer, maps);
+			ChunksReplicationState decoded;
+			EXPECT_THROW(deserialize(buffer, decoded), IncorrectDeserializationException);
+		}
+	}
+}
+
+TEST(ChunksAvailabilityStateTests, BoundaryGoalsKeepMapEncoding) {
+	std::array<std::map<uint8_t, uint64_t>, ChunksAvailabilityState::kStateCount> maps;
+	ChunksAvailabilityState state;
+	for (const uint8_t goal : {uint8_t{0}, GoalId::kMax}) {
+		for (size_t index = 0; index < maps.size(); ++index) {
+			maps[index][goal] = 1;
+			state.addChunk(goal, static_cast<ChunksAvailabilityState::State>(index));
+		}
+	}
+	std::vector<uint8_t> expected, encoded;
+	serialize(expected, maps);
+	serialize(encoded, state);
+	EXPECT_EQ(expected, encoded);
+	ChunksAvailabilityState decoded;
+	ASSERT_NO_THROW(deserialize(expected, decoded));
+	std::vector<uint8_t> roundTrip;
+	serialize(roundTrip, decoded);
+	EXPECT_EQ(expected, roundTrip);
+}
+
+TEST(ChunksReplicationStateTests, BoundaryGoalsKeepMapEncoding) {
+	using PartCounts = std::array<uint64_t, ChunksReplicationState::kMaxPartsCount>;
+	std::array<std::map<uint8_t, PartCounts>, 2> maps;
+	ChunksReplicationState state;
+	for (const uint8_t goal : {uint8_t{0}, GoalId::kMax}) {
+		maps[0][goal][1] = 1;
+		maps[1][goal][2] = 1;
+		state.addChunk(goal, 1, 2);
+	}
+	std::vector<uint8_t> expected, encoded;
+	serialize(expected, maps);
+	serialize(encoded, state);
+	EXPECT_EQ(expected, encoded);
+	ChunksReplicationState decoded;
+	ASSERT_NO_THROW(deserialize(expected, decoded));
+	std::vector<uint8_t> roundTrip;
+	serialize(roundTrip, decoded);
+	EXPECT_EQ(expected, roundTrip);
+}

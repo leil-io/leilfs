@@ -53,6 +53,9 @@ public:
 		std::map<uint8_t, T> map;
 		::deserialize(source, bytes_left_in_buffer, map);
 		for (const auto &goal_and_value : map) {
+			if (goal_and_value.first > GoalId::kMax) {
+				throw IncorrectDeserializationException("chunk health goal id out of range");
+			}
 			operator[](goal_and_value.first) = goal_and_value.second;
 		}
 	}

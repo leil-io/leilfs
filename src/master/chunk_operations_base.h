@@ -149,6 +149,7 @@ public:
 	uint32_t getChunkInfoSerializedSize() override;
 	void storeChunkInfo(uint8_t *buff) override;
 	uint32_t getMissingCount() override;
+	void prepareChunkHealthReport() override {}
 	void storeChunkCounters(uint8_t *buff, uint8_t matrixid) override;
 	uint32_t count() override;
 	const ChunksReplicationState &getReplicationState() override;

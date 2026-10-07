@@ -138,6 +138,38 @@ TEST(MatoclCommunicationTests, FuseWriteChunkEnd) {
 	SAUNAFS_VERIFY_INOUT_PAIR(status);
 }
 
+TEST(MatoclCommunicationTests, ChunksHealthKeepsBoundaryGoalPacketBytes) {
+	using PartCounts = std::array<uint64_t, ChunksReplicationState::kMaxPartsCount>;
+	std::array<std::map<uint8_t, uint64_t>, ChunksAvailabilityState::kStateCount> availabilityMaps;
+	std::array<std::map<uint8_t, PartCounts>, 2> replicationMaps;
+	ChunksAvailabilityState availability;
+	ChunksReplicationState replication;
+	for (const uint8_t goal : {uint8_t{0}, GoalId::kMax}) {
+		availabilityMaps[ChunksAvailabilityState::kSafe][goal] = 1;
+		replicationMaps[0][goal][1] = 1;
+		replicationMaps[1][goal][2] = 1;
+		availability.addChunk(goal, ChunksAvailabilityState::kSafe);
+		replication.addChunk(goal, 1, 2);
+	}
+	ChunkHealthFreshness freshness;
+	freshness.generation = 7;
+	for (const bool withFreshness : {false, true}) {
+		std::vector<uint8_t> expected, encoded;
+		if (withFreshness) {
+			serializePacket(expected, SAU_MATOCL_CHUNKS_HEALTH,
+			                matocl::chunksHealth::kWithFreshness, availabilityMaps, replicationMaps,
+			                true, freshness, uint32_t{123});
+			matocl::chunksHealth::serialize(encoded, availability, replication, true, freshness,
+			                                uint32_t{123});
+		} else {
+			serializePacket(expected, SAU_MATOCL_CHUNKS_HEALTH, matocl::chunksHealth::kStandard,
+			                true, availabilityMaps, replicationMaps);
+			matocl::chunksHealth::serialize(encoded, true, availability, replication);
+		}
+		EXPECT_EQ(expected, encoded);
+	}
+}
+
 TEST(MatoclCommunicationTests, XorChunksHealth) {
 	SAUNAFS_DEFINE_INOUT_PAIR(bool, regular, true, false);
 	ChunksAvailabilityState availIn, availOut;

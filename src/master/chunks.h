@@ -40,6 +40,7 @@
 
 struct matocsserventry;
 struct csdbentry;
+class ChunkCopiesCalculator;
 
 inline Signal<uint64_t, uint32_t, uint32_t, uint32_t> gChunkChangedSignal;
 
@@ -247,6 +248,17 @@ bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server);
 uint32_t chunk_maintenance_ticks_per_pass();
 /// Time budget of one maintenance tick in milliseconds, the configured loop timeout.
 uint32_t chunk_maintenance_tick_budget_ms();
+/// Applied target duration of a full chunk pass, in seconds, including legacy setting precedence.
+uint32_t chunk_loop_pass_time();
+/// Applied chunk-loop tick period, in milliseconds; allowances above are per tick.
+uint32_t chunk_loop_period_ms();
+/// Applied background maintenance switch, independent of configuration edits after startup.
+bool chunk_maintenance_enabled();
+/// Whether the startup delay of chunk operations (OPERATIONS_DELAY_INIT) has passed; chunk
+/// backends use this readiness gate for maintenance admission.
+bool chunk_operations_delay_passed();
+/// Optimize a copies calculation using the engine's applied policy and assignment cache.
+void chunk_optimize_copies(ChunkCopiesCalculator &calculator);
 
 #endif
 
