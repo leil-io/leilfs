@@ -76,6 +76,9 @@ public:
 	/// Forkless keeps metadata in FDB, not in a downloadable metadata.sfs on the master.
 	bool supportsMetadataFileDownload() override { return false; }
 
+	/// Metadata files lag behind the changelogs; auto recovery and shadows replay them.
+	bool replaysChangelogsOnLoad() override { return true; }
+
 #ifndef METALOGGER
 	/// Store metadata to the given file descriptor.
 	void store_fd(FILE *fd) override;
