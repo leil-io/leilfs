@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/uio.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef ssize_t (*pread_t)(int, void *, size_t, off_t);
@@ -40,6 +41,7 @@ int EIO_replies = 0;
 // "pwrite_slow_and_one_eio_trigger"
 // * pread takes 10ms + 1us per 250B if file name contains "pread_only_slow"
 // * pwrite takes 10ms + 1us per 250B if file name contains "pwrite_only_slow"
+// * pwrite takes 10ms + 1ms per KiB if file name contains "pwrite_very_slow"
 
 // returns -1 on failure and sets errno (via readlink call)
 ssize_t read_filename(int fd, char *buf, int bufsize) {
@@ -56,6 +58,7 @@ static int err_on_operation(int fd, const char* opname, size_t offset, size_t si
 	char far_eio_trigger[COMMAND_BUFSIZE] = {0};
 	char slow_and_one_eio_trigger[COMMAND_BUFSIZE] = {0};
 	char only_slow[COMMAND_BUFSIZE] = {0};
+	char very_slow[COMMAND_BUFSIZE] = {0};
 
 	ssize_t result = read_filename(fd, filename, FILENAME_BUFSIZE);
 	if (result == -1) {
@@ -71,6 +74,7 @@ static int err_on_operation(int fd, const char* opname, size_t offset, size_t si
 	sprintf(far_eio_trigger, "%s_far_EIO", opname);
 	sprintf(slow_and_one_eio_trigger, "%s_slow_and_one_EIO", opname);
 	sprintf(only_slow, "%s_only_slow", opname);
+	sprintf(very_slow, "%s_very_slow", opname);
 
 	// TODO: remove fixed pattern for SMRs after the basic support
 	if (strstr(filename, always_eio_trigger) || strstr(filename, "sauna_nullb0")) {
@@ -91,6 +95,14 @@ static int err_on_operation(int fd, const char* opname, size_t offset, size_t si
 		int kBaseLatency_us = 10 * 1000;  // 10ms
 		int bytesPerUs = 250;  // 250B per 1us
 		usleep(kBaseLatency_us + size / bytesPerUs);
+		return 0;
+	} else if (strstr(filename, very_slow)) {
+		// sleep long enough to keep acknowledged buffered writes unflushed for seconds
+		size_t delay_ms = 10 + size / 1024;
+		struct timespec delay = {delay_ms / 1000, (long)(delay_ms % 1000) * 1000 * 1000};
+		while (nanosleep(&delay, &delay) == -1 && errno == EINTR) {
+			// a signal cut the sleep short: sleep the remainder
+		}
 		return 0;
 	} else {
 		return 0;
