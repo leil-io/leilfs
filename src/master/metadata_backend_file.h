@@ -49,6 +49,9 @@ public:
 
 	bool supportsMetadataFileDownload() override { return true; }
 
+	/// Metadata files lag behind the changelogs; auto recovery and shadows replay them.
+	bool replaysChangelogsOnLoad() override { return true; }
+
 	void setMetadataFile(const std::string &metadataFile) {
 		metadataFile_ = metadataFile;
 	}

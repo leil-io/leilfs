@@ -309,7 +309,9 @@ int fs_loadall(bool isFromInit = true) {
 
 	bool autoRecovery = fs_can_do_auto_recovery();
 
-	if (autoRecovery || (metadataserver::getPersonality() == metadataserver::Personality::kShadow)) {
+	if (gMetadataBackend->replaysChangelogsOnLoad() &&
+	    (autoRecovery ||
+	     metadataserver::getPersonality() == metadataserver::Personality::kShadow)) {
 		safs::log_info("{} - applying changelogs from {}",
 		               (autoRecovery ? "AUTO_RECOVERY enabled" : "running in shadow mode"),
 		               fs::getCurrentWorkingDirectoryNoThrow().c_str());

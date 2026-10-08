@@ -79,6 +79,11 @@ public:
 	/// rather than a match on the diagnostic backendType() name.
 	virtual bool supportsMetadataFileDownload() = 0;
 
+	/// Whether metadata loaded by loadall() can lag behind the changelogs, so that auto recovery
+	/// and shadows replay them on top. A backend that is its own source of truth only emits its
+	/// changelog: entries can be published for changes that were never stored.
+	virtual bool replaysChangelogsOnLoad() = 0;
+
 // Available for master, shadow and metarestore
 #ifndef METALOGGER
 	/// Store metadata to the given file descriptor.
