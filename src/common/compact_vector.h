@@ -380,6 +380,15 @@ struct compact_vector_base {
 #endif
 	}
 
+	// GCC's -Wfree-nonheap-object can flag the deallocate call below as a
+	// false positive: through inlining (e.g. into emplace_back's exception
+	// handler) it traces a pointer back to this object's inline storage and
+	// warns, even though the guard above makes that call unreachable
+	// whenever p actually points at internal storage.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wfree-nonheap-object"
+#endif
 	void deallocate(pointer p, size_type n) {
 		if (p && n <= internal_size()) {
 			assert(p == storage_.internal_ptr());
@@ -397,6 +406,9 @@ struct compact_vector_base {
 		}
 #endif
 	}
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 	allocator_type &get_allocator() {
 		// conversion required so we don't call allocator_type constructor.

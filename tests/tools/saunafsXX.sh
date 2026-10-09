@@ -15,6 +15,21 @@ install_saunafsXX() {
 	rm -rf "${SAUNAFSXX_DIR:?}"
 	mkdir -p "${SAUNAFSXX_DIR}"
 	local distro="$(lsb_release -si)"
+	if [ "${distro}" == Ubuntu ] && [ "$(lsb_release -sr | tail -1)" == "26.04" ]; then
+		# Legacy SaunaFS ${SAUNAFSXX_TAG} packages predate 26.04 (resolute) -
+		# it didn't exist when 4.1.0 shipped. The legacy binaries are
+		# linked against their own build release's libfuse3/boost
+		# sonames, which 26.04 doesn't ship under compatible names, so
+		# even a correctly installed package can't actually run here
+		# ('error while loading shared libraries'). There's no ABI-
+		# compatible release to fall back to either. These upgrade tests
+		# are therefore not possible to run on 26.04 at all - skip them
+		# outright rather than talk to the package repo for nothing.
+		echo "Legacy SaunaFS ${SAUNAFSXX_TAG} packages can't run on Ubuntu" \
+			"26.04 (resolute) - their libfuse3/boost sonames aren't" \
+			"available there. Skipping this test."
+		test_end
+	fi
 	case "${distro}" in
 	Ubuntu | Debian)
 		local distro_id="$(lsb_release -si | tr '[:upper:]' '[:lower:]' | tail -1)"
