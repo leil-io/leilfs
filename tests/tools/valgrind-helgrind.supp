@@ -35,6 +35,15 @@
 }
 
 {
+   # libfuse 3.17+ destroys a mutex in fuse_session_destroy() that helgrind
+   # never saw initialized. Internal to libfuse, at shutdown only.
+   fuse_session_destroy_mutex
+   Helgrind:Misc
+   fun:mutex_destroy_WRK
+   fun:fuse_session_destroy
+}
+
+{
    # False positive about std::to_string calls when naming the read/write worker threads.
    to_string_in_workers_names
    Helgrind:Race
