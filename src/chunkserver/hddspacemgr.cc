@@ -837,6 +837,22 @@ void hddUpdateOutputBufferWithAlreadyRepliedInputBuffers(uint64_t chunkId, Chunk
 	}
 }
 
+// One past the highest block acknowledged to a writer, flushed or not: reads already serve them.
+static uint16_t hddAlreadyRepliedBlocksEnd(uint64_t chunkId, ChunkPartType chunkType) {
+	std::lock_guard lock(gAlreadyRepliedInputBuffersMutex);
+	auto buffers = gAlreadyRepliedInputBuffers.find({chunkId, chunkType});
+	if (buffers == gAlreadyRepliedInputBuffers.end()) { return 0; }
+
+	uint16_t blocksEnd = 0;
+	for (const auto &[inputBuffer, writeInfoVec] : buffers->second) {
+		size_t repliedBlocks = std::min<size_t>(inputBuffer->repliedBlocks, writeInfoVec.size());
+		for (size_t index = 0; index < repliedBlocks; ++index) {
+			blocksEnd = std::max<uint16_t>(blocksEnd, writeInfoVec[index].blockNum + 1);
+		}
+	}
+	return blocksEnd;
+}
+
 int hddClose(uint64_t chunkId, ChunkPartType chunkType) {
 	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
 	if (chunk == NULL) {
@@ -1198,7 +1214,8 @@ int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
 		return SAUNAFS_ERROR_WRONGVERSION;
 	}
 
-	*blocks = chunk->blocks();
+	// A replication copies this many blocks, so it must include writes still being flushed.
+	*blocks = std::max(chunk->blocks(), hddAlreadyRepliedBlocksEnd(chunkId, chunkType));
 	hddChunkRelease(chunk);
 
 	return SAUNAFS_STATUS_OK;
