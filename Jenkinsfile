@@ -354,8 +354,15 @@ pipeline {
                     steps {
                         checkoutSource()
                         script {
+                            // vcpkg builds civetweb (Prometheus' HTTP server) with gcc LTO
+                            // objects that a clang link cannot read, so Prometheus stays off.
+                            def clangCmakeArgs = '-DCMAKE_C_COMPILER=clang-19' +
+                                ' -DCMAKE_CXX_COMPILER=clang++-19' +
+                                ' -DENABLE_WERROR=ON -DENABLE_PROMETHEUS=OFF'
                             sh """
-                                docker buildx build --tag leilfs-clang-build:latest -f tests/docker/Dockerfile.test $WORKSPACE
+                                docker buildx build --tag leilfs-clang-build:latest \
+                                    --build-arg EXTRA_CMAKE_ARGS="${clangCmakeArgs}" \
+                                    -f tests/docker/Dockerfile.test $WORKSPACE
                                 """
                         }
                     }
