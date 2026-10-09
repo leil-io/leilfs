@@ -20,11 +20,30 @@ master_cfg="|TLS_CERT_FILE = ${TLS_CERTS_DIR}/server.crt"
 master_cfg+="|TLS_KEY_FILE = ${TLS_CERTS_DIR}/server.key"
 master_cfg+="|TLS_CA_CERT_FILE = ${TLS_CERTS_DIR}/ca.crt"
 
-# Configure master with custom empty reserved files period for faster test execution
-master_cfg+="|EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 1000"
+# Notifier replies report the current state of an inode, so each reserved file stays open until
+# its reply is logged; forced cleanup of reserved files would end that state at a random time.
+master_cfg+="|EMPTY_RESERVED_FILES_PERIOD_MSECONDS = 0"
+
+wait_for_notifier_line() {
+	local log="${1}"
+	local line="${2}"
+	assert_eventually "grep -Fxq '${line}' '${log}'"
+}
+
+# Unregistered notifier connections report version 0.0.0 and get no events.
+count_notifiers() {
+	local listing
+	listing=$(saunafs_admin_command list-inotifiers --porcelain localhost "${info[matocl]}") \
+		|| return 1
+	if [[ "${1:-}" == "registered" ]]; then
+		awk 'NF && $1 != "0.0.0" {count++} END {print count + 0}' <<< "${listing}"
+	else
+		awk 'NF {count++} END {print count + 0}' <<< "${listing}"
+	fi
+}
 
 run_metadata_operations() {
-	sleep 1
+	local log="${1}"
 	cd "${info[mount0]}"
 
 	mkdir folder1 folder2
@@ -43,15 +62,27 @@ run_metadata_operations() {
 		sleep 1
 	done
 
+	# Held open through the purge: a purged file without a session is deleted, not reserved.
+	local file1_fd file1_inode
 	saunafs settrashtime 3 folder1
 	touch folder1/file1
+	exec {file1_fd}<folder1/file1
+	file1_inode=$(inode_of folder1/file1)
 	rm folder1/file1
-	sleep 6
+	wait_for_notifier_line "${log}" "inode ${file1_inode}: type=t path=/folder1/file1 (trash)"
+	wait_for_notifier_line "${log}" "inode ${file1_inode}: type=r path=/folder1/file1 (reserved)"
+	exec {file1_fd}<&-
+	wait_for_notifier_line "${log}" "inode ${file1_inode}: type=? path="
 
+	local file2_fd file2_inode
 	saunafs settrashtime 0 folder1
 	touch folder1/file2
+	exec {file2_fd}<folder1/file2
+	file2_inode=$(inode_of folder1/file2)
 	rm folder1/file2
-	sleep 3
+	wait_for_notifier_line "${log}" "inode ${file2_inode}: type=r path=/folder1/file2 (reserved)"
+	exec {file2_fd}<&-
+	wait_for_notifier_line "${log}" "inode ${file2_inode}: type=? path="
 
 	cd ..
 }
@@ -122,6 +153,7 @@ run_notifier_test() {
 	local log="${TEMP_DIR}/notifier-${mode}.log"
 
 	echo "=== Running metadata-notifier test (${mode}) ==="
+	assert_eventually '[[ "$(count_notifiers)" == 0 ]]'
 
 	if [[ -n "${tls_cfg}" ]]; then
 		metadata-notifier localhost "${info[matont]}" "${tls_cfg}" \
@@ -134,9 +166,9 @@ run_notifier_test() {
 	local NOTIFIER_PID=$!
 	echo "Notifier started with PID ${NOTIFIER_PID}"
 
-	assert_eventually "ps -p ${NOTIFIER_PID} -o cmd= | grep -q metadata-notifier"
+	assert_eventually '[[ "$(count_notifiers registered)" == 1 ]]'
 
-	run_metadata_operations
+	run_metadata_operations "${log}"
 
 	kill -s SIGKILL "${NOTIFIER_PID}"
 	wait "${NOTIFIER_PID}" 2>/dev/null || true
@@ -154,6 +186,7 @@ run_notifier_test() {
 
 CHUNKSERVERS=1 \
 	USE_RAMDISK=YES \
+	MOUNT_EXTRA_CONFIG="sfsreportreservedperiod=1" \
 	MASTER_EXTRA_CONFIG="${master_cfg}" \
 	setup_local_empty_saunafs info
 
