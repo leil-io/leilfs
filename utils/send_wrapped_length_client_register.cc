@@ -51,8 +51,9 @@ int main(int argc, char **argv) {
 	uint16_t port;
 	eassert(tcpresolve(argv[1], argv[2], &ip, &port, 0) == 0);
 
+	constexpr char kBlobAcl[] = FUSE_REGISTER_BLOB_ACL;
 	std::vector<uint8_t> body;
-	body.insert(body.end(), FUSE_REGISTER_BLOB_ACL, FUSE_REGISTER_BLOB_ACL + REGISTER_BLOB_SIZE);
+	body.insert(body.end(), kBlobAcl, kBlobAcl + REGISTER_BLOB_SIZE);
 	body.push_back(metaSession ? REGISTER_NEWMETASESSION : REGISTER_NEWSESSION);
 	appendPut32(body, saunafsVersion(5, 0, 0));
 
