@@ -93,7 +93,16 @@ valgrind_enable() {
 		# Create a script which will run processes on valgrind. This to make it possible
 		# to modify this script to stop spawning new valgrind processes in valgrind_terminate.
 		valgrind_script_="$TEMP_DIR/$(unique_file)_valgrind.sh"
-		echo -e "#!/usr/bin/env bash\nexec $valgrind_command \"\$@\"" > "$valgrind_script_"
+		# On Ubuntu 26.04, disable glibc's cache of exited threads' stacks under
+		# helgrind: reusing one for a new thread looks to helgrind like a race
+		# with the dead thread, since glibc learns of its exit through a kernel
+		# futex helgrind can't observe.
+		local env_prefix=""
+		if [[ $valgrind_tool_ == "helgrind" ]] && \
+				grep -qx 'VERSION_ID="26.04"' /etc/os-release 2>/dev/null; then
+			env_prefix="env GLIBC_TUNABLES=glibc.pthread.stack_cache_size=0 "
+		fi
+		echo -e "#!/usr/bin/env bash\nexec ${env_prefix}$valgrind_command \"\$@\"" > "$valgrind_script_"
 		chmod +x "$valgrind_script_"
 		command_prefix="${valgrind_script_} ${command_prefix}"
 
