@@ -78,6 +78,8 @@ COPY tests ./tests
 COPY COPYING .
 COPY README.md .
 
+# Extra options appended to the cmake configure line below (used by the Jenkins clang stage).
+ARG EXTRA_CMAKE_ARGS=""
 RUN mkdir -p /leilfs/build && ls /leilfs && \
     cd /leilfs/build && cmake \
 	-DCMAKE_TOOLCHAIN_FILE="/leilfs/vcpkg/scripts/buildsystems/vcpkg.cmake" \
@@ -88,6 +90,7 @@ RUN mkdir -p /leilfs/build && ls /leilfs && \
     -DENABLE_URAFT=ON \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DENABLE_FOUNDATIONDB=ON \
+    ${EXTRA_CMAKE_ARGS} \
     ..;
 
 # TODO: Use CMake presets
