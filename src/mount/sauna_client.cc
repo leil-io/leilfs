@@ -26,6 +26,7 @@
 #include <mutex>
 #include <new>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <list>
 #include <map>
@@ -958,6 +959,8 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 	Attributes attr;
 	bool cacheHit = false;
 	bool masterLookup = false;
+	// Length of the path served for a .saunafs_path_by_inode/<inode> lookup.
+	std::optional<off_t> pathByInodeLength;
 	int status;
 
 	// Captured before the master request, see DirEntryCache::generation().
@@ -991,6 +994,7 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 			throw RequestException(status);
 		}
 		status = SAUNAFS_STATUS_OK;
+		pathByInodeLength = static_cast<off_t>(fullPath.size());
 		if (ctx.pid > 0) {
 			PidPathEntry entry{ .pid = ctx.pid, .path = fullPath };
 			gInodePathInfo.contextPidToPath[entry]++;
@@ -1060,6 +1064,15 @@ EntryParam lookup(Context &ctx, inode_t parent, const char *name) {
 		update_attr_size(attr, maxFileLen);
 		e.attr.st_size = static_cast<off_t>(maxFileLen);
 	}
+#ifndef _WIN32
+	if (pathByInodeLength) {
+		// attr holds the target inode's attributes, but reads return its path. Report the
+		// path's length so splice() readers like uutils cat get it all (see
+		// kSpecialContentAttrTimeout). The attr timeout stays: a getattr would answer with
+		// the directory attributes of .saunafs_path_by_inode itself.
+		e.attr.st_size = *pathByInodeLength;
+	}
+#endif
 
 	// If lookup succeeded and data did not come from cache, then cache it.
 	// Files with at least one hardlink are impossible to keep track of, so better not track them.

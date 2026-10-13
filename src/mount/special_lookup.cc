@@ -124,9 +124,10 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	                       char attrstr[256]) {
 	EntryParam e;
 	e.ino = inode_;
-	e.attr_timeout = 3600.0;
+	e.attr_timeout = kSpecialContentAttrTimeout;
 	e.entry_timeout = 3600.0;
 	attr_to_stat(inode_, attr, &e.attr);
+	e.attr.st_size = contentSize();
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
 	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: TWEAKS_FILE): OK (%.1f,%" PRIiNode ",%.1f,%s)",
@@ -189,9 +190,10 @@ static EntryParam lookup(const Context &ctx, inode_t parent, const char *name,
 	std::lock_guard lock(gMountInfoMtx);
 	EntryParam e;
 	e.ino = inode_;
-	e.attr_timeout = 3600.0;
+	e.attr_timeout = kSpecialContentAttrTimeout;
 	e.entry_timeout = 3600.0;
 	attr_to_stat(inode_, attr, &e.attr);
+	e.attr.st_size = contentSize();
 	stats_inc(OP_LOOKUP_INTERNAL);
 	makeattrstr(attrstr, 256, &e.attr);
 	oplog_printf(ctx, "lookup (%" PRIiNode ",%s) (internal node: MOUNT_INFO): OK (%.1f,%" PRIiNode ",%.1f,%s)",
