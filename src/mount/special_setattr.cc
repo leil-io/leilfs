@@ -104,7 +104,7 @@ static AttrReply setattr(const Context &ctx, struct stat *stbuf, int to_set,
 	attr_to_stat(inode_, attr, &o_stbuf);
 	makeattrstr(attrstr, 256, &o_stbuf);
 	printSetattrOplog(ctx, inode_, stbuf, to_set, modestr, attrstr, "TWEAKS_FILE");
-	return AttrReply{o_stbuf, 3600.0};
+	return AttrReply{o_stbuf, kSpecialContentAttrTimeout};
 }
 } // InodeTweaks
 
@@ -142,7 +142,7 @@ static AttrReply setattr(const Context &ctx, struct stat *stbuf, int to_set, cha
 	attr_to_stat(inode_, attr, &o_stbuf);
 	makeattrstr(attrstr, 256, &o_stbuf);
 	printSetattrOplog(ctx, inode_, stbuf, to_set, modestr, attrstr, "MOUNT_INFO");
-	return AttrReply{o_stbuf, 3600.0};
+	return AttrReply{o_stbuf, kSpecialContentAttrTimeout};
 }
 }  // InodeMountInfo
 

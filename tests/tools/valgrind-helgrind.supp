@@ -35,6 +35,17 @@
 }
 
 {
+   # libfuse 3.18.x destroys se->mt_lock twice on every multithreaded
+   # shutdown (end of fuse_session_loop_mt, then fuse_session_destroy).
+   # Fixed upstream in libfuse b6cb345 (not yet released); drop this once
+   # the 26.04 image ships a libfuse with that fix.
+   fuse_session_destroy_mutex
+   Helgrind:Misc
+   fun:mutex_destroy_WRK
+   fun:fuse_session_destroy
+}
+
+{
    # False positive about std::to_string calls when naming the read/write worker threads.
    to_string_in_workers_names
    Helgrind:Race

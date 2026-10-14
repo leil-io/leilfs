@@ -88,12 +88,14 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	struct stat o_stbuf;
 	memset(&o_stbuf, 0, sizeof(struct stat));
 	attr_to_stat(inode_, attr, &o_stbuf);
+	o_stbuf.st_size = contentSize();
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: TWEAKS_FILE): OK (3600,%s)",
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: TWEAKS_FILE): OK (%.1f,%s)",
 	            inode_,
+	            kSpecialContentAttrTimeout,
 	            attrstr);
-	return AttrReply{o_stbuf, 3600.0};
+	return AttrReply{o_stbuf, kSpecialContentAttrTimeout};
 }
 } // InodeTweaks
 
@@ -132,12 +134,14 @@ static AttrReply getattr(const Context &ctx, char (&attrstr)[256]) {
 	struct stat o_stbuf;
 	memset(&o_stbuf, 0, sizeof(struct stat));
 	attr_to_stat(inode_, attr, &o_stbuf);
+	o_stbuf.st_size = contentSize();
 	stats_inc(OP_GETATTR);
 	makeattrstr(attrstr, 256, &o_stbuf);
-	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: MOUNT_INFO): OK (3600,%s)",
+	oplog_printf(ctx, "getattr (%" PRIiNode ") (internal node: MOUNT_INFO): OK (%.1f,%s)",
 		        inode_,
+		        kSpecialContentAttrTimeout,
 		        attrstr);
-	return AttrReply{o_stbuf, 3600.0};
+	return AttrReply{o_stbuf, kSpecialContentAttrTimeout};
 }
 } // InodeMountInfo
 

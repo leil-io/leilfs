@@ -68,6 +68,14 @@ const Attributes InodeTweaks::attr =
 	  {{'f', 0x01,0xA4, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
 const inode_t InodeTweaks::inode_ = SPECIAL_INODE_TWEAKS;
 
+off_t InodeTweaks::contentSize() {
+#ifdef _WIN32
+	return 0;
+#else
+	return static_cast<off_t>(gTweaks.getAllValues().size());
+#endif
+}
+
 // 0x01ED == 0b111101101 == 0755
 const Attributes InodeFileByInode::attr =
 	  {{'d', 0x01,0xED, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
@@ -82,3 +90,13 @@ const inode_t InodePathByInode::inode_ = SPECIAL_INODE_PATH_BY_INODE;
 const Attributes InodeMountInfo::attr =
 	  {{'f', 0x01,0xED, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0}};
 const inode_t InodeMountInfo::inode_ = SPECIAL_INODE_MOUNT_INFO;
+
+off_t InodeMountInfo::contentSize() {
+#ifdef _WIN32
+	return 0;
+#else
+	// Rebuilt the same way open() does, so the size matches what it serves.
+	gMountInfo.buildMountInfoStr();
+	return static_cast<off_t>(gMountInfo.getMountInfoStr().size());
+#endif
+}

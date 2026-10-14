@@ -82,6 +82,7 @@ namespace InodeTweaks {
 
 	extern const Attributes attr;
 	extern const inode_t inode_;
+	off_t contentSize();
 }
 
 namespace InodeFileByInode {
@@ -97,7 +98,21 @@ namespace InodePathByInode {
 namespace InodeMountInfo {
 	extern const Attributes attr;
 	extern const inode_t inode_;
+	// Caller must hold gMountInfoMtx.
+	off_t contentSize();
 }
+
+// uutils cat (the default on Ubuntu 26.04) reads through splice(), which the
+// kernel serves from the page cache only up to the file's reported size,
+// ignoring direct_io. Special files whose content is generated on demand must
+// therefore report that content's size, and keep the kernel from caching it,
+// since the content can change. Windows doesn't read through splice(), so it
+// keeps the old size 0 and long timeout.
+#ifdef _WIN32
+constexpr double kSpecialContentAttrTimeout = 3600.0;
+#else
+constexpr double kSpecialContentAttrTimeout = 0.0;
+#endif
 
 std::vector<uint8_t> special_read(inode_t ino, const SaunaClient::Context &ctx,
 	                          size_t size, off_t off, SaunaClient::FileInfo *fi, int debug_mode);

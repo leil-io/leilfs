@@ -2,9 +2,14 @@
 # expected. When HDD_ADVISE_NO_CACHE is set to 1, the chunkserver should not
 # cache the chunks in the memory. The test uses two approaches, the system
 # memory and the cached pages used by the data parts of the chunks (using the
-# fincore command).
+# vmtouch command).
+#
+# Not fincore: since util-linux 2.41 it uses cachestat(2), which always
+# reports 0 cached pages for files on overlayfs (e.g. /mnt/hdd_* inside the
+# Docker test containers). vmtouch uses mmap + mincore(2), which sees the
+# real file's page cache through the overlay.
 
-assert_program_installed fincore
+assert_program_installed vmtouch
 
 timeout_set 2 minutes
 
@@ -26,7 +31,8 @@ function getCachedMemoryUsedByChunksKiB {
 	local totalPages=0
 
 	for chunk in ${chunks}; do
-		totalPages=$((totalPages + $(fincore -o PAGES --bytes --noheadings --raw ${chunk})))
+		local pages=$(vmtouch "${chunk}" | awk '/Resident Pages/ {split($3, p, "/"); print p[1]}')
+		totalPages=$((totalPages + pages))
 	done
 
 	local pageSize=$(getconf PAGESIZE)
