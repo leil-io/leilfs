@@ -115,3 +115,11 @@ function count_registered_parts() {
 	saunafs fileinfo "${path}" 2>/dev/null | awk '$1 == "copy" { parts++ } END { print parts + 0 }'
 }
 
+# Wait for the current process's pull inventory, not just advertised capacity.
+function wait_for_chunkserver_pull_registration() {
+	local id="$1" pid
+	pid=$(saunafs_chunkserver_daemon "$id" test | awk '/pid:/ { print $NF }')
+	assert_success test -n "$pid"
+	assert_eventually 'grep -Eq "chunkserver_${id}\[${pid}\].*master-driven chunk registration complete" "$ERROR_DIR/syslog.log"' '2 minutes'
+}
+

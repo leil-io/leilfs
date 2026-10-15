@@ -94,6 +94,9 @@ std::vector<ServerWithUsage> matocsserv_getservers_sorted();
 /*! \brief Check if chunkserver is killed. */
 bool matocsserv_is_killed(matocsserventry* eptr);
 
+/// New allocation may use capacity early; background replication needs a completed pull inventory.
+bool matocsserv_can_receive_replication(const matocsserventry *eptr);
+
 /*! \brief Mark a chunkserver connection for disconnection by the event loop. */
 void matocsserv_request_disconnect(matocsserventry *eptr);
 

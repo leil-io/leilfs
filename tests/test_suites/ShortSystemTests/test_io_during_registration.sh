@@ -13,15 +13,12 @@ timeout_set '1 minute'
 #            chunkserver 0's range would prove nothing: it is registered the
 #            whole time.
 #
-#   writes - a chunkserver reports no free space until its registration has
-#            COMPLETED, so a cluster whose every chunkserver is registering can
-#            place no new chunk at all and creating a file can only fail and be
-#            retried. Keeping chunkserver 0 up gives new chunks somewhere to
-#            land while chunkserver 1 is still registering.
+#   writes - keeping chunkserver 0 up provides capacity even while the restarted
+#            server is scanning. Pull registration can also advertise capacity
+#            as soon as its disks are ready, before the inventory is complete.
 #
-# The same rule explains why the gate below cannot wait for chunkservers to
-# report ready: readiness is that same post-registration space report, so
-# waiting for it would close the window this test is about.
+# The gate below checks partial inventory, since capacity readiness alone does
+# not prove that chunkserver 1 has begun reporting its chunks.
 
 CHUNK_COUNT=${CHUNK_COUNT:-200000}
 CHUNKS_PER_FILE=1000

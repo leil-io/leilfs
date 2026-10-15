@@ -113,6 +113,29 @@ void masterconn_stats(uint64_t *bin, uint64_t *bout, uint32_t *maxjobscnt) {
 	stats_maxjobscnt = 0;
 }
 
+void masterconn_report_space(MasterConnReconciliationState &state) {
+	const bool hasSpaceRecipient =
+	    std::any_of(state.connections.begin(), state.connections.end(), [](const auto &slot) {
+		    return slot.connection && !slot.retiring && slot.connection->canSendSpaceUpdates();
+	    });
+	if (!hasSpaceRecipient) { return; }
+
+	// Keep changes pending until a peer can receive them, including during pull registration.
+	if (hddGetAndResetSpaceChanged()) {
+		uint64_t usedSpace, totalSpace, deletedUsedSpace, deletedTotalSpace;
+		uint32_t chunkCount, deletedChunkCount;
+		hddGetTotalSpace(&usedSpace, &totalSpace, &chunkCount, &deletedUsedSpace,
+		                 &deletedTotalSpace, &deletedChunkCount);
+		for (auto &slot : state.connections) {
+			if (slot.connection && !slot.retiring && slot.connection->canSendSpaceUpdates()) {
+				slot.connection->createAttachedNoVersionPacket(
+				    CSTOMA_SPACE, usedSpace, totalSpace, chunkCount, deletedUsedSpace,
+				    deletedTotalSpace, deletedChunkCount);
+			}
+		}
+	}
+}
+
 void masterconn_check_hdd_reports() {
 	for (auto &slot : gConnectionState.connections) {
 		if (slot.connection && !slot.retiring &&
@@ -121,32 +144,12 @@ void masterconn_check_hdd_reports() {
 		}
 	}
 
-	const bool hasRegisteredConnection =
-	    std::any_of(gConnectionState.connections.begin(), gConnectionState.connections.end(),
-	                [](const auto &slot) {
-		                return slot.connection && !slot.retiring && slot.connection->isRegistered();
-	                });
-	if (!hasRegisteredConnection) { return; }
-
-	// Gather shared counters once, then send them to every registered peer.
-	if (hddGetAndResetSpaceChanged()) {
-		uint64_t usedSpace, totalSpace, deletedUsedSpace, deletedTotalSpace;
-		uint32_t chunkCount, deletedChunkCount;
-		hddGetTotalSpace(&usedSpace, &totalSpace, &chunkCount, &deletedUsedSpace,
-		                 &deletedTotalSpace, &deletedChunkCount);
-		for (auto &slot : gConnectionState.connections) {
-			if (slot.connection && !slot.retiring && slot.connection->isRegistered()) {
-				slot.connection->createAttachedNoVersionPacket(
-				    CSTOMA_SPACE, usedSpace, totalSpace, chunkCount, deletedUsedSpace,
-				    deletedTotalSpace, deletedChunkCount);
-			}
-		}
-	}
+	masterconn_report_space(gConnectionState);
 
 	// Only the configured connection consumes physical loss and damage reports.
 	MasterConn *eptr = configuredConnection();
 	uint32_t errorcounter;
-	if (eptr->isRegistered()) {
+	if (eptr != nullptr && eptr->isRegistered()) {
 		errorcounter = hddGetAndResetErrorCounter();
 		while (errorcounter) {
 			eptr->createAttachedNoVersionPacket(CSTOMA_ERROR_OCCURRED);

@@ -81,8 +81,7 @@ done
 # Two-sided gate. The first file re-registers early, so its second registered
 # part proves the restarted chunkservers have reconnected and are streaming
 # chunks -- they must be connected for the on-demand query to have anyone to
-# ask. Deliberately not saunafs_wait_for_all_ready_chunkservers, which returns
-# only once registration has finished.
+# ask. Capacity readiness alone does not establish this inventory window.
 restarted_chunkservers_registering() {
 	[[ "$(count_registered_parts "$first_file")" -ge 2 ]]
 }
@@ -125,17 +124,17 @@ probe_ms=$(( ($(date +%s%N) - probe_start_ns) / 1000000 ))
 echo "EC_READ_PROBE_MS: $probe_ms for $PROBE_COUNT reads"
 assert_less_than "$probe_ms" "$((MAX_PROBE_SECONDS * 1000))"
 
-# Registration finishes and every chunk gets all of its parts back.
-#
-# Waiting for the chunkservers to report ready is the right tool here, and only
-# here: it returns once registration has COMPLETED, which is exactly why it must
-# not be used before the probe. Checking every file matters too: the probe targets
-# have their locations resolved by the on-demand query as a side effect of being probed,
-# so asserting on one of them would pass without the rest of the cluster ever converging.
-saunafs_wait_for_all_ready_chunkservers
+# Wait for both restarted inventories, then check every file: probed locations
+# were already resolved on demand and cannot alone prove convergence.
+for csid in 1 2; do
+	wait_for_chunkserver_pull_registration "$csid"
+done
 incomplete=0
 for ((i = 0; i < FILE_COUNT; ++i)); do
 	[[ "$(count_registered_parts "$(file_path "$i")")" -eq 3 ]] || incomplete=$((incomplete + 1))
 done
 MESSAGE="every chunk must have all 3 parts registered once the window closes" \
 	assert_equals 0 "$incomplete"
+MESSAGE="registration must not provoke duplicate background replication" \
+	assert_failure grep -q 'replication error: failed to create chunk (Chunk already exists)' \
+		"$ERROR_DIR/syslog.log"

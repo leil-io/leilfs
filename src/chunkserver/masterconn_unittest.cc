@@ -22,12 +22,18 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <future>
 #include <latch>
 #include <memory>
+#include <utility>
 #include <vector>
 
+#include "chunkserver-common/cmr_disk.h"
+#include "chunkserver-common/global_shared_resources.h"
+#include "chunkserver-common/hdd_utils.h"
+#include "chunkserver/hddspacemgr.h"
 #include "chunkserver/masterconn.h"
 #include "protocol/cstoma.h"
 #include "protocol/matocs.h"
@@ -44,6 +50,209 @@ TEST(MasterConnStatsTests, ConnectedBacklogRaisesThePeak) {
 
 TEST(MasterConnStatsTests, PeakIsNeverLoweredByADrainingBacklog) {
 	EXPECT_EQ(masterconn_sample_max_jobs_count(true, 5, 1, 0), 5U);
+}
+
+class MasterConnSpaceReportTests : public testing::Test {
+protected:
+	void SetUp() override {
+		std::lock_guard disksLockGuard(gDisksMutex);
+		ASSERT_TRUE(gDisks.empty());
+		auto disk =
+		    std::make_unique<CmrDisk>("/tmp/space-report/", "/tmp/space-report/", false, false);
+		disk_ = disk.get();
+		disk_->setTotalSpace(4096);
+		disk_->setAvailableSpace(3072);
+		disk_->setScanState(IDisk::ScanState::kInProgress);
+		gDisks.push_back(std::move(disk));
+		savedSpaceChanged_ = gHddSpaceChanged.exchange(false);
+		savedForcePush_ = std::exchange(gForcePushRegistration, false);
+	}
+
+	void TearDown() override {
+		for (auto &slot : state_.connections) { slot.connection.reset(); }
+		hddRegistrationSweepBegin(RegistrationSweepMode::kPush);
+		std::lock_guard disksLockGuard(gDisksMutex);
+		gDisks.clear();
+		gHddSpaceChanged.store(savedSpaceChanged_);
+		gForcePushRegistration = savedForcePush_;
+	}
+
+	MasterConn &addConnection(std::size_t index = 0) {
+		auto &connection = state_.connections[index].connection;
+		connection = std::make_unique<MasterConn>("localhost", "9420", "default", nullptr, nullptr,
+		                                          index, index);
+		connection->setMode(ConnectionMode::CONNECTED);
+		return *connection;
+	}
+
+	void registerHost(MasterConn &connection) {
+		auto response = matocs::registerHost::build(SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX, "default");
+		removeHeaderInPlace(response);
+		connection.onRegistered(response);
+	}
+
+	void startPull(MasterConn &connection) {
+		auto start = matocs::registerChunksStart::build(1, 0);
+		removeHeaderInPlace(start);
+		connection.onRegisterChunksStart(start);
+	}
+
+	void makeDiskReady() {
+		std::lock_guard disksLockGuard(gDisksMutex);
+		disk_->setScanState(IDisk::ScanState::kWorking);
+		gHddSpaceChanged.store(true);
+	}
+
+	void setPhase(MasterConn &connection, RegistrationStatus status) {
+		connection.registrationStatus_ = status;
+	}
+
+	MessageBuffer pop(MasterConn &connection) {
+		auto &queue = connection.nextOutputPacketQueue();
+		EXPECT_FALSE(queue.empty());
+		if (queue.empty()) { return {}; }
+		auto packet = std::move(queue.front().packet);
+		queue.pop();
+		return packet;
+	}
+
+	void expectSpaceUpdate(MasterConn &connection) {
+		ASSERT_FALSE(connection.isOutputQueueEmpty());
+		auto packet = pop(connection);
+		verifyHeader(packet, CSTOMA_SPACE);
+		removeHeaderInPlace(packet);
+		uint64_t used = 0, total = 0, toDelUsed = 0, toDelTotal = 0;
+		uint32_t chunks = 0, toDelChunks = 0;
+		ASSERT_NO_THROW(
+		    deserialize(packet, used, total, chunks, toDelUsed, toDelTotal, toDelChunks));
+		EXPECT_EQ(1024U, used);
+		EXPECT_EQ(4096U, total);
+		EXPECT_EQ(0U, toDelTotal);
+		EXPECT_TRUE(connection.isOutputQueueEmpty());
+	}
+
+	MasterConnReconciliationState state_;
+	CmrDisk *disk_{nullptr};
+	bool savedSpaceChanged_{false};
+	bool savedForcePush_{false};
+};
+
+TEST_F(MasterConnSpaceReportTests, RefreshesSpaceAfterInitialZeroBeforePullStart) {
+	auto &connection = addConnection();
+	registerHost(connection);
+	ASSERT_EQ(RegistrationStatus::kAwaitingPullStart, connection.registrationStatus());
+
+	makeDiskReady();
+	masterconn_report_space(state_);
+
+	auto initial = pop(connection);
+	verifyHeader(initial, SAU_CSTOMA_REGISTER_SPACE);
+	removeHeaderInPlace(initial);
+	uint64_t used = 1, total = 1, toDelUsed = 0, toDelTotal = 0;
+	uint32_t chunks = 0, toDelChunks = 0;
+	ASSERT_NO_THROW(cstoma::registerSpace::deserialize(initial, used, total, chunks, toDelUsed,
+	                                                   toDelTotal, toDelChunks));
+	EXPECT_EQ(0U, used);
+	EXPECT_EQ(0U, total);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_LABEL);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CONFIG);
+	ASSERT_NO_FATAL_FAILURE(expectSpaceUpdate(connection));
+	EXPECT_FALSE(connection.isRegistered());
+}
+
+TEST_F(MasterConnSpaceReportTests, RefreshesSpaceWithoutCompletingPullRegistration) {
+	auto &connection = addConnection();
+	registerHost(connection);
+	startPull(connection);
+	connection.resetPackets();
+	makeDiskReady();
+	masterconn_report_space(state_);
+	ASSERT_NO_FATAL_FAILURE(expectSpaceUpdate(connection));
+	EXPECT_EQ(RegistrationStatus::kChunksRegistering, connection.registrationStatus());
+	EXPECT_FALSE(connection.isRegistered());
+
+	auto credit = matocs::registerChunksCredit::build(1);
+	removeHeaderInPlace(credit);
+	connection.onRegisterChunksCredit(credit);
+	ASSERT_TRUE(connection.isRegistered());
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CHUNKS_END);
+	gHddSpaceChanged.store(true);
+	masterconn_report_space(state_);
+	ASSERT_NO_FATAL_FAILURE(expectSpaceUpdate(connection));
+}
+
+TEST_F(MasterConnSpaceReportTests, PreservesChangesWhileHandshakeOrRetirementBlocksDelivery) {
+	auto &connection = addConnection();
+	makeDiskReady();
+	for (auto phase :
+	     {RegistrationStatus::kUnregistered, RegistrationStatus::kRegistrationRequested,
+	      RegistrationStatus::kHostRegistered}) {
+		setPhase(connection, phase);
+		masterconn_report_space(state_);
+		EXPECT_TRUE(connection.isOutputQueueEmpty());
+		EXPECT_TRUE(gHddSpaceChanged.load());
+	}
+	setPhase(connection, RegistrationStatus::kChunksRegistered);
+	connection.setMode(ConnectionMode::HANDSHAKE);
+	masterconn_report_space(state_);
+	EXPECT_TRUE(gHddSpaceChanged.load());
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+	connection.setMode(ConnectionMode::CONNECTED);
+	state_.connections[0].retiring = true;
+	masterconn_report_space(state_);
+	EXPECT_TRUE(gHddSpaceChanged.load());
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+	state_.connections[0].retiring = false;
+	masterconn_report_space(state_);
+	ASSERT_NO_FATAL_FAILURE(expectSpaceUpdate(connection));
+	EXPECT_FALSE(gHddSpaceChanged.load());
+}
+
+TEST_F(MasterConnSpaceReportTests, BroadcastsOnceToAllEligiblePeers) {
+	const std::array phases{
+	    RegistrationStatus::kAwaitingPullStart, RegistrationStatus::kChunksRegistering,
+	    RegistrationStatus::kChunksRegistered,  RegistrationStatus::kRegistrationRequested,
+	    RegistrationStatus::kChunksRegistered,  RegistrationStatus::kChunksRegistered};
+	for (std::size_t index = 0; index < phases.size(); ++index) {
+		auto &connection = addConnection(index);
+		setPhase(connection, phases[index]);
+	}
+	state_.connections[4].retiring = true;
+	state_.connections[5].connection->setMode(ConnectionMode::KILL);
+	makeDiskReady();
+	masterconn_report_space(state_);
+	for (std::size_t index = 0; index < 3; ++index) {
+		ASSERT_NO_FATAL_FAILURE(expectSpaceUpdate(*state_.connections[index].connection));
+	}
+	EXPECT_FALSE(gHddSpaceChanged.load());
+	masterconn_report_space(state_);
+	for (const auto &slot : state_.connections) {
+		if (slot.connection) { EXPECT_TRUE(slot.connection->isOutputQueueEmpty()); }
+	}
+}
+
+TEST_F(MasterConnSpaceReportTests, LatePeerGetsFreshSnapshotAfterSharedChangeWasConsumed) {
+	auto &seed = addConnection();
+	registerHost(seed);
+	seed.resetPackets();
+	makeDiskReady();
+	masterconn_report_space(state_);
+	ASSERT_NO_FATAL_FAILURE(expectSpaceUpdate(seed));
+	ASSERT_FALSE(gHddSpaceChanged.load());
+
+	auto &peer = addConnection(1);
+	peer.setSendInventory(false);
+	registerHost(peer);
+	ASSERT_TRUE(peer.isRegistered());
+	auto initial = pop(peer);
+	verifyHeader(initial, SAU_CSTOMA_REGISTER_SPACE);
+	removeHeaderInPlace(initial);
+	uint64_t used = 0, total = 0, toDelUsed = 0, toDelTotal = 0;
+	uint32_t chunks = 0, toDelChunks = 0;
+	ASSERT_NO_THROW(cstoma::registerSpace::deserialize(initial, used, total, chunks, toDelUsed,
+	                                                   toDelTotal, toDelChunks));
+	EXPECT_EQ(1024U, used);
+	EXPECT_EQ(4096U, total);
 }
 
 namespace {
