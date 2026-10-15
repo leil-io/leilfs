@@ -458,6 +458,7 @@ IChunk *hddRecreateChunk(IDisk *disk, IChunk *chunk, uint64_t chunkId,
 	        "Cannot insert new chunk to the map as a chunk with "
 	        "its chunkId and chunkPartType already exists");
 	hddNotePresentChunkType(type);
+	hddNoteChunkForRegistration(makeChunkKey(chunkId, type));
 
 	chunk->setCondVar(std::move(waiting));
 
