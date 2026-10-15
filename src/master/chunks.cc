@@ -2936,6 +2936,9 @@ uint32_t ChunkWorker::getMinChunkserverVersion(Chunk */*c*/, ChunkPartType /*typ
 
 bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 				matocsserventry *destination_server) {
+	// Rebalancing uses cached candidates too; recheck every background destination here.
+	if (!matocsserv_can_receive_replication(destination_server)) { return false; }
+
 	// TODO(msulikowski) Prefer VALID over TDVALID copies.
 	std::vector<matocsserventry *> standard_servers;
 	std::vector<matocsserventry *> all_servers;

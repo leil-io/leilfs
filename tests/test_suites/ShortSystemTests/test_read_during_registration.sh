@@ -47,11 +47,8 @@ echo "PHASE: mount restarted, client caches cold"
 # window opens, paced at REGISTRATION_CHUNKS_PER_SECOND chunks per second.
 saunafs_chunkserver_daemon 0 restart
 
-# Wait only until the chunkserver has reconnected and registration has STARTED
-# (some copies known) while still being far from complete -- deliberately not
-# saunafs_wait_for_all_ready_chunkservers, which returns only once registration
-# has finished (measured: it blocks for essentially the whole window). The
-# chunkserver must be connected for the on-demand query to have anyone to ask.
+# Require a partially registered inventory. Capacity readiness alone does not
+# prove that the chunkserver is streaming chunks or that the sweep is unfinished.
 registration_in_progress() {
 	local copies
 	copies=$(count_chunk_copies)

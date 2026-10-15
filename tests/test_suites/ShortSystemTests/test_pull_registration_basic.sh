@@ -48,11 +48,8 @@ restart_ts=$(date +%s%N)
 for csid in 0 1; do
 	saunafs_chunkserver_daemon "$csid" restart
 done
-# Wait only until the chunkservers have reconnected and the pull sweep has
-# STARTED, while it is still far from complete. Deliberately not
-# saunafs_wait_for_all_ready_chunkservers: a chunkserver only counts as ready
-# once registration has COMPLETED, so waiting for it here would close the
-# window the probe below is supposed to run in.
+# Require a partially registered inventory; advertised capacity alone does not
+# establish that a sweep is running or leave a window for the probe.
 registration_in_progress() {
 	local copies
 	copies=$(count_chunk_copies)

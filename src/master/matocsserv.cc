@@ -621,6 +621,11 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 	return ret;
 }
 
+bool matocsserv_can_receive_replication(const matocsserventry *eptr) {
+	return eptr->mode != ChunkserverConnectionMode::KILL &&
+	       (!eptr->pullRegistration || eptr->chunkRegistrationComplete);
+}
+
 void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunkserver_version,
 		uint16_t replication_write_limit, const IpCounter &ip_counter, std::vector<matocsserventry *> &servers,
 		int &total_matching, int &returned_matching, int &temporarily_unavailable) {
@@ -647,7 +652,10 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 			matchesRequestedLabel = true;
 		}
 
-		if (eptr->wrepcounter < replication_write_limit) {
+		// A missing registry entry is not proof of absence until the pull inventory arrives.
+		// Count deferred peers like busy peers, preserving label and fallback decisions.
+		if (eptr->wrepcounter < replication_write_limit &&
+		    matocsserv_can_receive_replication(eptr.get())) {
 			servers.push_back(eptr.get());
 			if (matchesRequestedLabel) {
 				++returned_matching;
@@ -1314,11 +1322,11 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	matocsserv_send_register_host_response(eptr);
 }
 
-void register_space(matocsserventry* eptr) {
+static void matocsserv_log_registration_space(const matocsserventry *eptr) {
 	double us = (double)(eptr->usedspace) / kBytesPerGiB;
 	double ts = (double)(eptr->totalspace) / kBytesPerGiB;
 	safs::log_info(
-	    "chunkserver register end (packet version: 5) - ip: {}, port: {}, usedspace: {} ({:.2f} GiB), totalspace: {} ({:.2f} GiB)",
+	    "chunkserver registration space report received - ip: {}, port: {}, usedspace: {} ({:.2f} GiB), totalspace: {} ({:.2f} GiB)",
 	    eptr->serviceStrIp, eptr->servport, eptr->usedspace, us, eptr->totalspace, ts);
 }
 
@@ -1754,7 +1762,7 @@ void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint
 		eptr->pullInitialCreditsPending = 0;
 	}
 
-	register_space(eptr);
+	matocsserv_log_registration_space(eptr);
 }
 
 /// The identity reply the master requested at host registration; the host response follows.

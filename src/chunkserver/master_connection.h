@@ -270,6 +270,14 @@ public:
 		       registrationStatus_ == RegistrationStatus::kChunksRegistered;
 	}
 
+	/// These states have queued REGISTER_SPACE; ordinary updates may follow it.
+	bool canSendSpaceUpdates() const {
+		return mode_ == ConnectionMode::CONNECTED &&
+		       (registrationStatus_ == RegistrationStatus::kAwaitingPullStart ||
+		        registrationStatus_ == RegistrationStatus::kChunksRegistering ||
+		        registrationStatus_ == RegistrationStatus::kChunksRegistered);
+	}
+
 	void setMode(ConnectionMode newMode) {
 		if (newMode == ConnectionMode::CONNECTED && mode_ != newMode) {
 			callbackActive_ = std::make_shared<bool>(true);
@@ -400,4 +408,5 @@ private:
 	std::string tlsCaCertFile_;  ///< Path to the TLS CA certificate file.
 	int lastHandshakeError_{0};  ///< Last error code from TLS handshake.
 	friend class MasterConnOutputQueueTests;
+	friend class MasterConnSpaceReportTests;
 };
