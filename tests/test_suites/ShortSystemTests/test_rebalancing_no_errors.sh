@@ -35,7 +35,10 @@ saunafs_chunkserver_daemon 4 start
 
 saunafs_wait_for_all_ready_chunkservers
 
-sleep 120
+# Rebalancing is complete when the draining chunkserver reports no remaining chunks.
+assert_eventually_prints 1 \
+	"saunafs-admin list-chunkservers localhost ${info[matocl]} | grep -c 'chunks: 0' || true" \
+	'3 minutes'
 
 # Check the chunkserver logs for errors
 # On unsuccessful runs the errors should be created when replicating parts from the 5th chunkserver
@@ -47,4 +50,4 @@ assert_failure grep -q "hddOpen: could not find chunkid" "$TEMP_DIR/log"
 list_cs_info=$(saunafs-admin list-chunkservers localhost "${info[matocl]}")
 # Check that all chunkservers didn't have errors, and one of them has 0 chunks
 assert_equals "$(echo "${list_cs_info}" | grep -c 'errors: 0')" "${info[chunkserver_count]}"
-assert_equals "$(echo "${list_cs_info}" | grep -c 'chunks: 0')" 1
+MESSAGE="${list_cs_info}" assert_equals "$(echo "${list_cs_info}" | grep -c 'chunks: 0')" 1
