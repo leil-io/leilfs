@@ -330,7 +330,7 @@ int FDDisk::readChunkCrc(IChunk *chunk, uint32_t chunkVersion,
 
 #ifndef ENABLE_CRC /* if NOT defined */
 	for (int i = 0; i < SFSBLOCKSINCHUNK; ++i) {
-		memcpy(buffer + i * crcSize, &emptyblockcrc, crcSize);
+		memcpy(buffer + i * kCrcSize, &gEmptyBlockCrc, kCrcSize);
 	}
 #else  /* if ENABLE_CRC defined */
 	{
