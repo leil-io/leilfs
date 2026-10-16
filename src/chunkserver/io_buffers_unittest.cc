@@ -27,15 +27,47 @@
 #include <mutex>
 #include <random>
 
+#include "chunkserver-common/cmr_chunk.h"
+#include "chunkserver-common/cmr_disk.h"
 #include "chunkserver/io_buffers.h"
 #include "common/crc.h"
+#include "common/slice_traits.h"
 #include "errors/leil_error_codes.h"
 
 const ssize_t testHeaderSize = 1;
 const ssize_t testNumBlocks = 4;
 const ssize_t testPipePageSize = 512 * 1024;
 
+// Reads at most 1000 bytes per call; byte i of the part holds i % 251.
+class ShortReadDisk : public CmrDisk {
+public:
+	using CmrDisk::CmrDisk;
+
+	ssize_t preadData(IChunk * /*chunk*/, uint8_t *buffer, uint64_t size,
+	                  uint64_t offset) override {
+		const uint64_t count = std::min<uint64_t>(size, 1000);
+		for (uint64_t i = 0; i < count; ++i) { buffer[i] = (offset + i) % 251; }
+		return static_cast<ssize_t>(count);
+	}
+};
+
 // OutputBuffer tests
+
+TEST(OutputBufferTests, copyIntoBufferContinuesAfterShortRead) {
+	ShortReadDisk disk("/mnt/", "/mnt", false, false);
+	CmrChunk chunk(1, slice_traits::standard::ChunkPartType(), ChunkState::Locked);
+	chunk.setOwner(&disk);
+	OutputBuffer outputBuffer(testHeaderSize, testNumBlocks);
+
+	ASSERT_EQ(outputBuffer.copyIntoBuffer(OutputBuffer::BufferType::Block, &chunk, SFSBLOCKSIZE,
+	                                      SFSBLOCKSIZE),
+	          SFSBLOCKSIZE);
+
+	const uint8_t *data = outputBuffer.rawData(OutputBuffer::BufferType::Block);
+	for (uint32_t i = 0; i < SFSBLOCKSIZE; ++i) {
+		ASSERT_EQ(data[i], (SFSBLOCKSIZE + i) % 251) << "byte " << i;
+	}
+}
 
 TEST(OutputBufferTests, outputBufferBasicTest) {
 	OutputBuffer outputBuffer(testHeaderSize, testNumBlocks);
