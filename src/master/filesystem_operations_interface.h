@@ -983,6 +983,9 @@ public:
 	///
 	/// @param chunkid The chunk ID to unlock (obtained from trySetLength's chunkid output).
 	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param lockId The lock the truncate holds, 0 for a forced unlock (a client that left). The
+	///        in-memory backend checked it when the truncate started; a KV backend checks it
+	///        against its records here and refuses a lock they no longer hold.
 	///
 	/// @return SAUNAFS_STATUS_OK on success, or SAUNAFS_ERROR_NOCHUNK if the chunk doesn't exist.
 	///
@@ -995,8 +998,8 @@ public:
 	///       (SAUNAFS_ERROR_DELAYED) and client-performs truncate/end flows where
 	///       trySetLength() can return SAUNAFS_ERROR_NOTPOSSIBLE (e.g. FUSE_TRUNCATE_END).
 	/// @see trySetLength, doSetLength
-	virtual uint8_t endSetLength(const FilesystemOperationContext &fsOpContext,
-	                             uint64_t chunkid) = 0;
+	virtual uint8_t endSetLength(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	                             uint32_t lockId) = 0;
 
 	/// Sets attributes for a filesystem node (file, directory, etc.).
 	///

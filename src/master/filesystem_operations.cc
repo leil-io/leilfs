@@ -1479,7 +1479,10 @@ uint8_t FilesystemOperationsBase::setNextChunkId(const FsContext &context, uint6
 
 #ifndef METARESTORE
 uint8_t FilesystemOperationsBase::endSetLength(const FilesystemOperationContext &fsOpContext,
-                                               uint64_t chunkid) {
+                                               uint64_t chunkid, uint32_t lockId) {
+	// The in-memory registry's lock was checked when the truncate started; a KV backend checks
+	// it against its records here.
+	(void)lockId;
 	uint32_t timeStamp = eventloop_time();
 	ChecksumUpdater checksumUpdater(timeStamp);
 	changeLog(fsOpContext, timeStamp, "UNLOCK(%" PRIu64 ")", chunkid);
