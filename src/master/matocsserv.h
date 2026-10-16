@@ -168,3 +168,9 @@ int matocsserv_send_duptruncchunk(matocsserventry* eptr,
 int matocsserv_init();
 void matocsserv_getserverdata(const matocsserventry* eptr, ChunkserverListEntry &result);
 csdbentry *matocsserv_get_csdb(matocsserventry* eptr);
+
+/// A connected chunkserver entry for unit tests, linked with @p entry both ways when one is
+/// given, so the chunk registry addresses it and sends to it as it does to a registered one.
+matocsserventry *matocsserv_test_connection(csdbentry *entry, uint32_t ip, uint16_t port,
+                                            uint32_t version);
+void matocsserv_test_connection_free(matocsserventry *eptr);

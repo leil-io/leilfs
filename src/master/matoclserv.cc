@@ -646,6 +646,8 @@ struct BatchMember {
 	/// Durable side effect run with the final status BEFORE the kill-gated `finish`, even when
 	/// the client is being torn down (empty for ops with no post-commit memo).
 	std::function<void(uint8_t status)> onCommit;
+	/// Run on a transaction of its own, after prior members commit and before later bodies run.
+	bool isolated = false;
 };
 
 /// One batch, used in two phases. While OPEN it accumulates members, whose bodies run on
@@ -869,6 +871,12 @@ static void matoclserv_release_idle_open_batch() {
 /// wrote, or its read threw (invalidating the shared txn), the surviving members
 /// are replayed onto a fresh transaction.
 static void matoclserv_join_open_batch(BatchMember member) {
+	// A truncate end releases its lock before planning the truncate. Earlier staged changes
+	// must be durable first, and later members must not invalidate that end's transaction.
+	if (!gOpenBatch.members.empty() && (member.isolated || gOpenBatch.members.front().isolated)) {
+		gHeldOps.push_back(std::move(member));
+		return;
+	}
 	if (!gOpenBatch.hasContext) {
 		gOpenBatch.ctx = gFSOperations->createFilesystemOperationContext(
 		    FilesystemOperationContext::TransactionType::kReadWrite);
@@ -906,21 +914,23 @@ static void matoclserv_join_open_batch(BatchMember member) {
 /// Entry point for converted write-op handlers: routes the op into the group-commit
 /// batch. `finish` always runs exactly once with the op/commit status; the optional
 /// `onCommit` durable hook runs first, with the same status, even for a killed client.
+/// An isolated member runs between committed batches; Master still executes it inline.
 static void matoclserv_submit_op(matoclserventry *eptr, OpReplay body,
                                  std::function<void(uint8_t status)> finish,
-                                 std::function<void(uint8_t status)> onCommit = {}) {
+                                 std::function<void(uint8_t status)> onCommit = {},
+                                 bool isolated = false) {
 	eptr->pendingCommits++;
 	if (gBatchMaintenanceRequested || gInFlightBatch.has_value() || gBatchRetry.has_value() ||
-	    gBatchResolving) {
+	    gBatchResolving || !gHeldOps.empty()) {
 		// Hold the body until the in-flight batch (or its parked retry) is durable
 		// so it runs against committed state (the soundness core of this design).
 		if (gBatchStatsEnabled) { gBatchStats.heldOps++; }
-		gHeldOps.push_back(
-		    BatchMember{eptr, std::move(finish), std::move(body), 0, std::move(onCommit)});
+		gHeldOps.push_back(BatchMember{eptr, std::move(finish), std::move(body), 0,
+		                               std::move(onCommit), isolated});
 		return;
 	}
 	matoclserv_join_open_batch(
-	    BatchMember{eptr, std::move(finish), std::move(body), 0, std::move(onCommit)});
+	    BatchMember{eptr, std::move(finish), std::move(body), 0, std::move(onCommit), isolated});
 }
 
 /// Runs once per event-loop iteration (after the serve pass): finalizes an
@@ -1096,6 +1106,11 @@ static void matoclserv_poll_batch() {
 	// per-connection op order.
 	while (!gBatchMaintenanceRequested && !gInFlightBatch.has_value() && !gBatchRetry.has_value() &&
 	       !gHeldOps.empty()) {
+		// Stop at an isolation boundary; submit the open batch before draining the next body.
+		if (!gOpenBatch.members.empty() &&
+		    (gOpenBatch.members.front().isolated || gHeldOps.front().isolated)) {
+			break;
+		}
 		BatchMember held = std::move(gHeldOps.front());
 		gHeldOps.pop_front();
 		if (held.eptr->mode == ClientConnectionMode::KILL) {
@@ -1546,13 +1561,14 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 		// killed client) and does not depend on this commit, so the on-commit hook only
 		// logs a commit failure (mirrors the FUSE_TRUNCATE_END path); the log lives in
 		// onCommit, not finish, so a killed client cannot suppress it.
-		OpReplay runCleanup = [context, inode, chunkIndex, chunkId,
+		OpReplay runCleanup = [context, inode, chunkIndex, chunkId, lockId,
 		                       removeChunk](FilesystemOperationContext &ctx) -> uint8_t {
 			// Persist the lock release before staging a possible reference removal.
 			// KV reference effects then read the lock-cleared CHNK_ value through
 			// transaction read-your-writes and cannot be overwritten by a later
 			// registry-derived persist.
-			gFSOperations->writeEnd(ctx, 0, 0, chunkId, 0);  // ignore status, just release
+			const uint8_t endStatus = gFSOperations->writeEnd(ctx, 0, 0, chunkId, lockId);
+			if (endStatus != SAUNAFS_STATUS_OK) { return endStatus; }
 			if (removeChunk) {
 				gFSOperations->removeChunkFromFile(context, ctx, inode, chunkIndex, chunkId);
 			}
@@ -1587,8 +1603,8 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 			// persist the unlock regardless of the chunk operation outcome. The reply
 			// (the chunk operation's error) does not depend on this commit's outcome,
 			// so the continuation only logs a commit failure.
-			OpReplay runUnlock = [chunkId](FilesystemOperationContext &ctx) -> uint8_t {
-				gFSOperations->endSetLength(ctx, chunkId);
+			OpReplay runUnlock = [chunkId, lockId](FilesystemOperationContext &ctx) -> uint8_t {
+				gFSOperations->endSetLength(ctx, chunkId, lockId);
 				return SAUNAFS_STATUS_OK;
 			};
 			// Reply (kill-gated) lives in finish; the commit-failure log lives in the
@@ -1612,9 +1628,12 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 		}
 		{
 			auto replyAttr = std::make_shared<Attributes>();
-			OpReplay runFinalize = [context, inode, chunkId, fileLength,
+			OpReplay runFinalize = [context, inode, chunkId, lockId, fileLength,
 			                        replyAttr](FilesystemOperationContext &ctx) -> uint8_t {
-				gFSOperations->endSetLength(ctx, chunkId);
+				// A backend may refuse the end of a truncate that lost its lock; the file
+				// length then stays as it was.
+				const uint8_t endStatus = gFSOperations->endSetLength(ctx, chunkId, lockId);
+				if (endStatus != SAUNAFS_STATUS_OK) { return endStatus; }
 				return gFSOperations->doSetLength(context, ctx, inode, fileLength, *replyAttr);
 			};
 			auto sendFinalizeReply = [eptr, serializer, operationType, messageId,
@@ -3236,22 +3255,32 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		Attributes attr{};
 		DelayedChunkOperation *queued = nullptr;  ///< commit-pending entry of the latest run
 		bool tookDelayedPath = false;  ///< onCommit took the delayed path; reply comes via chunk_status
+		/// A backend's final write-start result, available once the fallback's commit finishes.
+		std::shared_ptr<const uint8_t> writeStartStatus;
 	};
 	auto truncState = std::make_shared<TruncState>();
 	truncState->type = isEnd ? FUSE_TRUNCATE_END : FUSE_TRUNCATE;
-	// lockId must survive body replays (mirror write_chunk): a batch-conflict replay of the
-	// non-END duplicate path passes the previously allocated lockId back into writeChunk so it
-	// re-enters its own surviving in-memory lock instead of bouncing off it as LOCKED. For END it
-	// stays the client-supplied reqLockId. So it is initialized ONCE here, not reset per run.
+	// lockId survives body replays while it holds (mirror write_chunk): a batch-conflict replay
+	// of the non-END duplicate path passes the previously allocated lockId back into writeChunk
+	// so it re-enters its own lock instead of bouncing off it as LOCKED. For END it stays the
+	// client-supplied reqLockId. So it is initialized ONCE here, not reset per run.
 	truncState->lockId = reqLockId;
 
-	OpReplay runTruncate = [eptr, serializer, isEnd, reqOpened, reqLength, inode, uid, gid,
-	                        messageId, truncState](FilesystemOperationContext &ctx) -> uint8_t {
+	OpReplay runTruncate = [eptr, serializer, isEnd, reqOpened, reqLength, reqLockId, inode, uid,
+	                        gid, messageId,
+	                        truncState](FilesystemOperationContext &ctx) -> uint8_t {
 		// Replay: drop the delayed entry a previous attempt enqueued, then reset the
 		// per-run state mutated by previous attempts (NOT lockId; see its init above).
 		matoclserv_drop_queued_delayed_op(eptr, truncState->queued);
 		truncState->queued = nullptr;
+		// A lock whose commit failed never landed: present the client's lock again.
+		if (truncState->lockId != reqLockId &&
+		    gChunkOperations->canUnlock(truncState->chunkId, truncState->lockId) !=
+		        SAUNAFS_STATUS_OK) {
+			truncState->lockId = reqLockId;
+		}
 		truncState->phase = TruncPhase::kError;
+		truncState->writeStartStatus.reset();
 		truncState->type = isEnd ? FUSE_TRUNCATE_END : FUSE_TRUNCATE;
 		truncState->length = reqLength;
 		bool opened = isEnd ? true : reqOpened;  // END: permissions checked on SAU_CLTOMA_TRUNCATE
@@ -3271,7 +3300,9 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 				st = gChunkOperations->canUnlock(truncState->chunkId, truncState->lockId);
 			}
 			if (st != SAUNAFS_STATUS_OK) { return st; }
-			gFSOperations->endSetLength(ctx, truncState->chunkId);
+			// A backend checks the lock against its records here, where Master's cache answered
+			st = gFSOperations->endSetLength(ctx, truncState->chunkId, truncState->lockId);
+			if (st != SAUNAFS_STATUS_OK) { return st; }
 		}
 
 		st =
@@ -3287,6 +3318,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 			                               &truncState->lockId, &truncState->chunkId,
 			                               &chunkOperationPending, &truncState->fileLength);
 			if (st != SAUNAFS_STATUS_OK) { return st; }
+			truncState->writeStartStatus =
+			    gChunkOperations->writeStartStatus(ctx, truncState->chunkId);
 			if (chunkOperationPending) {
 				// But first we have to duplicate chunk :)
 				truncState->type = FUSE_TRUNCATE_BEGIN;
@@ -3368,6 +3401,12 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		    // Reply only (kill-gated). On the delayed path the reply is emitted by
 		    // process_chunk_status from the onCommit hook, so it is skipped here.
 		    if (commitStatus != SAUNAFS_STATUS_OK || !truncState->tookDelayedPath) {
+			    // A committed fallback can still have refused its deferred write start.
+			    if (commitStatus == SAUNAFS_STATUS_OK &&
+			        truncState->phase == TruncPhase::kReplyWriteChunk &&
+			        truncState->writeStartStatus) {
+				    commitStatus = *truncState->writeStartStatus;
+			    }
 			    sendTruncateReply(commitStatus);
 		    }
 	    },
@@ -3383,7 +3422,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 			    truncState->queued = nullptr;
 			    matoclserv_resolve_pending_delayed_op(eptr, queued);
 		    }
-	    });
+	    },
+	    isEnd);
 }
 
 void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -4416,12 +4456,12 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	uint32_t min_server_version = kFirstXorVersion;
 
 	// Out-state shared between the replayable body and the deferred continuation; each
-	// body run refreshes it. lockId is deliberately NOT reset between runs: a replay
-	// passes the previous attempt's allocated lockId back in, so writeChunk re-enters
-	// its own lock instead of bouncing off it as LOCKED (the failed commit rolled back
-	// the backend lock record, but the chunk module's in-memory lock survives). `queued`
-	// tracks the DelayedChunkOperation the latest run enqueued while its commit is in
-	// flight.
+	// body run refreshes it. lockId is NOT reset between runs while the previous attempt's
+	// lock holds in the chunk module (an unknown commit outcome that did land): a replay
+	// passes it back in, so writeChunk re-enters its own lock instead of bouncing off it as
+	// LOCKED. A lock whose commit failed never landed, and the replay presents the client's
+	// lock again. `queued` tracks the DelayedChunkOperation the latest run enqueued while
+	// its commit is in flight.
 	struct WriteChunkState {
 		uint64_t chunkId = 0;
 		// Lock created by an earlier replay attempt. This remains valid input state,
@@ -4430,6 +4470,7 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		uint64_t fileLength = 0;
 		uint32_t lockId = 0;
 		uint8_t opflag = 0;
+		std::shared_ptr<const uint8_t> startStatus;  ///< Retains a deferred plan's apply result.
 		DelayedChunkOperation *queued = nullptr;
 		bool tookDelayedPath = false;  ///< onCommit took the delayed path; reply via chunk_status
 	};
@@ -4444,7 +4485,7 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 	// lands, and matoclserv_chunk_status stashes it on the pending entry until the
 	// commit continuation resolves it.
 	OpReplay runWriteChunk = [eptr, inode, chunkIndex, min_server_version, serializer, messageId,
-	                          wc](FilesystemOperationContext &ctx) -> uint8_t {
+	                          lockId, wc](FilesystemOperationContext &ctx) -> uint8_t {
 		matoclserv_drop_queued_delayed_op(eptr, wc->queued);
 		wc->queued = nullptr;
 		// Reset the previous attempt's outputs so a failed replay cannot leak them
@@ -4452,12 +4493,21 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		wc->chunkId = 0;
 		wc->fileLength = 0;
 		wc->opflag = 0;
+		wc->startStatus.reset();
 		wc->tookDelayedPath = false;
+		if (wc->retainedChunkId != 0 &&
+		    gChunkOperations->canUnlock(wc->retainedChunkId, wc->lockId) != SAUNAFS_STATUS_OK) {
+			wc->retainedChunkId = 0;
+			wc->lockId = lockId;
+		}
 
 		uint8_t st = gFSOperations->writeChunk(matoclserv_get_context(eptr), ctx, inode,
 		                                       chunkIndex, &wc->lockId, &wc->chunkId, &wc->opflag,
 		                                       &wc->fileLength, min_server_version);
-		if (st == SAUNAFS_STATUS_OK) { wc->retainedChunkId = wc->chunkId; }
+		if (st == SAUNAFS_STATUS_OK) {
+			wc->retainedChunkId = wc->chunkId;
+			wc->startStatus = gChunkOperations->writeStartStatus(ctx, wc->chunkId);
+		}
 
 		if (st == SAUNAFS_STATUS_OK && wc->opflag) {
 			auto operation = std::make_unique<DelayedChunkOperation>();
@@ -4476,11 +4526,14 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		return st;
 	};
 
-	auto releaseWriteLockById = [inode, chunkIndex](uint64_t chunkId, const char *reason) {
+	auto releaseWriteLockById = [inode, chunkIndex](uint64_t chunkId, uint32_t lockId,
+	                                                const char *reason) {
 		if (chunkId == 0) { return; }
-		OpReplay runWriteEndCleanup = [chunkId](FilesystemOperationContext &ctx) -> uint8_t {
-			gFSOperations->writeEnd(ctx, 0, 0, chunkId, 0);
-			return SAUNAFS_STATUS_OK;
+		// The lock is presented, never forced: a backend refuses the cleanup of a lock its
+		// records no longer hold, as another holder may have taken it since the local check
+		OpReplay runWriteEndCleanup = [chunkId,
+		                               lockId](FilesystemOperationContext &ctx) -> uint8_t {
+			return gFSOperations->writeEnd(ctx, 0, 0, chunkId, lockId);
 		};
 		if (matoclserv_commit_op_with_retry(runWriteEndCleanup) != SAUNAFS_STATUS_OK) {
 			safs::log_err("matoclserv_fuse_write_chunk: {}, inode {}, chunk index {}, chunk {}",
@@ -4492,7 +4545,9 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		if (wc->retainedChunkId == 0) { return; }
 		const uint64_t chunkId = wc->retainedChunkId;
 		wc->retainedChunkId = 0;
-		releaseWriteLockById(chunkId, "failed retained-lock cleanup");
+		// Forcing a lock that never landed would release another holder's lock.
+		if (gChunkOperations->canUnlock(chunkId, wc->lockId) != SAUNAFS_STATUS_OK) { return; }
+		releaseWriteLockById(chunkId, wc->lockId, "failed retained-lock cleanup");
 	};
 
 	auto sendWriteChunkError = [eptr, serializer, messageId, inode, chunkIndex, wc,
@@ -4531,6 +4586,12 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 			    // Delayed path: the reply comes via matoclserv_chunk_status (from onCommit).
 			    return;
 		    }
+		    // A deferred backend may have refused the committed plan without starting an operation.
+		    if (wc->startStatus && *wc->startStatus != SAUNAFS_STATUS_OK) {
+			    wc->retainedChunkId = 0;
+			    sendWriteChunkError(*wc->startStatus);
+			    return;
+		    }
 		    // Immediate path: reply with the chunk's version and locations.
 		    dcm_modify(inode, eptr->sessionData->sessionId);
 		    uint8_t respondStatus = matoclserv_fuse_write_chunk_respond(
@@ -4538,7 +4599,8 @@ void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, con
 		    if (respondStatus != SAUNAFS_STATUS_OK) {
 			    // The write transaction is already durable; release the chunk lock with
 			    // its own small op (conflict-retried, since other commits are in flight).
-			    releaseWriteLockById(wc->chunkId, "transaction failed during write-end cleanup");
+			    releaseWriteLockById(wc->chunkId, wc->lockId,
+			                         "transaction failed during write-end cleanup");
 		    }
 	    },
 	    [eptr, wc](uint8_t commitStatus) {
@@ -6842,9 +6904,11 @@ void matocl_before_disconnect(matoclserventry *eptr) {
 	// create also drops the speculative chunk so it is not left dangling in the file.
 	for (const auto &operation : eptr->delayedChunkOperations) {
 		if (operation->type == FUSE_TRUNCATE) {
-			gFSOperations->endSetLength(fsOpContext, operation->chunkId);
+			gFSOperations->endSetLength(fsOpContext, operation->chunkId, operation->lockId);
 		} else if (operation->type == FUSE_WRITE) {
-			gFSOperations->writeEnd(fsOpContext, 0, 0, operation->chunkId, 0);
+			const uint8_t endStatus =
+			    gFSOperations->writeEnd(fsOpContext, 0, 0, operation->chunkId, operation->lockId);
+			if (endStatus != SAUNAFS_STATUS_OK) { continue; }
 			if (operation->statusArrived && operation->pendingIsFailedCreate && eptr->sessionData) {
 				FsContext context = FsContext::getForMasterWithSession(
 				    eventloop_time(), eptr->sessionData->rootInode, eptr->sessionData->flags,

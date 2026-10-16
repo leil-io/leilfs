@@ -19,17 +19,26 @@
 #include "common/platform.h"
 
 #include <array>
+#include <cstdio>
+#include <fstream>
 #include <limits>
 
 #include <gtest/gtest.h>
 
 #include "common/event_loop.h"
+#include "common/saunafs_version.h"
+#include "config/cfg.h"
 #include "errors/leil_error_codes.h"
 #include "master/chunk_operations_in_memory.h"
 #include "master/chunks.h"
 #include "master/chunkserver_db.h"
 #include "master/filesystem_node.h"
+#include "master/filesystem_operation_context.h"
 #include "master/filesystem_operations.h"
+#include "master/matocsserv.h"
+
+// Check the apply precondition without sending chunkserver commands.
+bool chunk_mutation_plan_current(const ChunkMutationPlan &plan);
 
 namespace {
 
@@ -78,7 +87,7 @@ protected:
 		    [this](uint64_t, uint32_t, uint32_t, uint32_t) { ++notifications; });
 		for (size_t index = 0; index < servers.size(); ++index) {
 			servers[index].csid = static_cast<uint16_t>(index + 1);
-			servers[index].eptr = reinterpret_cast<matocsserventry *>(&handles[index]);
+			connect(index);
 			previous[index] = gIdToCSEntry[index + 1];
 			gIdToCSEntry[index + 1] = &servers[index];
 		}
@@ -93,14 +102,48 @@ protected:
 		for (size_t index = 0; index < servers.size(); ++index) {
 			gIdToCSEntry[index + 1] = previous[index];
 		}
+		for (auto *connection : connections) { matocsserv_test_connection_free(connection); }
+	}
+
+	// A fresh connection at the server's address, as a chunkserver reconnecting gets one.
+	void connect(size_t index) {
+		matocsserv_test_connection_free(connections[index]);
+		connections[index] =
+		    matocsserv_test_connection(&servers[index], 0x7f000001 + static_cast<uint32_t>(index),
+		                               9422, kFirstVersionWithChunkserverSideChunkLock);
 	}
 
 	std::array<csdbentry, 2> servers;
 	std::array<csdbentry *, 2> previous{};
-	std::array<int, 2> handles{};
+	std::array<matocsserventry *, 2> connections{};
 	Signal<uint64_t, uint32_t, uint32_t, uint32_t> previousSignal;
 	unsigned notifications = 0;
 	std::unique_ptr<IFilesystemOperations> previousFilesystem;
+};
+
+class ChunkMutationPlanTest : public ChunkPartLocationsTest {
+protected:
+	void install(const std::vector<ChunkPartLocation> &parts, bool needsBump = false) {
+		ASSERT_EQ(chunk_replace_part_locations(17, 3, 0, 0, parts, 255, {{1, 1}}, needsBump),
+		          SAUNAFS_STATUS_OK);
+	}
+};
+
+class ChunkserverSideLockPlanTest : public ChunkMutationPlanTest {
+protected:
+	void SetUp() override {
+		// chunk_strinit, run by the base fixture, reads the switch from the configuration
+		std::ofstream(configPath) << "USE_CHUNKSERVER_SIDE_CHUNK_LOCK = 1\n";
+		ASSERT_EQ(cfg_load(configPath.c_str(), 0), 0);
+		ASSERT_TRUE(cfg_isdefined("USE_CHUNKSERVER_SIDE_CHUNK_LOCK"));
+		ChunkMutationPlanTest::SetUp();
+	}
+	void TearDown() override {
+		ChunkMutationPlanTest::TearDown();
+		cfg_term();
+		std::remove(configPath.c_str());
+	}
+	const std::string configPath = ::testing::TempDir() + "chunkserver_side_lock.cfg";
 };
 
 }  // namespace
@@ -346,4 +389,225 @@ TEST(ChunkGoalCounters, RejectsInvalidRestoredEntriesAndOverflow) {
 	const size_t limit = ChunkGoalCounters::Counters{}.max_size();
 	const std::vector<ChunkGoalCounters::GoalCounter> entries(limit + 1, {1, 255});
 	EXPECT_THROW(ChunkGoalCounters{entries}, ChunkGoalCounters::InvalidOperation);
+}
+
+TEST_F(ChunkWriteLocationsTest, SynchronousWritesNeedNoDeferredCompletion) {
+	ChunkOperationsInMemory operations;
+	FilesystemOperationContext context;
+	EXPECT_EQ(operations.writeStartStatus(context, 17), nullptr);
+}
+
+TEST_F(ChunkPartLocationsTest, MutationSnapshotAllowsLocksAndRejectsOverflowAndOldVersions) {
+	const auto expiry = static_cast<uint32_t>(eventloop_time()) + 120;
+	ASSERT_EQ(chunk_replace_part_locations(17, 4, 77, expiry,
+	                                       {{&servers[0], {}}, {&servers[1], {}}}, 255, {}, false),
+	          SAUNAFS_STATUS_OK);
+	std::vector<ChunkPartLocation> parts;
+	ASSERT_EQ(chunk_get_mutation_parts(17, 4, parts, 255), SAUNAFS_STATUS_OK);
+	ASSERT_EQ(parts.size(), 2U);
+	EXPECT_EQ(chunk_get_mutation_parts(17, 4, parts, 1), SAUNAFS_ERROR_EINVAL);
+	EXPECT_TRUE(parts.empty());
+	EXPECT_EQ(chunk_get_mutation_parts(17, 3, parts, 255), SAUNAFS_ERROR_CHUNKLOST);
+	EXPECT_TRUE(parts.empty());
+	servers[1].eptr = nullptr;
+	ASSERT_EQ(chunk_get_mutation_parts(17, 4, parts, 255), SAUNAFS_STATUS_OK);
+	ASSERT_EQ(parts.size(), 1U);
+	EXPECT_EQ(parts.front().server, &servers[0]);
+}
+
+TEST_F(ChunkMutationPlanTest, AddedParityPartIsNotTruncatedByACommittedPlan) {
+	install({{&servers[0], {}}});
+	const auto plan = chunk_plan_truncate(17, 77, 1000, 1, true, false);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	ASSERT_TRUE(chunk_mutation_plan_current(plan));
+	const ChunkPartType parity(slice_traits::ec::getSliceType(3, 1), 3);
+	install({{&servers[0], {}}, {&servers[1], parity}});
+	uint8_t operation = 255;
+	ASSERT_TRUE(chunk_apply_mutation_plan(plan, operation));
+	EXPECT_TRUE(chunk_operation_waits_for_replies(operation));
+	std::vector<ChunkPartLocation> parts;
+	ASSERT_EQ(chunk_get_mutation_parts(17, plan.targetVersion, parts, 255), SAUNAFS_STATUS_OK);
+	ASSERT_EQ(parts.size(), 1U);
+	EXPECT_EQ(parts.front().server, &servers[0]);
+}
+
+TEST_F(ChunkMutationPlanTest, LostPartKeepsAVersionIncreasePlanForTheSurvivors) {
+	install({{&servers[0], {}}, {&servers[1], {}}}, true);
+	const auto plan = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	ASSERT_GT(plan.targetVersion, plan.chunkVersion);
+	ASSERT_TRUE(chunk_mutation_plan_current(plan));
+	install({{&servers[0], {}}}, true);
+	uint8_t operation = 255;
+	ASSERT_TRUE(chunk_apply_mutation_plan(plan, operation));
+	EXPECT_TRUE(chunk_operation_waits_for_replies(operation));
+	std::vector<ChunkPartLocation> parts;
+	ASSERT_EQ(chunk_get_mutation_parts(17, plan.targetVersion, parts, 255), SAUNAFS_STATUS_OK);
+	ASSERT_EQ(parts.size(), 1U);
+	EXPECT_EQ(parts.front().server, &servers[0]);
+}
+
+TEST_F(ChunkMutationPlanTest, AddedPartIsNotAddressedByACommittedPlan) {
+	install({{&servers[0], {}}}, true);
+	const auto plan = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	ASSERT_GT(plan.targetVersion, plan.chunkVersion);
+	install({{&servers[0], {}}, {&servers[1], {}}}, true);
+	uint8_t operation = 255;
+	ASSERT_TRUE(chunk_apply_mutation_plan(plan, operation));
+	EXPECT_TRUE(chunk_operation_waits_for_replies(operation));
+	std::vector<ChunkPartLocation> parts;
+	ASSERT_EQ(chunk_get_mutation_parts(17, plan.targetVersion, parts, 255), SAUNAFS_STATUS_OK);
+	ASSERT_EQ(parts.size(), 1U);
+	EXPECT_EQ(parts.front().server, &servers[0]);
+}
+
+TEST_F(ChunkMutationPlanTest, EveryPlannedPartGoneInvalidatesAVersionIncreasePlan) {
+	install({{&servers[0], {}}}, true);
+	const auto plan = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	ASSERT_GT(plan.targetVersion, plan.chunkVersion);
+	install({{&servers[1], {}}}, true);
+	EXPECT_FALSE(chunk_mutation_plan_current(plan));
+}
+
+TEST_F(ChunkMutationPlanTest, ReusedRegistryIdAtAnotherAddressInvalidatesAPlan) {
+	install({{&servers[0], {}}});
+	const auto plan = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	ASSERT_TRUE(chunk_mutation_plan_current(plan));
+	servers[1].csid = servers[0].csid;
+	servers[0].eptr = servers[1].eptr;
+	EXPECT_FALSE(chunk_mutation_plan_current(plan));
+}
+
+TEST_F(ChunkMutationPlanTest, NonePlanRefusesANewVersionIncreaseRequirement) {
+	install({{&servers[0], {}}});
+	const auto plan = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	ASSERT_EQ(plan.operation, 0U);
+	ASSERT_TRUE(chunk_mutation_plan_current(plan));
+	install({{&servers[0], {}}}, true);
+	EXPECT_FALSE(chunk_mutation_plan_current(plan));
+}
+
+TEST_F(ChunkMutationPlanTest, PartOrderAndImmediateInMemoryApplyRemainValid) {
+	install({{&servers[0], {}}, {&servers[1], {}}});
+	const auto plan = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	install({{&servers[1], {}}, {&servers[0], {}}});
+	EXPECT_TRUE(chunk_mutation_plan_current(plan));
+	uint8_t operation = 255;
+	EXPECT_TRUE(chunk_apply_mutation_plan(plan, operation));
+	EXPECT_EQ(operation, 0U);
+	EXPECT_EQ(chunk_can_unlock(17, 77), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ChunkMutationPlanTest, SnapshotReferenceKeepsACommittedInPlacePlan) {
+	install({{&servers[0], {}}});
+	const auto writePlan = chunk_plan_modify(17, 77, 1, false, 0);
+	const auto truncatePlan = chunk_plan_truncate(17, 77, 1000, 1, false, false);
+	ASSERT_EQ(writePlan.status, SAUNAFS_STATUS_OK);
+	ASSERT_EQ(truncatePlan.status, SAUNAFS_STATUS_OK);
+	ASSERT_EQ(truncatePlan.targetChunkId, 17U);
+
+	ASSERT_EQ(chunk_add_file(17, 1), SAUNAFS_STATUS_OK);
+	EXPECT_TRUE(chunk_mutation_plan_current(truncatePlan));
+	uint8_t operation = 255;
+	ASSERT_TRUE(chunk_apply_mutation_plan(writePlan, operation));
+	EXPECT_EQ(operation, 0U);
+	EXPECT_EQ(chunk_can_unlock(17, 77), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ChunkMutationPlanTest, VersionMovesInvalidateUnplannedOldCopies) {
+	for (bool truncate : {false, true}) {
+		ASSERT_EQ(chunk_unlock(17), SAUNAFS_STATUS_OK);
+		install({{&servers[0], {}}}, true);
+		const auto plan = truncate ? chunk_plan_truncate(17, 77, 1000, 1, false, false)
+		                           : chunk_plan_modify(17, 77, 1, false, 0);
+		ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+		install({{&servers[0], {}}, {&servers[1], {}}}, true);
+		uint8_t operation = 255;
+		ASSERT_TRUE(chunk_apply_mutation_plan(plan, operation));
+		chunk_got_setversion_status(servers[0].eptr, 17, {}, SAUNAFS_STATUS_OK);
+
+		// Only the planned copy moved; the arrived copy must disappear from write retries too.
+		uint32_t version = 0;
+		std::vector<ChunkTypeWithAddress> locations;
+		ChunkOperationsInMemory operations;
+		ASSERT_EQ(operations.getWriteVersionAndLocations(17, 0, version, 255, locations),
+		          SAUNAFS_STATUS_OK);
+		EXPECT_EQ(version, 4U);
+		EXPECT_EQ(locations.size(), 1U);
+		const auto reentry = chunk_plan_modify(17, 77, 1, false, 0);
+		ASSERT_EQ(reentry.status, SAUNAFS_STATUS_OK);
+		EXPECT_EQ(reentry.parts.size(), 1U);
+	}
+}
+
+TEST(ChunkserverRegistryTest, RemovedIdDoesNotExposeTheFreeList) {
+	constexpr uint32_t address = 0x7f001234;
+	constexpr uint16_t port = 12345;
+	auto *connection = matocsserv_test_connection(nullptr, address, port, 0);
+	ASSERT_EQ(csdb_new_connection(address, port, connection), 1);
+	const auto id = csdb_find(address, port)->csid;
+	csdb_lost_connection(address, port);
+	ASSERT_EQ(csdb_remove_server(address, port), 1);
+	EXPECT_EQ(csdb_find(address, port), nullptr);
+	EXPECT_EQ(csdb_find(id), nullptr);
+	matocsserv_test_connection_free(connection);
+}
+
+TEST_F(ChunkMutationPlanTest, AddedPartInvalidatesADeferredLockGrant) {
+	install({{&servers[0], {}}});
+	const auto plan = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	ASSERT_EQ(plan.operation, 0U);
+	install({{&servers[0], {}}, {&servers[1], {}}});
+	EXPECT_FALSE(chunk_mutation_plan_current(plan));
+}
+
+TEST_F(ChunkserverSideLockPlanTest, WriteEndBetweenPlanAndApplyInvalidatesANonePlan) {
+	install({{&servers[0], {}}});
+	// The first grant locks the part on its chunkserver, which confirms.
+	const auto grant = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(grant.status, SAUNAFS_STATUS_OK);
+	ASSERT_EQ(grant.operation, 6U);
+	uint8_t operation = 255;
+	ASSERT_TRUE(chunk_apply_mutation_plan(grant, operation));
+	chunk_got_chunklock_status(servers[0].eptr, 17, {}, SAUNAFS_STATUS_OK);
+
+	// A renewal under the same lock finds every part being written and plans no lock.
+	const auto renewal = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(renewal.status, SAUNAFS_STATUS_OK);
+	ASSERT_EQ(renewal.operation, 0U);
+
+	// The client's write end reaches the chunkserver before the renewal applies: the part is
+	// idle again and the grant would leave it without a lock.
+	chunk_got_writeend_status(servers[0].eptr, 17, {}, SAUNAFS_STATUS_OK);
+	EXPECT_FALSE(chunk_mutation_plan_current(renewal));
+}
+
+TEST_F(ChunkMutationPlanTest, RemovedRegistryEntryIsDroppedFromTheChunk) {
+	constexpr uint32_t address = 0x7f001235;
+	constexpr uint16_t port = 12346;
+	// The fixture's manual entry must not replace a link used by the real id allocator.
+	gIdToCSEntry[servers[0].csid] = previous[0];
+	ASSERT_EQ(csdb_new_connection(address, port, servers[0].eptr), 1);
+	auto *registered = csdb_find(address, port);
+	ASSERT_NE(registered, nullptr);
+	ASSERT_EQ(registered->csid, servers[0].csid);
+	ASSERT_EQ(chunk_replace_part_locations(17, 3, 0, 0, {{registered, {}}}, 255, {{1, 1}}, false),
+	          SAUNAFS_STATUS_OK);
+	const auto plan = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(plan.status, SAUNAFS_STATUS_OK);
+	ASSERT_EQ(plan.operation, 0U);
+	ASSERT_EQ(plan.parts.size(), 1U);
+	csdb_lost_connection(address, port);
+	ASSERT_EQ(csdb_remove_server(address, port), 1);
+
+	// A different lookup bypasses the last-chunk shortcut and runs disconnected-copy cleanup.
+	chunk_create_with_goal_counters(18, 1, {}, 0, 0);
+	ASSERT_TRUE(chunk_exists(18));
+	EXPECT_FALSE(chunk_mutation_plan_current(plan));
 }
