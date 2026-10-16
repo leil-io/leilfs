@@ -10,24 +10,35 @@
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "common/exceptions.h"
+#include "common/slice_traits.h"
 #include "errors/leil_error_codes.h"
 #include "unittests/TemporaryDirectory.h"
 
 namespace {
 
-// Fails with SAUNAFS_ERROR_IO on every call before succeedOnAttempt, then
-// succeeds; the chunk pointer is never dereferenced.
+// Fails with SAUNAFS_ERROR_IO and EIO on every call before succeedOnAttempt,
+// then succeeds; the chunk pointer is never dereferenced.
 class FlakyAttributesDisk : public CmrDisk {
 public:
 	using CmrDisk::CmrDisk;
 
 	int updateChunkAttributes(IChunk * /*chunk*/, bool /*isFromScan*/) override {
 		++callCount;
-		return callCount < succeedOnAttempt ? SAUNAFS_ERROR_IO : SAUNAFS_STATUS_OK;
+		if (callCount < succeedOnAttempt) {
+			errno = EIO;
+			return SAUNAFS_ERROR_IO;
+		}
+		return SAUNAFS_STATUS_OK;
+	}
+
+	int unlinkChunk(IChunk * /*chunk*/) override {
+		++unlinkCount;
+		return SAUNAFS_STATUS_OK;
 	}
 
 	int callCount = 0;
 	int succeedOnAttempt = 1;
+	int unlinkCount = 0;
 };
 
 // True if another process could lock the file at path.
@@ -326,4 +337,79 @@ TEST(DiskTests, DiskLockedByAnotherProcessIsRefused) {
 	(void)!write(release[1], &locked, 1);
 	waitpid(child, nullptr, 0);
 	for (const int fd : {ready[0], ready[1], release[0], release[1]}) { close(fd); }
+}
+
+TEST(DiskTests, AttributesReadErrorKeepsChunk) {
+	const disk::Configuration diskConfig("/mnt/hdd_22/");
+	FlakyAttributesDisk disk(diskConfig);
+	disk.succeedOnAttempt = kOpenRetryCount + 1;  // never succeeds in time
+	const ChunkPartType type = slice_traits::standard::ChunkPartType();
+
+	IChunk *chunk = hddChunkFindOrCreatePlusLock(&disk, 1, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(chunk, nullptr);
+	IChunk *next = hddChunkFindOrCreatePlusLock(&disk, 2, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(next, nullptr);
+	{
+		const std::lock_guard lock(gTestsMutex);
+		disk.chunks().insert(chunk);
+		disk.chunks().insert(next);
+		ASSERT_EQ(disk.chunks().chunkToTest(), chunk);
+	}
+	hddChunkRelease(chunk);
+	hddChunkRelease(next);
+
+	int status = SAUNAFS_STATUS_OK;
+	EXPECT_EQ(hddChunkFindAndLock(1, type, &status), nullptr);
+	EXPECT_EQ(status, SAUNAFS_ERROR_IO);  // not a part not found
+	EXPECT_EQ(disk.unlinkCount, 0);
+	// The error is recorded against the disk once, after the retries.
+	EXPECT_EQ(disk.lastErrorIndex(), 1U);
+	EXPECT_EQ(disk.lastErrorTab()[0].chunkid, 1U);
+	EXPECT_EQ(disk.lastErrorTab()[0].errornumber, EIO);
+	{
+		// The tester moves on rather than retrying the same part.
+		const std::lock_guard lock(gTestsMutex);
+		EXPECT_EQ(disk.chunks().chunkToTest(), next);
+	}
+
+	// Still registered, and released.
+	disk.succeedOnAttempt = 1;
+	disk.callCount = 0;
+	EXPECT_EQ(hddChunkFindAndLock(1, type), chunk);
+	EXPECT_EQ(disk.unlinkCount, 0);
+
+	const std::lock_guard lock(gChunksMapMutex);
+	hddRemoveChunkFromContainers(chunk);
+	hddRemoveChunkFromContainers(next);
+}
+
+TEST(DiskTests, AttributesReadErrorLeavesTheScanThePart) {
+	const disk::Configuration diskConfig("/mnt/hdd_23/");
+	FlakyAttributesDisk disk(diskConfig);
+	disk.succeedOnAttempt = kOpenRetryCount + 1;  // never succeeds in time
+	const ChunkPartType type = slice_traits::standard::ChunkPartType();
+
+	IChunk *chunk = hddChunkFindOrCreatePlusLock(&disk, 3, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(chunk, nullptr);
+	chunk->setVersion(5);
+	{
+		const std::lock_guard lock(gTestsMutex);
+		disk.chunks().insert(chunk);
+	}
+	hddChunkRelease(chunk);
+
+	// A disk scan gets the part locked, to compare it with the copy it found.
+	int status = SAUNAFS_STATUS_OK;
+	EXPECT_EQ(hddChunkFindOrCreatePlusLock(&disk, 3, type, disk::ChunkGetMode::kFindOrCreate,
+	                                       &status),
+	          chunk);
+	EXPECT_EQ(status, SAUNAFS_ERROR_IO);
+	EXPECT_EQ(chunk->version(), 5U);
+	EXPECT_EQ(disk.unlinkCount, 0);
+	// Not recorded: a caller creating a part may hold gDisksMutex.
+	EXPECT_EQ(disk.lastErrorIndex(), 0U);
+	hddChunkRelease(chunk);
+
+	const std::lock_guard lock(gChunksMapMutex);
+	hddRemoveChunkFromContainers(chunk);
 }

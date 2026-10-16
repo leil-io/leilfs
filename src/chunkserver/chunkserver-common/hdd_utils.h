@@ -103,7 +103,13 @@ int hddIOBegin(IChunk *chunk, int newFlag,
 
 bool hddScansInProgress();
 
-IChunk *hddChunkFindAndLock(uint64_t chunkId, ChunkPartType chunkType);
+/// Finds an existing chunk and locks it, or returns ChunkNotFound.
+///
+/// If `status` is given, it is set to the error, such as SAUNAFS_ERROR_IO, when
+/// the chunk exists but its attributes could not be read: unlike a chunk not
+/// found, it may be healthy. It is set to SAUNAFS_STATUS_OK otherwise.
+IChunk *hddChunkFindAndLock(uint64_t chunkId, ChunkPartType chunkType,
+                            int *status = nullptr);
 
 int chunkWriteCrc(IChunk *chunk);
 
@@ -116,9 +122,16 @@ int hddUpdateChunkAttributesWithRetry(IDisk *disk, IChunk *chunk, bool isFromSca
 ///
 /// The function locks the returned chunk (may block if the chunk is already
 /// locked). To unlock it, use \ref hddChunkRelease.
+///
+/// If `status` is given, it is set to the error when an existing chunk's
+/// attributes could not be read, and to SAUNAFS_STATUS_OK otherwise. Such a
+/// chunk is released and ChunkNotFound returned with kFindOnly; any other mode
+/// returns it locked, attributes still unread, for the caller to decide by its
+/// version.
 IChunk *hddChunkFindOrCreatePlusLock(IDisk *disk, uint64_t chunkid,
                                      ChunkPartType chunkType,
-                                     disk::ChunkGetMode creationMode);
+                                     disk::ChunkGetMode creationMode,
+                                     int *status = nullptr);
 
 /// Remove old chunk and create new one in its place.
 ///

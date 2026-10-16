@@ -316,19 +316,22 @@ int hddUpdateChunkAttributesWithRetry(IDisk *disk, IChunk *chunk, bool isFromSca
 	return status;
 }
 
-IChunk *hddChunkFindAndLock(uint64_t chunkId, ChunkPartType chunkType) {
+IChunk *hddChunkFindAndLock(uint64_t chunkId, ChunkPartType chunkType, int *status) {
 	LOG_AVG_TILL_END_OF_SCOPE0("chunk_find");
 
 	return hddChunkFindOrCreatePlusLock(nullptr, chunkId, chunkType,
-	                                    disk::ChunkGetMode::kFindOnly);
+	                                    disk::ChunkGetMode::kFindOnly, status);
 }
 
 IChunk *hddChunkFindOrCreatePlusLock(IDisk *disk, uint64_t chunkid,
                                      ChunkPartType chunkType,
-                                     disk::ChunkGetMode creationMode) {
+                                     disk::ChunkGetMode creationMode,
+                                     int *status) {
 	TRACETHIS2(chunkid, (unsigned)creationMode);
 	IChunk *chunk = nullptr;
 	IDisk *effectiveDisk = disk;
+
+	if (status != nullptr) { *status = SAUNAFS_STATUS_OK; }
 
 	std::unique_lock chunksMapLock(gChunksMapMutex);
 	auto chunkIter = gChunksMap.find(makeChunkKey(chunkid, chunkType));
@@ -361,6 +364,21 @@ IChunk *hddChunkFindOrCreatePlusLock(IDisk *disk, uint64_t chunkid,
 			if (chunk->validAttr() == 0) {
 				int attrStatus =
 				    hddUpdateChunkAttributesWithRetry(effectiveDisk, chunk, false);
+				if (attrStatus != SAUNAFS_STATUS_OK && attrStatus != SAUNAFS_ERROR_NOCHUNK) {
+					// Not a confirmed absence: the part may be healthy.
+					if (status != nullptr) { *status = attrStatus; }
+					// A caller creating a part may hold gDisksMutex, which
+					// recording takes; it gets the part to decide by version.
+					if (creationMode != disk::ChunkGetMode::kFindOnly) { return chunk; }
+					// Counted against the disk once.
+					hddAddErrorAndPreserveErrno(chunk);
+					{  // Let the tester move on, as hddIOBegin would.
+						std::lock_guard testsLockGuard(gTestsMutex);
+						effectiveDisk->chunks().markAsTested(chunk);
+					}
+					hddChunkRelease(chunk);
+					return nullptr;
+				}
 				if (attrStatus != SAUNAFS_STATUS_OK) {
 					// The chunk was found as available, but we can not
 					// update its attributes, let's recreate it only if
