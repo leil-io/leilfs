@@ -1,9 +1,17 @@
+#include <csignal>
+#include <filesystem>
+
+#include <fcntl.h>
 #include <gtest/gtest.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "chunkserver-common/cmr_disk.h"
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
+#include "common/exceptions.h"
 #include "errors/leil_error_codes.h"
+#include "unittests/TemporaryDirectory.h"
 
 namespace {
 
@@ -21,6 +29,18 @@ public:
 	int callCount = 0;
 	int succeedOnAttempt = 1;
 };
+
+// True if another process could lock the file at path.
+bool isLockFree(const std::string &path) {
+	const pid_t child = fork();
+	if (child == 0) {
+		const int fd = ::open(path.c_str(), O_RDWR);
+		_exit(fd >= 0 && ::lockf(fd, F_TEST, 0) == 0 ? 0 : 1);
+	}
+	int status = 0;
+	waitpid(child, &status, 0);
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
 
 }  // namespace
 
@@ -186,4 +206,124 @@ TEST(DiskTests, UpdateChunkAttributesRetryGivesUpAfterMaxAttempts) {
 	ASSERT_EQ(hddUpdateChunkAttributesWithRetry(&disk, nullptr, false),
 	          SAUNAFS_ERROR_IO);
 	ASSERT_EQ(disk.callCount, kOpenRetryCount);
+}
+
+TEST(DiskTests, ReloadKeepsDiskLock) {
+	TemporaryDirectory dir("/tmp", "disk-reload-lock");
+	const std::string line = dir.name() + "/";
+	std::vector<std::unique_ptr<IDisk>> disks;
+	disks.emplace_back(new CmrDisk(disk::Configuration(line)));
+	disks.front()->createLockFiles(true, disks);
+	ASSERT_FALSE(isLockFree(line + ".lock"));
+
+	// A reload checks the line with a throwaway Disk.
+	{
+		CmrDisk reloaded{disk::Configuration(line)};
+		reloaded.createLockFiles(false, disks);
+	}
+
+	EXPECT_FALSE(isLockFree(line + ".lock"));
+}
+
+TEST(DiskTests, ExecutedProgramHoldsNoDiskLock) {
+	TemporaryDirectory dir("/tmp", "disk-exec-lock");
+	const std::string line = dir.name() + "/";
+	std::vector<std::unique_ptr<IDisk>> disks;
+	disks.emplace_back(new CmrDisk(disk::Configuration(line)));
+	disks.front()->createLockFiles(true, disks);
+
+	// Runs a program as popen would; the pipe reads EOF once it is executed.
+	int executed[2];
+	ASSERT_EQ(pipe2(executed, O_CLOEXEC), 0);
+	const pid_t child = fork();
+	if (child == 0) {
+		execl("/bin/sleep", "sleep", "60", nullptr);
+		_exit(127);
+	}
+	close(executed[1]);
+	char byte = 0;
+	EXPECT_EQ(read(executed[0], &byte, 1), 0);
+	close(executed[0]);
+	ASSERT_EQ(waitpid(child, nullptr, WNOHANG), 0);
+
+	// The disk is released while the program still runs.
+	disks.clear();
+	EXPECT_TRUE(isLockFree(line + ".lock"));
+
+	kill(child, SIGKILL);
+	waitpid(child, nullptr, 0);
+}
+
+TEST(DiskTests, RejectedSharedLockFileKeepsDiskLock) {
+	TemporaryDirectory dir("/tmp", "disk-shared-lock");
+	std::filesystem::create_directory(dir.name() + "/disk");
+	std::filesystem::create_directory_symlink("disk", dir.name() + "/alias");
+	std::vector<std::unique_ptr<IDisk>> disks;
+	disks.emplace_back(new CmrDisk(disk::Configuration(dir.name() + "/disk/")));
+	disks.front()->createLockFiles(true, disks);
+
+	CmrDisk alias{disk::Configuration(dir.name() + "/alias/")};
+	EXPECT_THROW(alias.createLockFiles(true, disks), InitializeException);
+
+	EXPECT_FALSE(isLockFree(dir.name() + "/disk/.lock"));
+}
+
+// What locking the disk throws, or empty.
+std::string lockFailure(CmrDisk &disk, std::vector<std::unique_ptr<IDisk>> &disks) {
+	try {
+		disk.createLockFiles(true, disks);
+	} catch (const InitializeException &exception) { return exception.what(); }
+	return "";
+}
+
+TEST(DiskTests, LockFileSharedWithinTheProcessIsNamed) {
+	TemporaryDirectory dir("/tmp", "disk-own-lock");
+	for (const char *name : {"/a", "/b", "/c"}) {
+		std::filesystem::create_directory(dir.name() + name);
+	}
+	std::filesystem::create_directory_symlink("a", dir.name() + "/alias");
+	std::vector<std::unique_ptr<IDisk>> disks;
+
+	// One disk whose metadata and data paths are the same directory.
+	{
+		CmrDisk itself{disk::Configuration(dir.name() + "/a/ | " + dir.name() + "/alias/")};
+		EXPECT_NE(lockFailure(itself, disks).find("same lockfile"), std::string::npos);
+	}
+
+	// One disk's metadata lock file is another's data lock file.
+	disks.emplace_back(
+	    new CmrDisk(disk::Configuration(dir.name() + "/a/ | " + dir.name() + "/b/")));
+	disks.front()->createLockFiles(true, disks);
+	CmrDisk crossed{disk::Configuration(dir.name() + "/b/ | " + dir.name() + "/c/")};
+	EXPECT_NE(lockFailure(crossed, disks).find("same lockfile"), std::string::npos);
+}
+
+TEST(DiskTests, DiskLockedByAnotherProcessIsRefused) {
+	TemporaryDirectory dir("/tmp", "disk-foreign-lock");
+	const std::string line = dir.name() + "/";
+	int ready[2];
+	int release[2];
+	ASSERT_EQ(pipe(ready), 0);
+	ASSERT_EQ(pipe(release), 0);
+
+	const pid_t child = fork();
+	if (child == 0) {
+		const int fd = ::open((line + ".lock").c_str(), O_RDWR | O_CREAT, 0640);
+		char locked = fd >= 0 && ::lockf(fd, F_TLOCK, 0) == 0 ? 1 : 0;
+		(void)!write(ready[1], &locked, 1);
+		(void)!read(release[0], &locked, 1);
+		_exit(0);
+	}
+
+	char locked = 0;
+	ASSERT_EQ(read(ready[0], &locked, 1), 1);
+	ASSERT_EQ(locked, 1);
+
+	std::vector<std::unique_ptr<IDisk>> disks;
+	CmrDisk disk{disk::Configuration(line)};
+	EXPECT_THROW(disk.createLockFiles(true, disks), InitializeException);
+
+	(void)!write(release[1], &locked, 1);
+	waitpid(child, nullptr, 0);
+	for (const int fd : {ready[0], ready[1], release[0], release[1]}) { close(fd); }
 }
