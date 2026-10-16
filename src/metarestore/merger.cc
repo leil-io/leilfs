@@ -28,7 +28,7 @@
 #include <syslog.h>
 
 #include "protocol/SFSCommunication.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 #include "slogger/slogger.h"
 #include "master/restore.h"
 

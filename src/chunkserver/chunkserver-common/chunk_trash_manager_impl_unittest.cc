@@ -26,7 +26,7 @@
 #include <thread>
 
 #include "chunkserver-common/chunk_trash_manager_impl.h"
-#include "errors/saunafs_error_codes.h"  // Include the error codes header
+#include "errors/leil_error_codes.h"  // Include the error codes header
 
 int fake_statvfs(const char *path, struct statvfs *buf) {
 	if (std::string(path) == "/fake/path") {

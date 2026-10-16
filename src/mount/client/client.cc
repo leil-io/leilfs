@@ -55,7 +55,7 @@ void *Client::linkLibrary() {
 		return ret;
 	}
 
-	char pattern[] = "/tmp/libsaunafsmount_shared.so.XXXXXX";
+	char pattern[] = "/tmp/libleilmount_shared.so.XXXXXX";
 	int out_fd = ::mkstemp(pattern);
 	if (out_fd < 0) {
 		instance_count_--;

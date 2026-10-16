@@ -29,7 +29,7 @@ target_include_directories(fsalsaunafs PUBLIC
         "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
         )
 
-target_link_libraries(fsalsaunafs saunafs-client_pic)
+target_link_libraries(fsalsaunafs leil-client_pic)
 
 # SaunaFS FSAL (libfsalsaunafs.so) will be installed at ${SAUNAFS_ROOT}/lib/ganesha
 install(TARGETS fsalsaunafs COMPONENT fsal DESTINATION ${LIB_SUBDIR}/ganesha)

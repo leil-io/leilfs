@@ -350,7 +350,7 @@ protected:
 	static std::atomic<int> instance_count_;
 
 	static constexpr int kMaxXattrRequestSize = 65536;
-	static constexpr const char *kLibraryPath = LIB_PATH "/libsaunafsmount_shared.so";
+	static constexpr const char *kLibraryPath = LIB_PATH "/libleilmount_shared.so";
 };
 
 } // namespace saunafs

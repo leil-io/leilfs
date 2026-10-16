@@ -25,7 +25,7 @@
 #include "chunkserver-common/chunk_trash_manager.h"
 #include "chunkserver-common/chunk_trash_manager_impl.h"
 #include "config/cfg.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 #include "slogger/slogger.h"
 
 std::atomic<uint8_t> ChunkTrashManager::isEnabled = 0;

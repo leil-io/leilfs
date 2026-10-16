@@ -29,7 +29,7 @@
 
 #include "chunkserver/io_buffers.h"
 #include "common/crc.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 
 const ssize_t testHeaderSize = 1;
 const ssize_t testNumBlocks = 4;

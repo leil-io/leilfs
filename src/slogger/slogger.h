@@ -27,7 +27,7 @@
 #ifdef _WIN32
 #include "common/syslog_defs.h"
 #endif
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 
 // Enable Unicode log file paths only on Windows
 #ifdef _WIN32

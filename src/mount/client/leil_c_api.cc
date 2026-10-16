@@ -22,8 +22,8 @@
 
 #include <system_error>
 
-#include "saunafs_c_api.h"
-#include "errors/saunafs_error_codes.h"
+#include "leil_c_api.h"
+#include "errors/leil_error_codes.h"
 #include "common/md5.h"
 #include "common/small_vector.h"
 #include "mount/client/iovec_traits.h"

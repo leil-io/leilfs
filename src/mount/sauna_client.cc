@@ -52,7 +52,7 @@
 #include "common/errno_defs.h"
 #include "common/lru_cache.h"
 #include "common/saunafs_version.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 #include "errors/sfserr.h"
 #include "common/richacl_converter.h"
 #include "slogger/slogger.h"

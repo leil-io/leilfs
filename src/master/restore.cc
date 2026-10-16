@@ -28,7 +28,7 @@
 #include <cstring>
 
 #include "common/type_defs.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 #include "master/filesystem.h"
 #include "master/filesystem_node_types.h"
 #include "master/filesystem_operations.h"

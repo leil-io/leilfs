@@ -318,6 +318,8 @@ install -p -m 0644 -D %{SOURCE4} %{buildroot}%{_sysusersdir}/leilfs.conf
 mkdir -p %{buildroot}%{leil_confdir}
 
 # Not used anywhere, can be removed
+rm -f %{buildroot}%{_libdir}/libleil-client.so
+rm -f %{buildroot}%{_libdir}/libleilmount_shared.so
 rm -f %{buildroot}%{_libdir}/libsaunafs-client.so
 rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 
@@ -497,6 +499,8 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %doc NEWS README.md
 %license COPYING
 %dir %{_includedir}/leil/
+%{_includedir}/leil/leil_c_api.h
+%{_includedir}/leil/leil_error_codes.h
 %{_includedir}/leil/saunafs_c_api.h
 %{_includedir}/leil/saunafs_error_codes.h
 %{_includedir}/saunafs
@@ -508,6 +512,10 @@ rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 %doc NEWS README.md
 %license COPYING
 %dir %{_includedir}/leil/
+%{_libdir}/libleil-client-cpp.a
+%{_libdir}/libleil-client-cpp_pic.a
+%{_libdir}/libleil-client.a
+%{_libdir}/libleil-client_pic.a
 %{_libdir}/libsaunafs-client-cpp.a
 %{_libdir}/libsaunafs-client-cpp_pic.a
 %{_libdir}/libsaunafs-client.a
