@@ -50,7 +50,7 @@ inline uint32_t gTimeout_ms;
 
 /// CHUNK_REGISTRATION_START_TIMEOUT (seconds): how long a pull-capable
 /// chunkserver waits for SAU_MATOCS_REGISTER_CHUNKS_START before falling
-/// back to the old push registration.
+/// back to push registration on a fresh connection.
 inline uint32_t gPullRegistrationStartTimeout_s;
 
 /// CHUNK_REGISTRATION_FORCE_PUSH: skip the pull protocol entirely and always
@@ -372,6 +372,8 @@ private:
 	uint32_t pullBulkSize_{0};    ///< Chunks per bulk, dictated by the master.
 	uint32_t pullCredits_{0};     ///< Bulks the master is ready to accept.
 	uint64_t pullChunksSent_{0};  ///< Chunks reported in this pull session.
+	/// Retry a timed-out START with one push registration, after closing the pull socket.
+	bool pushRegistrationOnReconnect_{false};
 	/// Expires while waiting for SAU_MATOCS_REGISTER_CHUNKS_START.
 	Timeout pullStartTimeout_{std::chrono::seconds(0)};
 	/// Limits rescans while waiting for locked chunks to become available.

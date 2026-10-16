@@ -220,13 +220,18 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 	isVersionLessThan5_ = false;
 	registrationAttempts_ = 0;
 
+	// The early space report may have confirmed pull mode on the old socket.
+	// Retry on a fresh socket; consume the retry only after host registration succeeds.
+	const bool forcePush = gForcePushRegistration || pushRegistrationOnReconnect_;
+	pushRegistrationOnReconnect_ = false;
+
 	if (!sendInventory_) {
 		sendRegistrationTail();
 		registrationStatus_ = RegistrationStatus::kChunksRegistered;
 		return;
 	}
 
-	if (!gForcePushRegistration && version_ >= kFirstVersionWithPullChunkRegistration) {
+	if (!forcePush && version_ >= kFirstVersionWithPullChunkRegistration) {
 		// Master-driven (pull) registration: send the registration tail right
 		// away (this chunkserver becomes placeable for new chunks) and wait
 		// for the master to release the chunk stream with
@@ -258,13 +263,8 @@ void MasterConn::pushRegisterChunks() {
 
 	sendRegistrationTail();
 
-	// A pull-capable master has already marked this connection as pull-mode and
-	// is waiting on an END that the push path would never send, leaving it
-	// paying credits into a stream that ignores them. Say so explicitly. The
-	// master closes the connection out on the space report above as well, but
-	// only by inferring the protocol from the order of what arrived; this
-	// leaves nothing to infer. Reached whenever push is chosen against such a
-	// master: CHUNK_REGISTRATION_FORCE_PUSH, or a START that never came.
+	// A pull-capable master also gets an explicit END, whether push was forced
+	// or selected for the fresh connection after a START timeout.
 	if (version_ >= kFirstVersionWithPullChunkRegistration) {
 		createAttachedPacket(cstoma::registerChunksEnd::build(pushedChunks));
 	}
@@ -399,9 +399,12 @@ void MasterConn::checkPullRegistration() {
 
 	safs::log_warn(
 	    "MasterConn: master did not start chunk registration within {}s, "
-	    "falling back to push registration",
+	    "falling back to push registration on a fresh connection",
 	    gPullRegistrationStartTimeout_s);
-	pushRegisterChunks();
+	// Closing cancels old credits without falsely completing the inventory.
+	// On reconnect, push chunks precede REGISTER_SPACE and cannot confirm pull mode.
+	pushRegistrationOnReconnect_ = true;
+	setMode(ConnectionMode::KILL);
 }
 
 void MasterConn::handleRegistrationAttempt() {

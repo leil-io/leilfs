@@ -103,6 +103,11 @@ protected:
 		gHddSpaceChanged.store(true);
 	}
 
+	void expirePullStart(MasterConn &connection) {
+		connection.pullStartTimeout_ = Timeout(std::chrono::seconds(0));
+		connection.checkPullRegistration();
+	}
+
 	void setPhase(MasterConn &connection, RegistrationStatus status) {
 		connection.registrationStatus_ = status;
 	}
@@ -253,6 +258,88 @@ TEST_F(MasterConnSpaceReportTests, LatePeerGetsFreshSnapshotAfterSharedChangeWas
 	                                                   toDelTotal, toDelChunks));
 	EXPECT_EQ(1024U, used);
 	EXPECT_EQ(4096U, total);
+}
+
+TEST_F(MasterConnSpaceReportTests, StartTimeoutDoesNotPushOnConfirmedPullSocket) {
+	auto &connection = addConnection();
+	makeDiskReady();
+	registerHost(connection);
+	ASSERT_EQ(RegistrationStatus::kAwaitingPullStart, connection.registrationStatus());
+	connection.resetPackets();
+
+	expirePullStart(connection);
+
+	EXPECT_EQ(ConnectionMode::KILL, connection.mode());
+	EXPECT_FALSE(connection.isRegistered());
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+}
+
+TEST_F(MasterConnSpaceReportTests, TimeoutFallbackUsesPushForOnlyTheNextRegistration) {
+	auto &connection = addConnection();
+	registerHost(connection);
+	connection.resetPackets();
+	expirePullStart(connection);
+	ASSERT_EQ(ConnectionMode::KILL, connection.mode());
+
+	connection.resetPackets();
+	connection.setMode(ConnectionMode::CONNECTED);
+	registerHost(connection);
+	ASSERT_TRUE(connection.isRegistered());
+	EXPECT_TRUE(connection.sendsInventory());
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_SPACE);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_LABEL);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CONFIG);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CHUNKS_END);
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+
+	connection.setMode(ConnectionMode::KILL);
+	connection.setMode(ConnectionMode::CONNECTED);
+	registerHost(connection);
+	EXPECT_EQ(RegistrationStatus::kAwaitingPullStart, connection.registrationStatus());
+	EXPECT_FALSE(connection.isRegistered());
+}
+
+TEST_F(MasterConnSpaceReportTests, IdentityRegistrationOverridesTimeoutFallback) {
+	auto &connection = addConnection();
+	registerHost(connection);
+	connection.resetPackets();
+	expirePullStart(connection);
+	ASSERT_EQ(ConnectionMode::KILL, connection.mode());
+
+	connection.setMode(ConnectionMode::CONNECTED);
+	connection.setSendInventory(false);
+	registerHost(connection);
+	ASSERT_TRUE(connection.isRegistered());
+	EXPECT_FALSE(connection.sendsInventory());
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_SPACE);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_LABEL);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CONFIG);
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+
+	connection.setMode(ConnectionMode::KILL);
+	connection.setMode(ConnectionMode::CONNECTED);
+	registerHost(connection);
+	EXPECT_EQ(RegistrationStatus::kAwaitingPullStart, connection.registrationStatus());
+}
+
+TEST_F(MasterConnSpaceReportTests, FailedHostReplyDoesNotConsumeTimeoutFallback) {
+	auto &connection = addConnection();
+	registerHost(connection);
+	connection.resetPackets();
+	expirePullStart(connection);
+	ASSERT_EQ(ConnectionMode::KILL, connection.mode());
+
+	connection.setMode(ConnectionMode::CONNECTED);
+	auto failure = matocs::registerHost::build(SAUNAFS_ERROR_NOTDONE, SAUNAFS_VERSHEX, "default");
+	removeHeaderInPlace(failure);
+	connection.onRegistered(failure);
+	ASSERT_EQ(ConnectionMode::KILL, connection.mode());
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+
+	connection.setMode(ConnectionMode::CONNECTED);
+	registerHost(connection);
+	EXPECT_TRUE(connection.isRegistered());
+	EXPECT_TRUE(connection.sendsInventory());
 }
 
 namespace {
