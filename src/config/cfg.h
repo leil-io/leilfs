@@ -60,8 +60,8 @@ std::string cfg_yaml_list(std::string service_name,
  *
  * @param str The string to parse.
  * @return The size in bytes as an int64_t. If the string cannot be parsed,
- *         or if the parsed value is larger than the maximum representable
- *         int64_t value, the function returns kInvalidConversion.
+ *         or if the parsed value is negative or larger than the maximum
+ *         representable int64_t value, the function returns kInvalidConversion.
  */
 int64_t cfg_parse_size(const std::string& str);
 
