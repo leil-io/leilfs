@@ -254,7 +254,9 @@ int64_t cfg_parse_size(const std::string &str) {
 
 	try {
 		value = std::stod(cleanStr, &numberEndPosition);
-	} catch (const std::invalid_argument &e) { return kInvalidConversion; }
+	} catch (const std::invalid_argument &e) {
+		return kInvalidConversion;
+	} catch (const std::out_of_range &e) { return kInvalidConversion; }
 
 	if (numberEndPosition < cleanStr.size()) {
 		// Remove leading and trailing spaces

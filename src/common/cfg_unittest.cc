@@ -72,6 +72,10 @@ TEST(CfgTests, CfgParseSize) {
 	EXPECT_EQ(-1, cfg_parse_size("1Bx"));
 	EXPECT_EQ(-1, cfg_parse_size("1 KBx"));
 	EXPECT_EQ(-1, cfg_parse_size("1_KiB"));
+
+	// Out of the range of a double
+	EXPECT_EQ(-1, cfg_parse_size("1e999"));
+	EXPECT_EQ(-1, cfg_parse_size("1e-999"));
 }
 
 // Calls cfg_term() even after a failed assertion.
