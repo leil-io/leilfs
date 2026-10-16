@@ -9,6 +9,7 @@
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "common/exceptions.h"
+#include "common/slice_traits.h"
 #include "errors/leil_error_codes.h"
 #include "unittests/TemporaryDirectory.h"
 
@@ -25,8 +26,14 @@ public:
 		return callCount < succeedOnAttempt ? SAUNAFS_ERROR_IO : SAUNAFS_STATUS_OK;
 	}
 
+	int unlinkChunk(IChunk * /*chunk*/) override {
+		++unlinkCount;
+		return SAUNAFS_STATUS_OK;
+	}
+
 	int callCount = 0;
 	int succeedOnAttempt = 1;
+	int unlinkCount = 0;
 };
 
 // True if another process could lock the file at path.
@@ -296,4 +303,31 @@ TEST(DiskTests, DiskLockedByAnotherProcessIsRefused) {
 	(void)!write(release[1], &locked, 1);
 	waitpid(child, nullptr, 0);
 	for (const int fd : {ready[0], ready[1], release[0], release[1]}) { close(fd); }
+}
+
+TEST(DiskTests, AttributesReadErrorKeepsChunk) {
+	const disk::Configuration diskConfig("/mnt/hdd_22/");
+	FlakyAttributesDisk disk(diskConfig);
+	disk.succeedOnAttempt = kOpenRetryCount + 1;  // never succeeds in time
+	const ChunkPartType type = slice_traits::standard::ChunkPartType();
+
+	IChunk *chunk = hddChunkFindOrCreatePlusLock(&disk, 1, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(chunk, nullptr);
+	{
+		const std::lock_guard lock(gTestsMutex);
+		disk.chunks().insert(chunk);
+	}
+	hddChunkRelease(chunk);
+
+	EXPECT_EQ(hddChunkFindAndLock(1, type), nullptr);
+	EXPECT_EQ(disk.unlinkCount, 0);
+
+	// Still registered, and released.
+	disk.succeedOnAttempt = 1;
+	disk.callCount = 0;
+	EXPECT_EQ(hddChunkFindAndLock(1, type), chunk);
+	EXPECT_EQ(disk.unlinkCount, 0);
+
+	const std::lock_guard lock(gChunksMapMutex);
+	hddRemoveChunkFromContainers(chunk);
 }
