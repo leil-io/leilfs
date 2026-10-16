@@ -112,6 +112,7 @@ Reloadable. (default is 1000, minimum is 1, maximum is 100000)
 *CHUNK_REGISTRATION_START_TIMEOUT*:: *ADVANCED*:: how long (in seconds) to
 wait for a pull-capable master to start the master-driven chunk registration
 before falling back to pushing the full chunk list the old way.
+The fallback reconnects once in push mode to cancel the previous pull session.
 Reloadable. (default is 10, minimum is 1)
 
 *CHUNK_REGISTRATION_FORCE_PUSH*:: *ADVANCED*:: when set to 1, never use the
