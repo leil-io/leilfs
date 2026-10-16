@@ -477,3 +477,76 @@ TEST(DiskTests, DiskListThatIsNotAFileIsRefused) {
 	}
 	EXPECT_TRUE(refused.get());
 }
+
+// Clears what a reload test configured.
+struct ReloadCleanup {
+	~ReloadCleanup() {
+		cfg_term();
+		const std::lock_guard lock(gDisksMutex);
+		gDisks.clear();
+	}
+};
+
+// Points HDD_CONF_FILENAME at a disk list holding only line.
+void configureDiskList(const std::string &dir, const std::string &line) {
+	std::ofstream(dir + "/hdd.cfg") << line << "\n";
+	std::ofstream(dir + "/test.cfg") << "HDD_CONF_FILENAME = " << dir << "/hdd.cfg\n";
+	ASSERT_EQ(cfg_load((dir + "/test.cfg").c_str(), 0), 0);
+}
+
+// Starts a disk as the chunkserver does, with its lock files.
+IDisk &startDisk(const std::string &line, bool isReadOnly = false) {
+	const std::lock_guard lock(gDisksMutex);
+	auto &disk = gDisks.emplace_back(new CmrDisk(disk::Configuration(line)));
+	disk->setIsReadOnly(isReadOnly);
+	disk->createLockFiles(true, gDisks);
+	return *disk;
+}
+
+TEST(DiskTests, ReloadLocksADiskOnlyOnceItCan) {
+	if (geteuid() == 0) { GTEST_SKIP() << "root ignores file modes"; }
+	TemporaryDirectory dir("/tmp", "disk-reload-unlocked");
+	const std::string line = dir.name() + "/";
+	const ReloadCleanup cleanup;
+	configureDiskList(dir.name(), line);
+
+	// Read-only and marked for removal at start, so without a lock.
+	IDisk &disk = startDisk("*" + line, true);
+	ASSERT_TRUE(isLockFree(line + ".lock"));
+
+	DefaultDiskManager manager;
+	ASSERT_EQ(chmod((line + ".lock").c_str(), 0400), 0);
+	manager.reloadDisksFromCfg();
+	EXPECT_TRUE(disk.isReadOnly());
+	EXPECT_TRUE(disk.isMarkedForRemoval());
+
+	ASSERT_EQ(chmod((line + ".lock").c_str(), 0600), 0);
+	manager.reloadDisksFromCfg();
+	EXPECT_FALSE(disk.isReadOnly());
+	EXPECT_FALSE(isLockFree(line + ".lock"));
+}
+
+TEST(DiskTests, ReloadTakesOnlyTheMissingLock) {
+	if (geteuid() == 0) { GTEST_SKIP() << "root ignores file modes"; }
+	TemporaryDirectory dir("/tmp", "disk-reload-missing-lock");
+	const std::string meta = dir.name() + "/meta/";
+	const std::string data = dir.name() + "/data/";
+	const ReloadCleanup cleanup;
+	configureDiskList(dir.name(), meta + " | " + data);
+	std::filesystem::create_directory(meta);
+	std::filesystem::create_directory(data);
+	std::ofstream(meta + ".lock").close();
+	ASSERT_EQ(chmod((meta + ".lock").c_str(), 0400), 0);
+
+	// Damaged at start by its metadata lock, but holding its data lock.
+	IDisk &disk = startDisk(meta + " | " + data);
+	ASSERT_TRUE(disk.isDamaged());
+	ASSERT_FALSE(isLockFree(data + ".lock"));
+
+	ASSERT_EQ(chmod((meta + ".lock").c_str(), 0600), 0);
+	DefaultDiskManager manager;
+	manager.reloadDisksFromCfg();
+	EXPECT_FALSE(disk.isDamaged());
+	EXPECT_FALSE(isLockFree(meta + ".lock"));
+	EXPECT_FALSE(isLockFree(data + ".lock"));
+}

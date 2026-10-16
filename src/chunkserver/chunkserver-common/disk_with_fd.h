@@ -85,6 +85,11 @@ public:
 	                    bool isForMetadata,
 	                    std::vector<std::unique_ptr<IDisk>> &allDisks);
 
+	/// True if the Disk lacks a lock it takes when writable
+	bool locksMissing() const;
+	/// Takes over the locks \a other took, and whether it lacks one
+	void takeLockFiles(FDDisk &other);
+
 	// IO
 
 	/// Writes the crcData in the correct offset of the Chunks' file descriptor
@@ -267,6 +272,8 @@ private:
 	/// Lock file for the data directory.
 	/// Used to prevent the same Disk from being used by different chunkservers
 	std::unique_ptr<const disk::LockFile> dataLockFile_ = nullptr;
+
+	bool locksMissing_ = false;  ///< A lock file of the Disk is not locked
 
 	double carry_;  ///< Assists at selecting the Disk for a new Chunk
 

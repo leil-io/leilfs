@@ -22,6 +22,7 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <algorithm>
 #include <bitset>
 #include <cstdio>
 
@@ -146,6 +147,13 @@ std::string FDDisk::getPaths() const {
 void FDDisk::createLockFile(bool isLockNeeded, const std::string &lockFilename,
                             bool isForMetadata,
                             std::vector<std::unique_ptr<IDisk>> &allDisks) {
+	// On reload, the Disk kept from before may hold this lock already.
+	const bool isHeld = std::any_of(allDisks.begin(), allDisks.end(), [&](const auto &disk) {
+		const auto *fdDisk = dynamic_cast<const FDDisk *>(disk.get());
+		return fdDisk != nullptr && fdDisk != this && fdDisk->metaPath_ == metaPath_ &&
+		       (isForMetadata ? fdDisk->metaLockFile_ : fdDisk->dataLockFile_);
+	});
+	bool isLocked = false;
 	// Close-on-exec: a program the process runs would hold the lock too.
 	int lockFD = ::open(lockFilename.c_str(), O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0640);
 	struct stat lockStat {};
@@ -164,12 +172,11 @@ void FDDisk::createLockFile(bool isLockNeeded, const std::string &lockFilename,
 		isDamaged_ = true;
 	} else if (fstat(lockFD, &lockStat) < 0) {
 		const int err = errno;
-		close(lockFD);
 		safs_pretty_syslog(LOG_WARNING,
 		                   "fstat(%s) failed, marking hdd as damaged: %s",
 		                   lockFilename.c_str(), strerr(err));
 		isDamaged_ = true;
-	} else if (isLockNeeded) {
+	} else if (isLockNeeded && !isHeld) {
 		for (const auto &disk : allDisks) {
 			auto *fdDisk = dynamic_cast<FDDisk *>(disk.get());
 
@@ -241,18 +248,23 @@ void FDDisk::createLockFile(bool isLockNeeded, const std::string &lockFilename,
 
 		if (::fcntl(lockFD, F_OFD_SETLK, &lock) < 0) {
 			const int err = errno;
-			close(lockFD);
 			if (err == EAGAIN || err == EACCES) {
+				close(lockFD);
 				throw InitializeException("disk " + metaPath() +
 				                          " already locked by another process");
 			}
 			safs_pretty_syslog(LOG_WARNING, "fcntl(%s) failed, marking disk as damaged: %s",
 			                   lockFilename.c_str(), strerr(err));
 			isDamaged_ = true;
+		} else {
+			isLocked = true;
 		}
 	}
 
-	if (!isDamaged_) {
+	if (isLockNeeded && !isHeld && !isLocked) { locksMissing_ = true; }
+
+	// Only a taken lock is kept; any other descriptor is closed.
+	if (isLocked) {
 		if (isForMetadata) {
 			metaLockFile_ = std::unique_ptr<const disk::LockFile>(
 			    new disk::LockFile(lockFD, lockStat.st_dev, lockStat.st_ino));
@@ -260,6 +272,8 @@ void FDDisk::createLockFile(bool isLockNeeded, const std::string &lockFilename,
 			dataLockFile_ = std::unique_ptr<const disk::LockFile>(
 			    new disk::LockFile(lockFD, lockStat.st_dev, lockStat.st_ino));
 		}
+	} else if (lockFD >= 0) {
+		close(lockFD);
 	}
 }
 
@@ -417,6 +431,14 @@ std::array<disk::IoError, disk::kLastErrorSize> &FDDisk::lastErrorTab() {
 }
 
 disk::DamagingErrors &FDDisk::damagingErrors() { return damagingErrors_; }
+
+bool FDDisk::locksMissing() const { return locksMissing_; }
+
+void FDDisk::takeLockFiles(FDDisk &other) {
+	if (other.metaLockFile_) { metaLockFile_ = std::move(other.metaLockFile_); }
+	if (other.dataLockFile_) { dataLockFile_ = std::move(other.dataLockFile_); }
+	locksMissing_ = other.locksMissing_;
+}
 
 uint32_t FDDisk::lastRefresh() const { return lastRefresh_; }
 

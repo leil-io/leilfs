@@ -53,16 +53,16 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 		    "Disk plugin has changed between reloads for line: " + hddCfgLine);
 	}
 
-	IDisk *currentDisk = DiskNotFound;
+	std::unique_ptr<IDisk> currentDisk;
 
 	// The prefix names the plugin owning the Disk; no prefix is a plain CmrDisk.
 	if (!configuration.prefix.empty()) {
-		currentDisk = pluginManager.createDisk(configuration);
+		currentDisk.reset(pluginManager.createDisk(configuration));
 	} else {
-		currentDisk = new CmrDisk(configuration);
+		currentDisk = std::make_unique<CmrDisk>(configuration);
 	}
 
-	if (currentDisk == DiskNotFound) {
+	if (currentDisk == nullptr) {
 		// The line parsed, so say which plugin is missing rather than blaming
 		// its syntax.
 		throw InitializeException(
@@ -87,25 +87,21 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 			}
 		}
 
-		// Lock is not needed if the disk already exists in memory (reload)
+		// Lock a known disk only if it lacks a lock, as when read-only at start.
 		lockNeeded = 1;
 		for (const auto &disk : gDisks) {
 			if (disk->metaPath() == currentDisk->metaPath()) {
-				lockNeeded = 0;
+				const auto *fdDisk = dynamic_cast<const FDDisk *>(disk.get());
+				lockNeeded = fdDisk != nullptr && fdDisk->locksMissing();
 				break;
 			}
 		}
 	}
 
-	try {
-		currentDisk->createPathsAndSubfolders();
-		{
-			std::lock_guard disksLockGuard(gDisksMutex);
-			currentDisk->createLockFiles(lockNeeded, gDisks);
-		}
-	} catch (const InitializeException &ie) {
-		delete currentDisk;
-		throw InitializeException(ie.what());
+	currentDisk->createPathsAndSubfolders();
+	{
+		std::lock_guard disksLockGuard(gDisksMutex);
+		currentDisk->createLockFiles(lockNeeded, gDisks);
 	}
 
 	// Recorded only now: a line that threw above was never configured, so a
@@ -119,6 +115,21 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 	for (auto &disk : gDisks) {
 		if (disk->metaPath() ==
 		    currentDisk->metaPath()) {  // Disk already in memory
+			if (lockNeeded) {
+				auto *fdDisk = dynamic_cast<FDDisk *>(disk.get());
+				auto *checked = dynamic_cast<FDDisk *>(currentDisk.get());
+				if (fdDisk != nullptr && checked != nullptr) {
+					fdDisk->takeLockFiles(*checked);
+					// Still lacking a lock, it must not turn writable.
+					if (fdDisk->locksMissing() && !checked->isReadOnly()) {
+						safs::log_warn("can't lock disk {}, keeping its state", disk->getPaths());
+						disk->setWasRemovedFromConfig(false);
+						disksUniqueLock.unlock();
+						return 1;
+					}
+				}
+			}
+
 			if (disk->isDamaged()) {
 				disk->setScanState(IDisk::ScanState::kNeeded);
 				disk->setScanProgress(0);
@@ -153,12 +164,11 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 			disk->setIsMarkedForRemoval(currentDisk->isMarkedForRemoval());
 			disksUniqueLock.unlock();
 
-			delete currentDisk;  // Also deletes the lock files (smart pointer)
-			return 1;
+			return 1;  // Deleting currentDisk also deletes its lock files
 		}
 	}
 
-	gDisks.emplace_back(currentDisk);
+	gDisks.push_back(std::move(currentDisk));
 	gResetTester = true;
 
 	return 2;
