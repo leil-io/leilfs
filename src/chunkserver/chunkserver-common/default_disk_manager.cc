@@ -135,6 +135,7 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 					disk->lastErrorTab()[l].timestamp = 0;
 				}
 				disk->setLastErrorIndex(0);
+				disk->damagingErrors().clear();
 				disk->setLastRefresh(0);
 				disk->setNeedRefresh(true);
 			} else {

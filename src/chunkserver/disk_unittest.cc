@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "chunkserver-common/cmr_chunk.h"
 #include "chunkserver-common/cmr_disk.h"
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
@@ -412,4 +413,37 @@ TEST(DiskTests, AttributesReadErrorLeavesTheScanThePart) {
 
 	const std::lock_guard lock(gChunksMapMutex);
 	hddRemoveChunkFromContainers(chunk);
+}
+
+TEST(DiskTests, OtherErrorsDoNotPushOutDamagingOnes) {
+	CmrDisk disk("/mnt/", "/mnt", false, false);
+	CmrChunk chunk(1, slice_traits::standard::ChunkPartType(), ChunkState::Locked);
+	chunk.setOwner(&disk);
+
+	errno = EIO;
+	hddAddErrorAndPreserveErrno(&chunk);
+	errno = EMFILE;
+	for (int i = 0; i < 2 * disk::kLastErrorSize; ++i) { hddAddErrorAndPreserveErrno(&chunk); }
+	EXPECT_FALSE(disk.damagingErrors().reachedLimit(disk::DamagingErrors::Clock::now()));
+	errno = EIO;
+	hddAddErrorAndPreserveErrno(&chunk);
+
+	EXPECT_TRUE(disk.damagingErrors().reachedLimit(disk::DamagingErrors::Clock::now()));
+}
+
+TEST(DiskTests, DamagingErrorsCountWithinTheirWindow) {
+	using std::chrono::seconds;
+	const auto start = disk::DamagingErrors::Clock::now();
+	disk::DamagingErrors errors;
+
+	errors.add(start);
+	errors.add(start + seconds(disk::kLastErrorTime + 1));
+	EXPECT_FALSE(errors.reachedLimit(start + seconds(disk::kLastErrorTime + 1)));
+
+	errors.add(start + seconds(disk::kLastErrorTime + 2));
+	EXPECT_TRUE(errors.reachedLimit(start + seconds(disk::kLastErrorTime + 2)));
+	EXPECT_FALSE(errors.reachedLimit(start + seconds(3 * disk::kLastErrorTime)));
+
+	errors.clear();
+	EXPECT_FALSE(errors.reachedLimit(start + seconds(disk::kLastErrorTime + 2)));
 }

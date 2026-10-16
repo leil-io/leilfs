@@ -99,8 +99,6 @@
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
-constexpr int kErrorLimit = 2;
-constexpr int kLastErrorTime = 60;
 constexpr size_t kIgnoreHeaderSize = 1;
 constexpr uint32_t startingOffsetOfBlock(uint32_t blocknum) { return blocknum * SFSBLOCKSIZE; }
 
@@ -416,9 +414,8 @@ void hddDiskScanThread(IDisk *disk);
 // Run every second
 void hddCheckDisks() {
 	TRACETHIS();
-	uint32_t i;
 	uint32_t now;
-	int changed, err;
+	int changed;
 	struct timeval tv;
 
 	gettimeofday(&tv, NULL);
@@ -532,19 +529,10 @@ void hddCheckDisks() {
 			changed = 1;
 			break;
 		case IDisk::ScanState::kWorking:
-			err = 0;
-			for (i = 0; i < disk::kLastErrorSize; ++i) {
-				if (disk->lastErrorTab()[i].timestamp + kLastErrorTime >= now
-				    && (disk->lastErrorTab()[i].errornumber == EIO
-				        || disk->lastErrorTab()[i].errornumber == EROFS)) {
-					err++;
-				}
-			}
-			if (err >= kErrorLimit &&
+			if (disk->damagingErrors().reachedLimit(disk::DamagingErrors::Clock::now()) &&
 			    !(disk->isMarkedForRemoval() && disk->isReadOnly())) {
-				safs_pretty_syslog(
-				    LOG_WARNING, "%u errors occurred in %u seconds on disk: %s",
-				    err, kLastErrorTime, disk->getPaths().c_str());
+				safs::log_warn("{} errors occurred in {} seconds on disk: {}", disk::kErrorLimit,
+				               disk::kLastErrorTime, disk->getPaths());
 				hddSendDataToMaster(disk.get(), SendDataToMasterMode::ForDamagedDisk);
 				disk->setIsDamaged(true);
 				changed = 1;

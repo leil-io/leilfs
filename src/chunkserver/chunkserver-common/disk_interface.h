@@ -360,4 +360,7 @@ public:
 	virtual uint32_t lastErrorIndex() const = 0;
 	/// Setter for lastErrorIndex
 	virtual void setLastErrorIndex(uint32_t newLastErrorIndex) = 0;
+
+	/// Returns the errors that can mark the Disk damaged
+	virtual disk::DamagingErrors &damagingErrors() = 0;
 };
