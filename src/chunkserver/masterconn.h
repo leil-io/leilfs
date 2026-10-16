@@ -105,6 +105,8 @@ void masterconn_stats(uint64_t *bin, uint64_t *bout, uint32_t *maxjobscnt);
 /// established, since nothing queued can reach a metadata server to be counted against it.
 uint32_t masterconn_sample_max_jobs_count(bool anyConnected, uint32_t previousMax,
                                           uint32_t jobCount, uint32_t replicationJobCount);
+/// Reads LABEL into gLabel, unless invalid; true if it changed.
+bool masterconn_load_label();
 int masterconn_init(void);
 int masterconn_init_threads(void);
 MasterJobPool* masterconn_get_job_pool();

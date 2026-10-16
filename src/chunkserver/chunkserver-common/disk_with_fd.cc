@@ -161,17 +161,6 @@ void FDDisk::createLockFile(bool isLockNeeded, const std::string &lockFilename,
 		                   "can't create lock file %s, marking hdd as damaged",
 		                   lockFilename.c_str());
 		isDamaged_ = true;
-	} else if (isLockNeeded && ::lockf(lockFD, F_TLOCK, 0) < 0) {
-		const int err = errno;
-		close(lockFD);
-		if (err == EAGAIN) {
-			throw InitializeException("disk " + metaPath() +
-			                          " already locked by another process");
-		}
-		safs_pretty_syslog(LOG_WARNING,
-		                   "lockf(%s) failed, marking disk as damaged: %s",
-		                   lockFilename.c_str(), strerr(err));
-		isDamaged_ = true;
 	} else if (fstat(lockFD, &lockStat) < 0) {
 		const int err = errno;
 		close(lockFD);
@@ -220,9 +209,50 @@ void FDDisk::createLockFile(bool isLockNeeded, const std::string &lockFilename,
 				}
 			}
 		}
+
+		// The lock also conflicts with this process's own: name a shared file.
+		const auto isLockedHere = [&](const std::unique_ptr<const disk::LockFile> &lockFile) {
+			return lockFile && lockFile->isTheSameFile(lockStat.st_dev, lockStat.st_ino);
+		};
+		const FDDisk *sharer = isLockedHere(metaLockFile_) ? this : nullptr;
+		for (const auto &disk : allDisks) {
+			const auto *fdDisk = dynamic_cast<const FDDisk *>(disk.get());
+			if (sharer == nullptr && fdDisk != nullptr &&
+			    (isLockedHere(fdDisk->metaLockFile_) || isLockedHere(fdDisk->dataLockFile_))) {
+				sharer = fdDisk;
+			}
+		}
+		if (sharer == this) {
+			close(lockFD);
+			throw InitializeException("Disk '" + metaPath() + "' has the same lockfile " +
+			                          lockFilename + " for its metadata and data");
+		}
+		if (sharer != nullptr) {
+			close(lockFD);
+			throw InitializeException("Disks '" + metaPath() + "' and '" + sharer->metaPath_ +
+			                          "' have the same lockfile " + lockFilename);
+		}
+
+		// Unlike lockf, kept when another descriptor of the file closes.
+		struct flock lock {};
+		lock.l_type = F_WRLCK;
+		lock.l_whence = SEEK_SET;
+
+		if (::fcntl(lockFD, F_OFD_SETLK, &lock) < 0) {
+			const int err = errno;
+			close(lockFD);
+			if (err == EAGAIN || err == EACCES) {
+				throw InitializeException("disk " + metaPath() +
+				                          " already locked by another process");
+			}
+			safs_pretty_syslog(LOG_WARNING, "fcntl(%s) failed, marking disk as damaged: %s",
+			                   lockFilename.c_str(), strerr(err));
+			isDamaged_ = true;
+		}
 	}
 
-	if (!isDamaged_) {
+	// None on a read-only disk marked for removal.
+	if (!isDamaged_ && lockFD >= 0) {
 		if (isForMetadata) {
 			metaLockFile_ = std::unique_ptr<const disk::LockFile>(
 			    new disk::LockFile(lockFD, lockStat.st_dev, lockStat.st_ino));
@@ -301,7 +331,7 @@ int FDDisk::readChunkCrc(IChunk *chunk, uint32_t chunkVersion,
 
 #ifndef ENABLE_CRC /* if NOT defined */
 	for (int i = 0; i < SFSBLOCKSINCHUNK; ++i) {
-		memcpy(buffer + i * crcSize, &emptyblockcrc, crcSize);
+		memcpy(buffer + i * kCrcSize, &gEmptyBlockCrc, kCrcSize);
 	}
 #else  /* if ENABLE_CRC defined */
 	{
@@ -384,6 +414,15 @@ void FDDisk::setLastErrorIndex(uint32_t newLastErrorIndex) {
 
 std::array<disk::IoError, disk::kLastErrorSize> &FDDisk::lastErrorTab() {
 	return lastErrorTab_;
+}
+
+disk::DamagingErrors &FDDisk::damagingErrors() { return damagingErrors_; }
+
+bool FDDisk::holdsLockFiles() const { return metaLockFile_ || dataLockFile_; }
+
+void FDDisk::takeLockFiles(FDDisk &other) {
+	metaLockFile_ = std::move(other.metaLockFile_);
+	dataLockFile_ = std::move(other.dataLockFile_);
 }
 
 uint32_t FDDisk::lastRefresh() const { return lastRefresh_; }

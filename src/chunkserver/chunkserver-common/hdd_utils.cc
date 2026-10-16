@@ -48,6 +48,10 @@ void hddAddErrorAndPreserveErrno(IChunk *chunk) {
 		disk->lastErrorTab()[index].timestamp = tv.tv_sec;
 		index = (index + 1) % disk::kLastErrorSize;
 		disk->setLastErrorIndex(index);
+
+		if (disk::DamagingErrors::counts(errmem)) {
+			disk->damagingErrors().add(disk::DamagingErrors::Clock::now());
+		}
 	}
 
 	++gErrorCounter;
@@ -361,6 +365,11 @@ IChunk *hddChunkFindOrCreatePlusLock(IDisk *disk, uint64_t chunkid,
 			if (chunk->validAttr() == 0) {
 				int attrStatus =
 				    hddUpdateChunkAttributesWithRetry(effectiveDisk, chunk, false);
+				if (attrStatus != SAUNAFS_STATUS_OK && attrStatus != SAUNAFS_ERROR_NOCHUNK) {
+					// Not a confirmed absence: the part may be healthy.
+					hddChunkRelease(chunk);
+					return nullptr;
+				}
 				if (attrStatus != SAUNAFS_STATUS_OK) {
 					// The chunk was found as available, but we can not
 					// update its attributes, let's recreate it only if

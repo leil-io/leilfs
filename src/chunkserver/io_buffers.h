@@ -105,6 +105,7 @@ public:
 			                                        len, offset);
 			if (ret <= 0) { return bytes_written; }
 			len -= ret;
+			offset += ret;
 			unflushedDataOneAfterLastIndex_ += ret;
 			bytes_written += ret;
 		}
