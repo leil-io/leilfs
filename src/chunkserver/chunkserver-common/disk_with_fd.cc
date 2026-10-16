@@ -415,6 +415,8 @@ std::array<disk::IoError, disk::kLastErrorSize> &FDDisk::lastErrorTab() {
 	return lastErrorTab_;
 }
 
+disk::DamagingErrors &FDDisk::damagingErrors() { return damagingErrors_; }
+
 uint32_t FDDisk::lastRefresh() const { return lastRefresh_; }
 
 void FDDisk::setLastRefresh(uint32_t newLastRefresh) {

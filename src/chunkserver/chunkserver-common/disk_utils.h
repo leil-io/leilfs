@@ -21,6 +21,9 @@
 #include "common/platform.h"
 
 #include <sys/types.h>
+#include <array>
+#include <cerrno>
+#include <chrono>
 #include <cstdint>
 
 #include "common/massert.h"
@@ -73,6 +76,37 @@ struct IoError {
 	uint64_t chunkid{0};    ///< The ID of the chunk which caused the error.
 	uint32_t timestamp{0};  ///< The timestamp of the error.
 	int errornumber{0};     ///< The error number (a.k.a., errno) of the error.
+};
+
+/// Errors within kLastErrorTime seconds that mark a Disk damaged.
+constexpr uint8_t kErrorLimit = 2;
+/// The window of kErrorLimit, in seconds.
+constexpr uint32_t kLastErrorTime = 60;
+
+/// Times of the latest EIO and EROFS errors, apart from the error history.
+class DamagingErrors {
+public:
+	using Clock = std::chrono::steady_clock;
+
+	static bool counts(int errornumber) { return errornumber == EIO || errornumber == EROFS; }
+
+	void add(Clock::time_point when) {
+		times_[next_] = when;
+		next_ = (next_ + 1) % kErrorLimit;
+		if (count_ < kErrorLimit) { ++count_; }
+	}
+
+	/// True if kErrorLimit errors fall within kLastErrorTime of now.
+	bool reachedLimit(Clock::time_point now) const {
+		return count_ == kErrorLimit && now - times_[next_] <= std::chrono::seconds(kLastErrorTime);
+	}
+
+	void clear() { *this = DamagingErrors(); }
+
+private:
+	std::array<Clock::time_point, kErrorLimit> times_{};  ///< Oldest at next_
+	uint8_t next_ = 0;
+	uint8_t count_ = 0;
 };
 
 /// Lock class to avoid different chunkservers using the same Disk

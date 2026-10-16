@@ -209,6 +209,9 @@ public:
 	/// Setter for lastErrorIndex_
 	void setLastErrorIndex(uint32_t newLastErrorIndex) override;
 
+	/// Returns the errors that can mark the Disk damaged
+	disk::DamagingErrors &damagingErrors() override;
+
 	/// Applies any disk-specific on-disk format to a brand-new chunk before its
 	/// header is sized and serialized. Called only from the new-chunk creation
 	/// path (not for duplicates). Default: no-op.
@@ -278,4 +281,6 @@ private:
 	/// The collection is guarded by `gTestsMutex`, which should be locked
 	/// when the collection is accessed for reading or modifying.
 	DiskChunks chunks_;
+
+	disk::DamagingErrors damagingErrors_;  ///< Errors that can damage this Disk
 };

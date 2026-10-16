@@ -48,6 +48,10 @@ void hddAddErrorAndPreserveErrno(IChunk *chunk) {
 		disk->lastErrorTab()[index].timestamp = tv.tv_sec;
 		index = (index + 1) % disk::kLastErrorSize;
 		disk->setLastErrorIndex(index);
+
+		if (disk::DamagingErrors::counts(errmem)) {
+			disk->damagingErrors().add(disk::DamagingErrors::Clock::now());
+		}
 	}
 
 	++gErrorCounter;
