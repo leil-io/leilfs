@@ -465,15 +465,15 @@ static uint32_t get_cfg_timeout() {
 	return 1000 * cfg_get_minmaxvalue<double>("MASTER_TIMEOUT", 60, 0.01, 1000 * 1000);
 }
 
-/// Read the label from configuration file and return true if it's changed to a valid one
 bool masterconn_load_label() {
-	std::string oldLabel = gLabel;
-	gLabel = cfg_getstring("LABEL", MediaLabelManager::kWildcard);
-	if (!MediaLabelManager::isLabelValid(gLabel)) {
-		safs::log_warn("invalid label '{}'", gLabel);
+	std::string label = cfg_getstring("LABEL", MediaLabelManager::kWildcard);
+	if (!MediaLabelManager::isLabelValid(label)) {
+		safs::log_warn("invalid label '{}'", label);
 		return false;
 	}
-	return gLabel != oldLabel;
+	if (label == gLabel) { return false; }
+	gLabel = std::move(label);
+	return true;
 }
 
 void masterconn_reload(void) {

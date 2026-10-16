@@ -23,14 +23,18 @@
 #include <unistd.h>
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <future>
 #include <latch>
 #include <memory>
 #include <vector>
 
+#include "chunkserver/master_connection.h"
 #include "chunkserver/masterconn.h"
+#include "config/cfg.h"
 #include "protocol/cstoma.h"
 #include "protocol/matocs.h"
+#include "unittests/TemporaryDirectory.h"
 #include "unittests/mocks/module_mock.h"
 #include "unittests/packet.h"
 
@@ -453,4 +457,21 @@ TEST(MasterConnReconciliationDeathTest, RetriesSecondPoolFailureOnReconnectTick)
 		    _exit(::testing::Test::HasFailure() ? 1 : 0);
 	    },
 	    ::testing::ExitedWithCode(0), "");
+}
+
+TEST(MasterConnLabelTests, InvalidLabelKeepsThePreviousOne) {
+	TemporaryDirectory dir("/tmp", "masterconn-label");
+	struct CfgTermGuard {
+		~CfgTermGuard() { cfg_term(); }
+	} const guard;
+	const std::string path = dir.name() + "/test.cfg";
+	std::ofstream(path) << "LABEL = ssd\n";
+	ASSERT_EQ(cfg_load(path.c_str(), 0), 0);
+	ASSERT_TRUE(masterconn_load_label());
+	ASSERT_EQ(gLabel, "ssd");
+
+	std::ofstream(path) << "LABEL = not valid\n";
+	ASSERT_EQ(cfg_reload(), 0);
+	EXPECT_FALSE(masterconn_load_label());
+	EXPECT_EQ(gLabel, "ssd");
 }
