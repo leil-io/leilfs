@@ -87,11 +87,12 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 			}
 		}
 
-		// Lock is not needed if the disk already exists in memory (reload)
+		// Lock a known disk only if it holds no lock, as when read-only at start.
 		lockNeeded = 1;
 		for (const auto &disk : gDisks) {
 			if (disk->metaPath() == currentDisk->metaPath()) {
-				lockNeeded = 0;
+				const auto *fdDisk = dynamic_cast<const FDDisk *>(disk.get());
+				lockNeeded = fdDisk != nullptr && !fdDisk->holdsLockFiles();
 				break;
 			}
 		}
@@ -146,6 +147,12 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 					// important change - chunks need to be send to master again
 					disk->setScanState(IDisk::ScanState::kSendNeeded);
 				}
+			}
+
+			if (lockNeeded) {
+				auto *fdDisk = dynamic_cast<FDDisk *>(disk.get());
+				auto *checked = dynamic_cast<FDDisk *>(currentDisk);
+				if (fdDisk != nullptr && checked != nullptr) { fdDisk->takeLockFiles(*checked); }
 			}
 
 			disk->setWasRemovedFromConfig(false);

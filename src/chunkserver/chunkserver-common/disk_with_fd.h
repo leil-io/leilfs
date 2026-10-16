@@ -85,6 +85,11 @@ public:
 	                    bool isForMetadata,
 	                    std::vector<std::unique_ptr<IDisk>> &allDisks);
 
+	/// True if the Disk holds any of its lock files
+	bool holdsLockFiles() const;
+	/// Takes over the lock files of \a other, which keeps none
+	void takeLockFiles(FDDisk &other);
+
 	// IO
 
 	/// Writes the crcData in the correct offset of the Chunks' file descriptor

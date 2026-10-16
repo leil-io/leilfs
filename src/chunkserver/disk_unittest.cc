@@ -395,3 +395,28 @@ TEST(DiskTests, DiskListThatIsNotAFileIsRefused) {
 	}
 	EXPECT_TRUE(refused.get());
 }
+
+TEST(DiskTests, ReloadLocksADiskThatHoldsNoLock) {
+	TemporaryDirectory dir("/tmp", "disk-reload-unlocked");
+	const std::string line = dir.name() + "/";
+	struct Cleanup {
+		~Cleanup() {
+			cfg_term();
+			const std::lock_guard lock(gDisksMutex);
+			gDisks.clear();
+		}
+	} const cleanup;
+	std::ofstream(dir.name() + "/hdd.cfg") << line << "\n";
+	std::ofstream(dir.name() + "/test.cfg") << "HDD_CONF_FILENAME = " << dir.name() << "/hdd.cfg\n";
+	ASSERT_EQ(cfg_load((dir.name() + "/test.cfg").c_str(), 0), 0);
+
+	// In use without a lock, as a disk read-only at start.
+	{
+		const std::lock_guard lock(gDisksMutex);
+		gDisks.emplace_back(new CmrDisk(disk::Configuration(line)));
+	}
+
+	DefaultDiskManager manager;
+	manager.reloadDisksFromCfg();
+	EXPECT_FALSE(isLockFree(line + ".lock"));
+}

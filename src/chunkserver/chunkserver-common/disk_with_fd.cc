@@ -251,7 +251,8 @@ void FDDisk::createLockFile(bool isLockNeeded, const std::string &lockFilename,
 		}
 	}
 
-	if (!isDamaged_) {
+	// None on a read-only disk marked for removal.
+	if (!isDamaged_ && lockFD >= 0) {
 		if (isForMetadata) {
 			metaLockFile_ = std::unique_ptr<const disk::LockFile>(
 			    new disk::LockFile(lockFD, lockStat.st_dev, lockStat.st_ino));
@@ -416,6 +417,13 @@ std::array<disk::IoError, disk::kLastErrorSize> &FDDisk::lastErrorTab() {
 }
 
 disk::DamagingErrors &FDDisk::damagingErrors() { return damagingErrors_; }
+
+bool FDDisk::holdsLockFiles() const { return metaLockFile_ || dataLockFile_; }
+
+void FDDisk::takeLockFiles(FDDisk &other) {
+	metaLockFile_ = std::move(other.metaLockFile_);
+	dataLockFile_ = std::move(other.dataLockFile_);
+}
 
 uint32_t FDDisk::lastRefresh() const { return lastRefresh_; }
 
