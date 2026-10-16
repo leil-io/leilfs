@@ -76,6 +76,15 @@ TEST(CfgTests, CfgParseSize) {
 	// Out of the range of a double
 	EXPECT_EQ(-1, cfg_parse_size("1e999"));
 	EXPECT_EQ(-1, cfg_parse_size("1e-999"));
+
+	// Out of the range of an int64_t, or not a number
+	EXPECT_EQ(4611686018427387904, cfg_parse_size("4EiB"));
+	EXPECT_EQ(-1, cfg_parse_size("8EiB"));
+	EXPECT_EQ(-1, cfg_parse_size("1e19"));
+	EXPECT_EQ(-1, cfg_parse_size("-1e30"));
+	EXPECT_EQ(-1, cfg_parse_size("-5"));
+	EXPECT_EQ(-1, cfg_parse_size("-0.25"));
+	EXPECT_EQ(-1, cfg_parse_size("nan"));
 }
 
 // Calls cfg_term() even after a failed assertion.

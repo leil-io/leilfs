@@ -246,8 +246,6 @@ int64_t cfg_parse_size(const std::string &str) {
 	    {"ei", 1152921504606846976.0},
 	    {"eib", 1152921504606846976.0}};
 
-	static constexpr double kMaxValue = 18446744073709551615.0;
-
 	auto cleanStr = trimSpaces(str);
 	size_t numberEndPosition = 0;
 	double value = kInvalidConversion;
@@ -274,9 +272,12 @@ int64_t cfg_parse_size(const std::string &str) {
 		}
 	}
 
-	if (value > kMaxValue) { return kInvalidConversion; }
+	// Only [0, 2^63) converts; check the sign before -0.25 rounds to -0.
+	if (!(value >= 0)) { return kInvalidConversion; }
+	value = std::round(value);
+	if (!(value < 0x1p63)) { return kInvalidConversion; }
 
-	return static_cast<int64_t>(std::round(value));
+	return static_cast<int64_t>(value);
 }
 
 #define STR_TO_int(x) return strtol(x,NULL,0)
