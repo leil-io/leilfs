@@ -20,6 +20,7 @@
 
 #include "chunkserver-common/default_disk_manager.h"
 
+#include <filesystem>
 #include <fstream>
 
 #include "chunkserver-common/cmr_disk.h"
@@ -172,20 +173,32 @@ void DefaultDiskManager::reloadDisksFromCfg() {
 	// "leil-hdd.cfg" name before ETC_PATH itself was renamed.
 	const std::string oldDirHddFilename = ETC_PATH_LEGACY "/leil-hdd.cfg";
 	const std::string legacyHddFilename = ETC_PATH_LEGACY "/sfshdd.cfg";
+	// Not a pipe: opening one with no writer blocks.
+	const auto isReadableFile = [](const std::string &path) {
+		std::error_code error;
+		return std::filesystem::is_regular_file(path, error) && std::ifstream(path).good();
+	};
 	std::string hddFilename = cfg_get("HDD_CONF_FILENAME", defaultHddFilename);
-	if (hddFilename == defaultHddFilename && !std::ifstream(defaultHddFilename).good()) {
-		if (std::ifstream(oldDirHddFilename).good()) {
+	if (hddFilename == defaultHddFilename && !isReadableFile(defaultHddFilename)) {
+		if (isReadableFile(oldDirHddFilename)) {
 			safs::log_warn(
 			    "using hdd configuration file {} because default file {} was not found",
 			    oldDirHddFilename.c_str(), defaultHddFilename.c_str());
 			hddFilename = oldDirHddFilename;
-		} else if (std::ifstream(legacyHddFilename).good()) {
+		} else if (isReadableFile(legacyHddFilename)) {
 			safs::log_warn(
 			    "using legacy hdd configuration file {} because default file {} was not found",
 			    legacyHddFilename.c_str(), defaultHddFilename.c_str());
 			hddFilename = legacyHddFilename;
 		}
 	}
+	std::error_code statusError;
+	const auto status = std::filesystem::status(hddFilename, statusError);
+	if (!statusError && std::filesystem::exists(status) &&
+	    !std::filesystem::is_regular_file(status)) {
+		throw InitializeException("hdd config file " + hddFilename + " is not a regular file");
+	}
+
 	std::ifstream hddFile(hddFilename);
 
 	if (!hddFile.is_open()) {
