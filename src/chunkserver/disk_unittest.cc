@@ -1,16 +1,21 @@
 #include <filesystem>
+#include <fstream>
+#include <future>
 
 #include <fcntl.h>
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "chunkserver-common/cmr_chunk.h"
 #include "chunkserver-common/cmr_disk.h"
+#include "chunkserver-common/default_disk_manager.h"
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "common/exceptions.h"
 #include "common/slice_traits.h"
+#include "config/cfg.h"
 #include "errors/leil_error_codes.h"
 #include "unittests/TemporaryDirectory.h"
 
@@ -364,4 +369,29 @@ TEST(DiskTests, DamagingErrorsCountWithinTheirWindow) {
 
 	errors.clear();
 	EXPECT_FALSE(errors.reachedLimit(start + seconds(disk::kLastErrorTime + 2)));
+}
+
+TEST(DiskTests, DiskListThatIsNotAFileIsRefused) {
+	TemporaryDirectory dir("/tmp", "disk-list-fifo");
+	const std::string list = dir.name() + "/hdd.cfg";
+	ASSERT_EQ(mkfifo(list.c_str(), 0600), 0);
+	struct CfgTermGuard {
+		~CfgTermGuard() { cfg_term(); }
+	} const guard;
+	std::ofstream(dir.name() + "/test.cfg") << "HDD_CONF_FILENAME = " << list << "\n";
+	ASSERT_EQ(cfg_load((dir.name() + "/test.cfg").c_str(), 0), 0);
+
+	DefaultDiskManager manager;
+	auto refused = std::async(std::launch::async, [&manager] {
+		try {
+			manager.reloadDisksFromCfg();
+		} catch (const InitializeException &) { return true; }
+		return false;
+	});
+	if (refused.wait_for(std::chrono::seconds(10)) == std::future_status::timeout) {
+		// Unblock the open with a writer.
+		::close(::open(list.c_str(), O_WRONLY));
+		ADD_FAILURE() << "reading the disk list blocked on a pipe";
+	}
+	EXPECT_TRUE(refused.get());
 }
