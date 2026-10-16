@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "mount/client/saunafs_c_api.h"
+#include "mount/client/leil_c_api.h"
 
 #ifdef __cplusplus
 extern "C" {

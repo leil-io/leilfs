@@ -32,7 +32,7 @@
 #include "FSAL/fsal_commonlib.h"
 
 #include "config.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 #include "nfs-ganesha/context_wrap.h"
 #include "nfs-ganesha/saunafs_fsal_types.h"
 #include "nfs-ganesha/saunafs_internal.h"

@@ -13,7 +13,7 @@ responsible for:
 This directory produces the shared `mount` library and multiple frontends:
 
 - `leil-mount` (`src/mount/fuse`) -- FUSE daemon.
-- `saunafs-client` / `saunafs-client-cpp` (`src/mount/client`) -- embeddable
+- `leil-client` / `leil-client-cpp` (`src/mount/client`) -- embeddable
   client libraries (when `ENABLE_CLIENT_LIB` is enabled).
 
 ## Code Organization
@@ -65,18 +65,18 @@ supplementary groups, and translates `RequestException` to `errno`.
 
 `src/mount/client` provides:
 
-- `saunafs-client` (C API wrapper in `saunafs_c_api.*`),
-- `saunafs-client-cpp` (`Client` class in `client.*`),
-- `saunafsmount_shared` exposing the `SaunaClient`-based ABI.
+- `leil-client` (C API wrapper in `leil_c_api.*`),
+- `leil-client-cpp` (`Client` class in `client.*`),
+- `leilmount_shared` exposing the `SaunaClient`-based ABI.
 
-In this repository, the C API (`saunafs-client`) is used by the
+In this repository, the C API (`leil-client`) is used by the
 `src/nfs-ganesha` FSAL integration.
 
 `Client` uses `dlopen` and symbol binding (`sauna_client_c_linkage.cc`) to call
 the underlying singleton-style mount runtime.
 
 When `Client` instances are created in the same process, instance 1 opens the
-installed `libsaunafsmount_shared.so`, while later instances load a temporary
+installed `libleilmount_shared.so`, while later instances load a temporary
 copy from `/tmp` to isolate singleton global state per instance.
 
 ## Build-Time Gates and External Consumers
@@ -85,8 +85,8 @@ copy from `/tmp` to isolate singleton global state per instance.
 |---|---|---|
 | `mount` library | always from `src/mount` | Core client runtime shared by all frontends. |
 | `leil-mount` | top-level `NOT MINGW` + FUSE3 detected (fatal error if not found) | Added via `add_subdirectory(src/mount/fuse)`. |
-| `saunafs-client`, `saunafs-client-cpp`, `saunafsmount_shared` | `ENABLE_CLIENT_LIB=ON` | Unit/integration test mode (`ENABLE_TESTS`) forces this option on. |
-| `fsalsaunafs` (NFS-Ganesha FSAL) | `ENABLE_NFS_GANESHA=ON` | Links against `saunafs-client_pic`; `ENABLE_CLIENT_LIB=ON` is required for in-tree builds since `saunafs-client_pic` is only produced when that option is on. |
+| `leil-client`, `leil-client-cpp`, `leilmount_shared` | `ENABLE_CLIENT_LIB=ON` | Unit/integration test mode (`ENABLE_TESTS`) forces this option on. |
+| `fsalsaunafs` (NFS-Ganesha FSAL) | `ENABLE_NFS_GANESHA=ON` | Links against `leil-client_pic`; `ENABLE_CLIENT_LIB=ON` is required for in-tree builds since `leil-client_pic` is only produced when that option is on. |
 
 ## Initialization Sequence (Normal Data Mount)
 

@@ -27,7 +27,7 @@
 
 #include "common/datapack.h"
 #include "common/server_connection.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 #include "errors/sfserr.h"
 #include "tools/tools_commands.h"
 #include "tools/tools_common_functions.h"

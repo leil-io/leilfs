@@ -41,7 +41,7 @@ option(ENABLE_URAFT             "Enable installation of uraft util"             
 option(ENABLE_VERBOSE_ASCIIDOCTOR  "Enable verbose output of asciidoctor"                OFF)
 option(ENABLE_TCMALLOC          "Enable use of tcmalloc-minimal library"                 OFF)
 option(ENABLE_JEMALLOC          "Enable use of jemalloc library"                         OFF)
-option(ENABLE_CLIENT_LIB        "Enable dynamic client library (libsaunafs-client)"     OFF)
+option(ENABLE_CLIENT_LIB        "Enable dynamic client library (libleil-client)"        OFF)
 # end of SaunaFS options
 option(ENABLE_TRACES            "Enable traces"                                          OFF)
 option(ENABLE_SYSLOG_FOR_TRACES "Enable usage of syslog instead of stdout for traces"    OFF)
@@ -140,6 +140,17 @@ function(install_legacy_dir_symlink legacy_path relative_target)
       file(MAKE_DIRECTORY \"\${_legacy_parent}\")
       file(CREATE_LINK \"${relative_target}\" \"\${_legacy}\" SYMBOLIC)
     endif()
+  " ${ARGN})
+endfunction()
+
+# Install a symlink named link_name in destination, pointing at target
+# (relative to destination).
+function(install_relative_symlink target link_name destination)
+  install(CODE "
+    file(CREATE_LINK
+      \"${target}\"
+      \"\$ENV{DESTDIR}${destination}/${link_name}\"
+      SYMBOLIC)
   " ${ARGN})
 endfunction()
 

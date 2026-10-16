@@ -3,12 +3,12 @@
  * Copyright 2023 Leil Storage OÜ
  * Author: Piotr Sarna <sarna@skytechnology.pl>
  *
- * SaunaFS C API
+ * LeilFS C API
  *
- * This library can be used to communicate with SaunaFS metadata and data
+ * This library can be used to communicate with LeilFS metadata and data
  * servers from C/C++ code.
  *
- * Compile with -lsaunafs-client and SaunaFS C/C++ library installed.
+ * Compile with -lleil-client and LeilFS C/C++ library installed.
  */
 
 #include <fcntl.h>
@@ -17,8 +17,8 @@
 #include <sys/stat.h>
 #include <sys/uio.h>
 
-#ifndef __SAUNAFS_C_API_H
-#define __SAUNAFS_C_API_H
+#ifndef __LEIL_C_API_H
+#define __LEIL_C_API_H
 
 #ifdef __cplusplus
 extern "C" {

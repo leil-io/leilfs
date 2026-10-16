@@ -37,7 +37,7 @@
 #include "common/crc.h"
 #include "devtools/TracePrinter.h"
 #include "devtools/request_log.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 
 CmrDisk::CmrDisk(const std::string &_metaPath, const std::string &_dataPath,
                  bool _isMarkedForRemoval, bool _isZonedDevice)

@@ -26,7 +26,7 @@
 
 #include "nfs-ganesha/context_wrap.h"
 #include "nfs-ganesha/saunafs_fsal_types.h"
-#include "mount/client/saunafs_c_api.h"
+#include "mount/client/leil_c_api.h"
 
 const int MaxBufferSize = 0x100;
 const int ChunkAddressSizeInBytes = 40;

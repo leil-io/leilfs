@@ -26,7 +26,7 @@
 #include <exception>
 #include <string>
 
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 
 class Exception : public std::exception {
 public:

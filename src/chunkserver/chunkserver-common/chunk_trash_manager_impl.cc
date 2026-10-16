@@ -34,7 +34,7 @@
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_stats.h"
 #include "config/cfg.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 #include "slogger/slogger.h"
 
 namespace fs = std::filesystem;

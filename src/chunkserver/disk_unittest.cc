@@ -3,7 +3,7 @@
 #include "chunkserver-common/cmr_disk.h"
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 
 namespace {
 

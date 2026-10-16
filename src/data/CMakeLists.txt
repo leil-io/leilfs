@@ -7,15 +7,6 @@ endif()
 configure_file(postinst.in postinst)
 set(POSTINST_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/postinst PARENT_SCOPE)
 
-function(install_relative_symlink target link_name destination)
-  install(CODE "
-    file(CREATE_LINK
-      \"${target}\"
-      \"\$ENV{DESTDIR}${destination}/${link_name}\"
-      SYMBOLIC)
-  " ${ARGN})
-endfunction()
-
 install(FILES metadata.sfs                                   DESTINATION ${DATA_SUBDIR} RENAME metadata.sfs.empty)
 install_legacy_dir_symlink(${DATA_PATH_LEGACY} leil)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/leil-exports.cfg      DESTINATION ${SFSMASTER_EXAMPLES_SUBDIR})
@@ -64,20 +55,20 @@ if(BUILD_TESTS)
   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/leil)
   add_custom_command(
     OUTPUT
-      ${CMAKE_CURRENT_BINARY_DIR}/include/leil/saunafs_c_api.h
-      ${CMAKE_CURRENT_BINARY_DIR}/include/leil/saunafs_error_codes.h
+      ${CMAKE_CURRENT_BINARY_DIR}/include/leil/leil_c_api.h
+      ${CMAKE_CURRENT_BINARY_DIR}/include/leil/leil_error_codes.h
     COMMAND ${CMAKE_COMMAND} -E create_symlink
-      ${CMAKE_SOURCE_DIR}/src/mount/client/saunafs_c_api.h
-      ${CMAKE_CURRENT_BINARY_DIR}/include/leil/saunafs_c_api.h
+      ${CMAKE_SOURCE_DIR}/src/mount/client/leil_c_api.h
+      ${CMAKE_CURRENT_BINARY_DIR}/include/leil/leil_c_api.h
     COMMAND ${CMAKE_COMMAND} -E create_symlink
-      ${CMAKE_SOURCE_DIR}/src/errors/saunafs_error_codes.h
-      ${CMAKE_CURRENT_BINARY_DIR}/include/leil/saunafs_error_codes.h
+      ${CMAKE_SOURCE_DIR}/src/errors/leil_error_codes.h
+      ${CMAKE_CURRENT_BINARY_DIR}/include/leil/leil_error_codes.h
   )
   add_executable(c-client-example
-    libsaunafs-client-example.c
-    ${CMAKE_CURRENT_BINARY_DIR}/include/leil/saunafs_c_api.h
-    ${CMAKE_CURRENT_BINARY_DIR}/include/leil/saunafs_error_codes.h)
+    libleil-client-example.c
+    ${CMAKE_CURRENT_BINARY_DIR}/include/leil/leil_c_api.h
+    ${CMAKE_CURRENT_BINARY_DIR}/include/leil/leil_error_codes.h)
   target_include_directories(c-client-example PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
-  target_link_libraries(c-client-example saunafs-client stdc++ m)
+  target_link_libraries(c-client-example leil-client stdc++ m)
   install(TARGETS c-client-example RUNTIME DESTINATION ${BIN_SUBDIR})
 endif()

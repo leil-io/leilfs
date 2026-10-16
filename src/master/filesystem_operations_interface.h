@@ -31,7 +31,7 @@
 #include "common/attributes.h"
 #include "common/defective_file_info.h"
 #include "common/goal.h"
-#include "errors/saunafs_error_codes.h"
+#include "errors/leil_error_codes.h"
 #include "master/checksum.h"
 #include "master/filesystem_node_operations_interface.h"
 #include "master/filesystem_node_types.h"

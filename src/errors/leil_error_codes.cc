@@ -21,7 +21,7 @@
 
 #include "common/platform.h"
 
-#include "saunafs_error_codes.h"
+#include "leil_error_codes.h"
 
 const char *saunafs_error_string(uint8_t status) {
 	static const char * const error_strings[SAUNAFS_ERROR_MAX + 1] = {

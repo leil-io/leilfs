@@ -23,7 +23,7 @@
 
 #include "fsal_api.h"
 
-#include "mount/client/saunafs_c_api.h"
+#include "mount/client/leil_c_api.h"
 #include "nfs-ganesha/fileinfo_cache.h"
 
 #define SAUNAFS_VERSION(major, minor, micro) (0x010000 * major + 0x0100 * minor + micro)
