@@ -18,9 +18,13 @@
 
 #include "common/platform.h"
 
+#include <filesystem>
+#include <fstream>
+
 #include <gtest/gtest.h>
 
 #include "config/cfg.h"
+#include "unittests/TemporaryDirectory.h"
 
 TEST(CfgTests, CfgParseSize) {
 	// Bytes
@@ -68,4 +72,42 @@ TEST(CfgTests, CfgParseSize) {
 	EXPECT_EQ(-1, cfg_parse_size("1Bx"));
 	EXPECT_EQ(-1, cfg_parse_size("1 KBx"));
 	EXPECT_EQ(-1, cfg_parse_size("1_KiB"));
+}
+
+// Calls cfg_term() even after a failed assertion.
+struct CfgTermGuard {
+	~CfgTermGuard() { cfg_term(); }
+};
+
+TEST(CfgTests, ReloadAfterChangingDirectory) {
+	TemporaryDirectory dir("/tmp", "cfg-relative");
+	const CfgTermGuard guard;
+	const auto previous = std::filesystem::current_path();
+	std::filesystem::current_path(dir.name());
+	std::ofstream(dir.name() + "/test.cfg") << "LABEL = first\n";
+	const int loaded = cfg_load("test.cfg", 0);
+
+	// A daemon changes to its data directory after loading.
+	std::filesystem::current_path(previous);
+	ASSERT_EQ(loaded, 0);
+	std::ofstream(dir.name() + "/test.cfg") << "LABEL = second\n";
+	EXPECT_EQ(cfg_reload(), 0);
+	EXPECT_EQ(cfg_getstring("LABEL", "none"), "second");
+}
+
+TEST(CfgTests, FailedReloadKeepsConfiguration) {
+	TemporaryDirectory dir("/tmp", "cfg-failed-reload");
+	const CfgTermGuard guard;
+	const std::string path = dir.name() + "/test.cfg";
+	std::ofstream(path) << "LABEL = first\n";
+	ASSERT_EQ(cfg_load(path.c_str(), 0), 0);
+
+	std::filesystem::remove(path);
+	EXPECT_NE(cfg_reload(), 0);
+	EXPECT_EQ(cfg_getstring("LABEL", "none"), "first");
+
+	// A file that opens but cannot be read.
+	std::filesystem::create_directory(path);
+	EXPECT_NE(cfg_reload(), 0);
+	EXPECT_EQ(cfg_getstring("LABEL", "none"), "first");
 }
