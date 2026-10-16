@@ -2888,10 +2888,11 @@ void hddReload(void) {
 	try {
 		gDiskManager->reloadConfiguration();
 		gDiskManager->reloadDisksFromCfg();
-		ChunkTrashManager::reloadConfig();
 	} catch (const Exception& ex) {
 		safs_pretty_syslog(LOG_ERR, "%s", ex.what());
 	}
+	// Outside the try, so that a bad disk list does not skip it.
+	ChunkTrashManager::reloadConfig();
 
 	// Request plugins to reload
 	pluginManager.reloadPlugins();
@@ -3006,10 +3007,11 @@ int hddInit() {
 	try {
 		gDiskManager->reloadConfiguration();
 		gDiskManager->reloadDisksFromCfg();
-		ChunkTrashManager::init();
 	} catch (const Exception& ex) {
 		safs_pretty_syslog(LOG_ERR, "%s", ex.what());
 	}
+	// Outside the try, so that a bad disk list does not skip it.
+	ChunkTrashManager::init();
 
 	{
 		std::lock_guard disksLockGuard(gDisksMutex);
