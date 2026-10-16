@@ -450,7 +450,9 @@ include_directories(${CMAKE_BINARY_DIR}) # Here we have generated config.h
 set(MAIN_SRC ${CMAKE_SOURCE_DIR}/src/main/main.cc)
 
 if(ZLIB_FOUND)
-  include_directories(${ZLIB_INCLUDE_DIRS})
+  # SYSTEM: under vcpkg this is the shared include root, so a plain -I would expose the warnings
+  # of every vendored header (gtest, boost) to -Werror.
+  include_directories(SYSTEM ${ZLIB_INCLUDE_DIRS})
 endif()
 include_directories(${CMAKE_SOURCE_DIR}/src) # Allow paths relative to src, eg. #include common/crc.h
 link_directories(${LINK_DIRECTORIES} ${FUSE_LIBRARY_DIR})
