@@ -993,7 +993,8 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 */
 int hddCheckCrcForFullBlock(IChunk *chunk, uint16_t block, OutputBuffer *outputBuffer,
                             uint32_t offsetInBlockBuffer, bool forceCheck) {
-	if (!forceCheck && (!gCheckCrcWhenReading || block >= chunk->blocks())) {
+	// Past the part's end: zeros made in memory, with no stored CRC.
+	if (block >= chunk->blocks() || (!forceCheck && !gCheckCrcWhenReading)) {
 		return SAUNAFS_STATUS_OK;
 	}
 
