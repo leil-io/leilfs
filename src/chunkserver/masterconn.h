@@ -60,6 +60,9 @@ struct MasterConnReconciliationState {
 	bool admissionDeferred = false;
 };
 
+/// Broadcasts changed disk-space counters without consuming inventory reports.
+void masterconn_report_space(MasterConnReconciliationState &state);
+
 /// Applies the configured connection's latest snapshot after the current poll batch is served.
 void masterconn_reconcile_connections(MasterConnReconciliationState &state,
                                       const std::shared_ptr<MasterJobPool> &jobPool,

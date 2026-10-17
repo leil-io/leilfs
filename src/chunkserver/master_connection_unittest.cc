@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <latch>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "chunkserver-common/hdd_utils.h"
@@ -711,4 +712,40 @@ TEST(MasterConnectionTests, LateDeleteCompletionAlwaysReportsTheLoss) {
 	completion(SAUNAFS_ERROR_IO, nullptr);
 	hddGetLostChunks(reports, 1000);
 	EXPECT_TRUE(reports.empty());
+}
+
+class MasterConnOutputQueueTests : public testing::Test {
+protected:
+	MasterConn masterConn_{"", "", "", std::shared_ptr<MasterJobPool>{},
+	                       std::shared_ptr<MasterJobPool>{}};
+
+	MessageBuffer popNextPacket() {
+		auto &packets = masterConn_.nextOutputPacketQueue();
+		auto packet = std::move(packets.front().packet);
+		packets.pop();
+		return packet;
+	}
+
+	void markOrdinaryHeadPartiallySent() { masterConn_.outputPackets_.front().bytesSent = 1; }
+};
+
+TEST_F(MasterConnOutputQueueTests, PriorityPacketsAreFifoAndOvertakeUnstartedPackets) {
+	masterConn_.createAttachedPacket(MessageBuffer{0});
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{1});
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{2});
+
+	EXPECT_EQ(MessageBuffer{1}, popNextPacket());
+	EXPECT_EQ(MessageBuffer{2}, popNextPacket());
+	EXPECT_EQ(MessageBuffer{0}, popNextPacket());
+}
+
+TEST_F(MasterConnOutputQueueTests, PartiallySentPacketPrecedesPriorityPackets) {
+	masterConn_.createAttachedPacket(MessageBuffer{0, 0});
+	markOrdinaryHeadPartiallySent();
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{1});
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{2});
+
+	EXPECT_EQ((MessageBuffer{0, 0}), popNextPacket());
+	EXPECT_EQ(MessageBuffer{1}, popNextPacket());
+	EXPECT_EQ(MessageBuffer{2}, popNextPacket());
 }

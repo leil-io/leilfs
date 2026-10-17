@@ -35,9 +35,17 @@ struct Master {
 	CounterFamily *byteClientCounter{nullptr};
 	CounterFamily *filesystemCounter{nullptr};
 	CounterFamily *chunkCounter{nullptr};
+	CounterFamily *chunkLocationQueryCounter{nullptr};
+	CounterFamily *chunkRegistrationCounter{nullptr};
+	GaugeFamily *chunkLocationQueryGauge{nullptr};
+	GaugeFamily *chunkRegistrationGauge{nullptr};
+	GaugeFamily *chunkRegistrationBudgetGauge{nullptr};
 
 	// Master Counters
 	std::array<Counter, static_cast<unsigned int>(Counter::Master::KEY_END) + 1> masterCounters;
+
+	// Master Gauges
+	std::array<Gauge, static_cast<unsigned int>(Gauge::Master::KEY_END) + 1> masterGauges;
 };
 }
 #endif
