@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "chunkserver-common/chunk_trash_manager.h"
 #include "chunkserver-common/cmr_chunk.h"
 #include "chunkserver-common/cmr_disk.h"
 #include "chunkserver-common/default_disk_manager.h"
@@ -39,6 +40,7 @@
 #include "common/saunafs_version.h"
 #include "common/slice_traits.h"
 #include "protocol/matocs.h"
+#include "unittests/TemporaryDirectory.h"
 #include "unittests/packet.h"
 
 // Existing disk-maintenance entry points; no test-only production API is needed.
@@ -121,6 +123,82 @@ public:
 };
 
 }  // namespace
+
+class RegistrationDiskReloadTests : public RegistrationSweepTests {
+protected:
+	void SetUp() override {
+		RegistrationSweepTests::SetUp();
+		if (HasFatalFailure()) { return; }
+		ASSERT_TRUE(gDisks.empty());
+		savedDiskManager_ = std::move(gDiskManager);
+		gDiskManager = std::make_unique<DefaultDiskManager>();
+		savedDiskActions_ = std::exchange(gDiskActions, 1);
+		savedResetTester_ = gResetTester.load();
+		savedSpaceChanged_ = gHddSpaceChanged.load();
+	}
+
+	void TearDown() override {
+		// Join outside gDisksMutex: the scanner takes it before finishing.
+		for (auto &disk : gDisks) {
+			if (disk->scanThread().joinable()) { disk->scanThread().join(); }
+			ChunkTrashManager::eraseDisk(disk->metaPath());
+		}
+		RegistrationSweepTests::TearDown();
+		gDisks.clear();
+		gDiskManager = std::move(savedDiskManager_);
+		gDiskActions = savedDiskActions_;
+		gResetTester.store(savedResetTester_);
+		gHddSpaceChanged.store(savedSpaceChanged_);
+	}
+
+	DefaultDiskManager &manager() { return static_cast<DefaultDiskManager &>(*gDiskManager); }
+
+	TemporaryDirectory directory_{"/tmp", "registration-disk-reload"};
+	std::unique_ptr<IDiskManager> savedDiskManager_;
+	uint8_t savedDiskActions_{0};
+	bool savedResetTester_{false};
+	bool savedSpaceChanged_{false};
+};
+
+TEST_F(RegistrationDiskReloadTests, FlagReloadPreservesPendingScanAndAllowsSweepToFinish) {
+	const auto path = directory_.name() + "/";
+	ASSERT_EQ(2, manager().parseCfgLine(path));
+	ASSERT_EQ(1, gScansInProgress.load());
+
+	// Reload before hddCheckDisks starts the counted scan, in both flag directions.
+	ASSERT_EQ(1, manager().parseCfgLine("*" + path));
+	EXPECT_TRUE(gDisks.front()->isMarkedForRemoval());
+	EXPECT_EQ(IDisk::ScanState::kNeeded, gDisks.front()->scanState());
+	ASSERT_EQ(1, manager().parseCfgLine(path));
+	EXPECT_EQ(IDisk::ScanState::kNeeded, gDisks.front()->scanState());
+	ASSERT_EQ(1, gScansInProgress.load());
+
+	std::vector<ChunkWithVersionAndType> bulk;
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	EXPECT_EQ(RegistrationSweepResult::kRetry, hddRegistrationSweepNext(bulk, 10));
+
+	hddCheckDisks();
+	EXPECT_TRUE(gDisks.front()->scanThread().joinable());
+	if (gDisks.front()->scanThread().joinable()) { gDisks.front()->scanThread().join(); }
+	EXPECT_EQ(IDisk::ScanState::kThreadFinished, gDisks.front()->scanState());
+	EXPECT_EQ(0, gScansInProgress.load());
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 10));
+}
+
+TEST_F(RegistrationDiskReloadTests, FlagReloadStillReannouncesAnAlreadyScannedDisk) {
+	const auto path = directory_.name() + "/";
+	ASSERT_EQ(2, manager().parseCfgLine(path));
+	hddCheckDisks();
+	ASSERT_TRUE(gDisks.front()->scanThread().joinable());
+	gDisks.front()->scanThread().join();
+	gDisks.front()->setScanState(IDisk::ScanState::kWorking);
+
+	ASSERT_EQ(1, manager().parseCfgLine("*" + path));
+	EXPECT_EQ(IDisk::ScanState::kSendNeeded, gDisks.front()->scanState());
+	hddCheckDisks();
+	EXPECT_EQ(IDisk::ScanState::kWorking, gDisks.front()->scanState());
+	EXPECT_EQ(0, gScansInProgress.load());
+}
 
 class RegistrationSweepTrackingTests : public RegistrationSweepTests {
 protected:

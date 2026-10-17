@@ -85,6 +85,7 @@ void MasterConn::createAttachedPriorityPacket(MessageBuffer serializedPacket) {
 }
 
 std::queue<OutputPacket> &MasterConn::nextOutputPacketQueue() {
+	if (tlsWriteRetryQueue_ != nullptr) { return *tlsWriteRetryQueue_; }
 	if (!outputPackets_.empty() && outputPackets_.front().bytesSent != 0) { return outputPackets_; }
 	if (!priorityOutputPackets_.empty()) { return priorityOutputPackets_; }
 	return outputPackets_;
@@ -783,14 +784,17 @@ void MasterConn::writeToSocket() {
 			if (bytesWritten <= 0) {
 				int err = ::SSL_get_error(tlsSession_->session(), static_cast<int>(bytesWritten));
 				if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-					// Need more I/O; return and let poll drive readiness.
+					// OpenSSL may have buffered data even though bytesSent is still zero.
+					tlsWriteRetryQueue_ = &packets;
 					return;
 				}
+				tlsWriteRetryQueue_ = nullptr;
 				safs::log_err("MasterConn(TLS): write error to {}: {}", address_.toString(),
 				              opensslErrorString(err));
 				setMode(ConnectionMode::KILL);
 				return;
 			}
+			tlsWriteRetryQueue_ = nullptr;
 		} else {
 			bytesWritten = ::write(socketFD_, pack.packet.data() + pack.bytesSent,
 			                       pack.packet.size() - pack.bytesSent);
@@ -1246,6 +1250,7 @@ void MasterConn::sauJobFinished(uint8_t status, void *packet) {
 // Termination
 
 void MasterConn::closeSocketQuietly() {
+	tlsWriteRetryQueue_ = nullptr;
 	if (socketFD_ >= 0) {
 		tcpclose(socketFD_);
 		socketFD_ = -1;
@@ -1258,6 +1263,7 @@ void MasterConn::closeSocketQuietly() {
 }
 
 void MasterConn::releaseResources() {
+	tlsWriteRetryQueue_ = nullptr;
 	if (mode_ != ConnectionMode::FREE && mode_ != ConnectionMode::CONNECTING) {
 		if (tlsSession_ != nullptr) {
 			int ret = SSL_shutdown(tlsSession_->session());
@@ -1278,12 +1284,14 @@ void MasterConn::releaseResources() {
 }
 
 void MasterConn::resetPackets() {
+	tlsWriteRetryQueue_ = nullptr;
 	inputPacket_.reset();
 	decltype(outputPackets_){}.swap(outputPackets_);
 	decltype(priorityOutputPackets_){}.swap(priorityOutputPackets_);
 }
 
 void MasterConn::requeueUnsentReports() {
+	tlsWriteRetryQueue_ = nullptr;
 	while (!outputPackets_.empty()) {
 		auto output = std::move(outputPackets_.front());
 		outputPackets_.pop();

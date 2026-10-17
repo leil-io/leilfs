@@ -19,7 +19,12 @@
 #include "common/platform.h"
 
 #include <gtest/gtest.h>
+#include <openssl/evp.h>
+#include <openssl/rsa.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <algorithm>
 #include <array>
@@ -727,6 +732,23 @@ protected:
 	}
 
 	void markOrdinaryHeadPartiallySent() { masterConn_.outputPackets_.front().bytesSent = 1; }
+
+	void prepareTlsClient(BIO *bio, X509 *certificate) {
+		masterConn_.socketFD_ = socket(AF_INET, SOCK_STREAM, 0);
+		ASSERT_GE(masterConn_.socketFD_, 0);
+		masterConn_.tlsSession_ =
+		    std::make_unique<TlsSession>(masterConn_.socketFD_, false, "", "", "");
+		ASSERT_EQ(1, X509_STORE_add_cert(SSL_CTX_get_cert_store(masterConn_.tlsSession_->context()),
+		                                 certificate));
+		// Keep ClientHello below the transport capacity, including with newer TLS defaults.
+		ASSERT_EQ(1, SSL_set1_groups_list(client(), "P-256"));
+		SSL_set_bio(client(), bio, bio);
+		SSL_set_connect_state(client());
+		masterConn_.setMode(ConnectionMode::CONNECTED);
+	}
+
+	SSL *client() { return masterConn_.tlsSession_->session(); }
+	size_t ordinaryBytesSent() { return masterConn_.outputPackets_.front().bytesSent; }
 };
 
 TEST_F(MasterConnOutputQueueTests, PriorityPacketsAreFifoAndOvertakeUnstartedPackets) {
@@ -748,4 +770,153 @@ TEST_F(MasterConnOutputQueueTests, PartiallySentPacketPrecedesPriorityPackets) {
 	EXPECT_EQ((MessageBuffer{0, 0}), popNextPacket());
 	EXPECT_EQ(MessageBuffer{1}, popNextPacket());
 	EXPECT_EQ(MessageBuffer{2}, popNextPacket());
+}
+
+class MasterConnTlsOutputQueueTests : public MasterConnOutputQueueTests {
+protected:
+	void SetUp() override {
+		// A self-signed, in-memory peer keeps the test independent of certificate files.
+		std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)> keyContext{
+		    EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr), EVP_PKEY_CTX_free};
+		ASSERT_NE(nullptr, keyContext);
+		ASSERT_EQ(1, EVP_PKEY_keygen_init(keyContext.get()));
+		ASSERT_EQ(1, EVP_PKEY_CTX_set_rsa_keygen_bits(keyContext.get(), 2048));
+		EVP_PKEY *rawKey = nullptr;
+		ASSERT_EQ(1, EVP_PKEY_keygen(keyContext.get(), &rawKey));
+		std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> key{rawKey, EVP_PKEY_free};
+		std::unique_ptr<X509, decltype(&X509_free)> certificate{X509_new(), X509_free};
+		ASSERT_NE(nullptr, certificate);
+		ASSERT_EQ(1, X509_set_version(certificate.get(), 2));
+		ASSERT_EQ(1, ASN1_INTEGER_set(X509_get_serialNumber(certificate.get()), 1));
+		ASSERT_NE(nullptr, X509_gmtime_adj(X509_getm_notBefore(certificate.get()), -60));
+		ASSERT_NE(nullptr, X509_gmtime_adj(X509_getm_notAfter(certificate.get()), 3600));
+		ASSERT_EQ(1, X509_set_pubkey(certificate.get(), key.get()));
+		ASSERT_GT(X509_sign(certificate.get(), key.get(), EVP_sha256()), 0);
+
+		serverContext_.reset(SSL_CTX_new(TLS_server_method()));
+		ASSERT_NE(nullptr, serverContext_);
+		ASSERT_EQ(1, SSL_CTX_set_min_proto_version(serverContext_.get(), TLS1_3_VERSION));
+		ASSERT_EQ(1, SSL_CTX_set_num_tickets(serverContext_.get(), 0));
+		ASSERT_EQ(1, SSL_CTX_use_certificate(serverContext_.get(), certificate.get()));
+		ASSERT_EQ(1, SSL_CTX_use_PrivateKey(serverContext_.get(), key.get()));
+		server_.reset(SSL_new(serverContext_.get()));
+		ASSERT_NE(nullptr, server_);
+
+		// The small transport buffer forces SSL_write to retry before bytesSent advances.
+		BIO *clientBio = nullptr;
+		BIO *serverBio = nullptr;
+		ASSERT_EQ(1, BIO_new_bio_pair(&clientBio, 1024, &serverBio, 1024));
+		SSL_set_bio(server_.get(), serverBio, serverBio);
+		SSL_set_accept_state(server_.get());
+		prepareTlsClient(clientBio, certificate.get());
+	}
+
+	void completeHandshake() {
+		for (int attempt = 0; attempt < 100; ++attempt) {
+			for (auto *session : {client(), server_.get()}) {
+				const int result = SSL_do_handshake(session);
+				if (result == 1) { continue; }
+				const int error = SSL_get_error(session, result);
+				ASSERT_TRUE(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
+			}
+			if (SSL_is_init_finished(client()) && SSL_is_init_finished(server_.get())) { return; }
+		}
+		FAIL() << "In-memory TLS handshake did not finish";
+	}
+
+	void drainServer(MessageBuffer &received) {
+		std::array<uint8_t, 4096> buffer;
+		for (;;) {
+			const int result = SSL_read(server_.get(), buffer.data(), buffer.size());
+			if (result > 0) {
+				received.insert(received.end(), buffer.begin(), buffer.begin() + result);
+				continue;
+			}
+			const int error = SSL_get_error(server_.get(), result);
+			ASSERT_TRUE(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
+			return;
+		}
+	}
+
+	void finishQueuedWrites(MessageBuffer &received) {
+		for (int attempt = 0; attempt < 200 && !masterConn_.isOutputQueueEmpty(); ++attempt) {
+			drainServer(received);
+			ASSERT_FALSE(HasFatalFailure());
+			masterConn_.writeToSocket();
+			ASSERT_EQ(ConnectionMode::CONNECTED, masterConn_.mode());
+		}
+		drainServer(received);
+		ASSERT_TRUE(masterConn_.isOutputQueueEmpty());
+	}
+
+	std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> serverContext_{nullptr, SSL_CTX_free};
+	std::unique_ptr<SSL, decltype(&SSL_free)> server_{nullptr, SSL_free};
+};
+
+TEST_F(MasterConnTlsOutputQueueTests, PriorityReplyDoesNotInterruptUnstartedTlsWriteRetry) {
+	completeHandshake();
+	ASSERT_FALSE(HasFatalFailure());
+	const MessageBuffer ordinary(32768, 0x42);
+	masterConn_.createAttachedPacket(ordinary);
+	masterConn_.writeToSocket();
+	ASSERT_EQ(ConnectionMode::CONNECTED, masterConn_.mode());
+	ASSERT_EQ(0U, ordinaryBytesSent());
+	ASSERT_TRUE(SSL_want_write(client()));
+	ASSERT_GT(BIO_ctrl_pending(SSL_get_rbio(server_.get())), 0U);
+
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{1});
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{2});
+	MessageBuffer received;
+	finishQueuedWrites(received);
+	ASSERT_FALSE(HasFatalFailure());
+	auto expected = ordinary;
+	expected.insert(expected.end(), {1, 2});
+	EXPECT_EQ(expected, received);
+}
+
+TEST_F(MasterConnTlsOutputQueueTests, ResetDiscardsTlsWriteRetryQueueSelection) {
+	completeHandshake();
+	ASSERT_FALSE(HasFatalFailure());
+	masterConn_.createAttachedPacket(MessageBuffer(32768, 0x42));
+	masterConn_.writeToSocket();
+	ASSERT_EQ(ConnectionMode::CONNECTED, masterConn_.mode());
+	ASSERT_EQ(0U, ordinaryBytesSent());
+	masterConn_.resetPackets();
+	masterConn_.createAttachedPacket(MessageBuffer{0});
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{1});
+	EXPECT_EQ(MessageBuffer{1}, popNextPacket());
+	EXPECT_EQ(MessageBuffer{0}, popNextPacket());
+}
+
+TEST_F(MasterConnTlsOutputQueueTests, PriorityReplyDoesNotInterruptTlsWriteWaitingForRead) {
+	const MessageBuffer ordinary(32768, 0x42);
+	masterConn_.createAttachedPacket(ordinary);
+	// SSL_write starts the handshake and waits for the peer's response.
+	masterConn_.writeToSocket();
+	ASSERT_EQ(ConnectionMode::CONNECTED, masterConn_.mode());
+	ASSERT_EQ(0U, ordinaryBytesSent());
+	ASSERT_TRUE(SSL_want_read(client()));
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{1});
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{2});
+
+	MessageBuffer received;
+	finishQueuedWrites(received);
+	ASSERT_FALSE(HasFatalFailure());
+	auto expected = ordinary;
+	expected.insert(expected.end(), {1, 2});
+	EXPECT_EQ(expected, received);
+}
+
+TEST_F(MasterConnTlsOutputQueueTests, ClosingSocketDiscardsTlsWriteRetryQueueSelection) {
+	completeHandshake();
+	ASSERT_FALSE(HasFatalFailure());
+	const MessageBuffer ordinary(32768, 0x42);
+	masterConn_.createAttachedPacket(ordinary);
+	masterConn_.writeToSocket();
+	ASSERT_EQ(ConnectionMode::CONNECTED, masterConn_.mode());
+	ASSERT_EQ(0U, ordinaryBytesSent());
+	masterConn_.closeSocketQuietly();
+	masterConn_.createAttachedPriorityPacket(MessageBuffer{1});
+	EXPECT_EQ(MessageBuffer{1}, popNextPacket());
+	EXPECT_EQ(ordinary, popNextPacket());
 }

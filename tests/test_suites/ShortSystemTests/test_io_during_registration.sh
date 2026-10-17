@@ -91,8 +91,7 @@ for fraction_idx in 0 1 2 3; do
 		assert_equals "$expected_head" "$head_hex"
 done
 
-# writes work and read back correctly: their new chunks land on chunkserver 0's
-# real disk, the only one with space to offer while chunkserver 1 registers
+# New writes succeed and read back correctly while chunkserver 1 registers.
 for i in 1 2 3; do
 	echo "data $i" > "${info[mount0]}/during_registration_$i"
 	MESSAGE="write+read during registration" \
@@ -107,22 +106,22 @@ assert_success rm -f "${info[mount0]}/during_registration_3"
 
 # All of the IO above must have run while registration was still in progress,
 # otherwise it exercised a converged cluster and this test measured nothing.
-# Unlinking only ever lowers the count, so comparing against the full total
-# is safe here.
+# Exclude deleted chunks: even a completed inventory can be below the old total.
+remaining_mock_copies=$((2 * CHUNK_COUNT - CHUNKS_PER_FILE))
+expected_remaining_copies=$((remaining_mock_copies + 2))
 copies_at_probe=$(count_chunk_copies)
 MESSAGE="IO must be served while registration is still in progress" \
-	assert_less_than "$copies_at_probe" "$((2 * CHUNK_COUNT))"
+	assert_less_than "$copies_at_probe" "$expected_remaining_copies"
 
-echo "PHASE: IO checks done at $copies_at_probe / $((2 * CHUNK_COUNT)) copies," \
+echo "PHASE: IO checks done at $copies_at_probe / $expected_remaining_copies copies," \
 	"waiting for registration to converge"
 # Registration converges: all copies of the remaining mock chunks plus the
 # two remaining new files' chunks are eventually known (>=: the copies of the
 # unlinked chunks disappear later, via the regular deletion machinery)
-remaining_mock_copies=$((2 * CHUNK_COUNT - CHUNKS_PER_FILE))
 copies_at_least() {
 	local copies
 	copies=$(count_chunk_copies)
-	[[ -n "$copies" && "$copies" -ge $((remaining_mock_copies + 2)) ]]
+	[[ -n "$copies" && "$copies" -ge "$expected_remaining_copies" ]]
 }
 assert_eventually 'copies_at_least'
 

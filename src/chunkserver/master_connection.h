@@ -394,6 +394,8 @@ private:
 	std::queue<OutputPacket> outputPackets_;   ///< Output packets to be sent to the master.
 	std::queue<OutputPacket>
 	    priorityOutputPackets_;  ///< Priority replies to be sent to the master.
+	/// SSL_write retries must keep the same buffer even before bytesSent advances.
+	std::queue<OutputPacket> *tlsWriteRetryQueue_{nullptr};
 
 	NetworkAddress address_;            ///< Address of this master server (IP and port).
 	NetworkAddress bindHostAddress_;    ///< Address to bind the socket to (IP and port).

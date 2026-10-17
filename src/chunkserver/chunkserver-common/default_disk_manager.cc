@@ -146,8 +146,10 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 				if (disk->isMarkedForRemoval() !=
 				        currentDisk->isMarkedForRemoval() ||
 				    disk->isReadOnly() != currentDisk->isReadOnly()) {
-					// important change - chunks need to be send to master again
-					disk->setScanState(IDisk::ScanState::kSendNeeded);
+					// A pending scan is already counted and will report the new flags.
+					if (disk->scanState() != IDisk::ScanState::kNeeded) {
+						disk->setScanState(IDisk::ScanState::kSendNeeded);
+					}
 				}
 			}
 

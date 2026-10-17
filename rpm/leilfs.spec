@@ -324,7 +324,7 @@ rm -f %{buildroot}%{_libdir}/libsaunafs-client.so
 rm -f %{buildroot}%{_libdir}/libsaunafsmount_shared.so
 
 # Test-only mock disk plugin; never shipped to users
-rm -f %{buildroot}%{_libdir}/saunafs/plugins/chunkserver/libmock-disk-plugin.so
+rm -f %{buildroot}%{_libdir}/leil/plugins/chunkserver/libmock-disk-plugin.so
 
 # Files - master
 ############################################################
