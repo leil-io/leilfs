@@ -142,6 +142,195 @@ protected:
 	bool savedForcePush_{false};
 };
 
+class MasterConnHddReportTests : public MasterConnSpaceReportTests {
+protected:
+	void SetUp() override {
+		MasterConnSpaceReportTests::SetUp();
+		if (HasFatalFailure()) { return; }
+		ASSERT_TRUE(gChunksMap.empty());
+		std::lock_guard reportsLock(gMasterReportsLock);
+		ASSERT_TRUE(gLostChunks.empty());
+		ASSERT_TRUE(gDamagedChunks.empty());
+		ASSERT_TRUE(gNewChunks.empty());
+		savedErrorCounter_ = gErrorCounter.exchange(0);
+		// Keep the pending-START state from triggering timeout fallback during these tests.
+		savedStartTimeout_ = std::exchange(gPullRegistrationStartTimeout_s, 60);
+	}
+
+	void TearDown() override {
+		// Remove test chunks while the base fixture's disk is still alive.
+		{
+			std::lock_guard chunksLock(gChunksMapMutex);
+			while (!gChunksMap.empty()) {
+				hddRemoveChunkFromContainers(gChunksMap.begin()->second.get());
+			}
+		}
+		{
+			std::lock_guard reportsLock(gMasterReportsLock);
+			gLostChunks.clear();
+			gDamagedChunks.clear();
+		}
+		gErrorCounter.store(savedErrorCounter_);
+		gPullRegistrationStartTimeout_s = savedStartTimeout_;
+		MasterConnSpaceReportTests::TearDown();
+	}
+
+	void addChunk(uint64_t id) {
+		auto *chunk = hddChunkFindOrCreatePlusLock(disk_, id, ChunkPartType(),
+		                                           disk::ChunkGetMode::kCreateOnly);
+		ASSERT_NE(nullptr, chunk);
+		{
+			std::lock_guard chunksLock(gChunksMapMutex);
+			chunk->setVersion(1);
+			std::lock_guard testsLock(gTestsMutex);
+			disk_->chunks().insert(chunk);
+		}
+		hddChunkRelease(chunk);
+	}
+
+	void queueNegativeReports(uint64_t lost = 701, uint64_t damaged = 702) {
+		hddReportLostChunk(lost, ChunkPartType());
+		hddReportDamagedChunk(damaged, ChunkPartType());
+	}
+
+	void expectNegativeReports(MasterConn &connection, uint64_t lost = 701,
+	                           uint64_t damaged = 702) {
+		ASSERT_FALSE(connection.isOutputQueueEmpty());
+		auto packet = pop(connection);
+		verifyHeader(packet, SAU_CSTOMA_CHUNK_DAMAGED);
+		removeHeaderInPlace(packet);
+		std::vector<ChunkWithType> chunks;
+		ASSERT_NO_THROW(cstoma::chunkDamaged::deserialize(packet, chunks));
+		ASSERT_EQ(1U, chunks.size());
+		EXPECT_EQ(damaged, chunks.front().id);
+		EXPECT_EQ(ChunkPartType(), chunks.front().type);
+
+		ASSERT_FALSE(connection.isOutputQueueEmpty());
+		packet = pop(connection);
+		verifyHeader(packet, SAU_CSTOMA_CHUNK_LOST);
+		removeHeaderInPlace(packet);
+		chunks.clear();
+		ASSERT_NO_THROW(cstoma::chunkLost::deserialize(packet, chunks));
+		ASSERT_EQ(1U, chunks.size());
+		EXPECT_EQ(lost, chunks.front().id);
+		EXPECT_EQ(ChunkPartType(), chunks.front().type);
+		EXPECT_TRUE(connection.isOutputQueueEmpty());
+	}
+
+	uint32_t savedErrorCounter_{0};
+	uint32_t savedStartTimeout_{0};
+};
+
+TEST_F(MasterConnHddReportTests, SendsNegativeReportsAfterSpaceBeforePullStart) {
+	auto &connection = addConnection();
+	// Host registration queues the handshake tail, but START has not arrived yet.
+	registerHost(connection);
+	queueNegativeReports();
+	masterconn_check_hdd_reports(state_);
+
+	// Negative reports must follow REGISTER_SPACE without completing registration.
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_SPACE);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_LABEL);
+	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CONFIG);
+	ASSERT_NO_FATAL_FAILURE(expectNegativeReports(connection));
+	EXPECT_EQ(RegistrationStatus::kAwaitingPullStart, connection.registrationStatus());
+	EXPECT_FALSE(connection.isRegistered());
+}
+
+TEST_F(MasterConnHddReportTests, SendsNegativeReportsDuringSweepWithoutDrainingNewChunks) {
+	auto &connection = addConnection();
+	for (uint64_t id : {701, 702, 703}) { ASSERT_NO_FATAL_FAILURE(addChunk(id)); }
+	registerHost(connection);
+	startPull(connection);
+	connection.resetPackets();
+
+	// Advertise only two of three chunks so the sweep remains incomplete.
+	auto credit = matocs::registerChunksCredit::build(2);
+	removeHeaderInPlace(credit);
+	connection.onRegisterChunksCredit(credit);
+	std::vector<ChunkWithVersionAndType> reported;
+	for (int index = 0; index < 2; ++index) {
+		auto packet = pop(connection);
+		verifyHeader(packet, SAU_CSTOMA_REGISTER_CHUNKS);
+		removeHeaderInPlace(packet);
+		std::vector<ChunkWithVersionAndType> bulk;
+		ASSERT_NO_THROW(cstoma::registerChunks::deserialize(packet, bulk));
+		ASSERT_EQ(1U, bulk.size());
+		reported.push_back(bulk.front());
+	}
+	ASSERT_FALSE(connection.isRegistered());
+
+	// Target the actual advertised IDs; registry iteration order is unspecified.
+	queueNegativeReports(reported[0].id, reported[1].id);
+	// Bypass sweep-time enqueue suppression to test the delivery gate independently.
+	hddEnqueueChunkReport(ChunkWithVersionAndType(704, 1, ChunkPartType()), false);
+	masterconn_check_hdd_reports(state_);
+
+	// Loss and damage may leave now, but the new-chunk announcement must stay queued.
+	ASSERT_NO_FATAL_FAILURE(expectNegativeReports(connection, reported[0].id, reported[1].id));
+	EXPECT_EQ(RegistrationStatus::kChunksRegistering, connection.registrationStatus());
+	EXPECT_FALSE(connection.isRegistered());
+	std::lock_guard reportsLock(gMasterReportsLock);
+	ASSERT_EQ(1U, gNewChunks.size());
+	EXPECT_EQ(704U, gNewChunks.front().id);
+}
+
+TEST_F(MasterConnHddReportTests, KeepsReportsPendingBeforeHandshakeOrWhileOffline) {
+	// Start with no connection, then exercise phases before REGISTER_SPACE is queued.
+	queueNegativeReports();
+	masterconn_check_hdd_reports(state_);
+	auto &connection = addConnection();
+	for (auto phase :
+	     {RegistrationStatus::kUnregistered, RegistrationStatus::kRegistrationRequested,
+	      RegistrationStatus::kHostRegistered}) {
+		setPhase(connection, phase);
+		masterconn_check_hdd_reports(state_);
+		EXPECT_TRUE(connection.isOutputQueueEmpty());
+	}
+
+	// Even a completed registration phase is insufficient without a connected socket.
+	setPhase(connection, RegistrationStatus::kChunksRegistered);
+	connection.setMode(ConnectionMode::HANDSHAKE);
+	masterconn_check_hdd_reports(state_);
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+	connection.setMode(ConnectionMode::KILL);
+	masterconn_check_hdd_reports(state_);
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+
+	// Successful host registration must deliver the original reports, proving retention.
+	connection.setMode(ConnectionMode::CONNECTED);
+	registerHost(connection);
+	connection.resetPackets();
+	masterconn_check_hdd_reports(state_);
+	ASSERT_NO_FATAL_FAILURE(expectNegativeReports(connection));
+}
+
+TEST_F(MasterConnHddReportTests, OnlyConfiguredConnectionConsumesNegativeReports) {
+	// An identity-registered peer must not consume the shared physical-report queues.
+	auto &peer = addConnection(1);
+	peer.setSendInventory(false);
+	registerHost(peer);
+	peer.resetPackets();
+	queueNegativeReports();
+	masterconn_check_hdd_reports(state_);
+	EXPECT_TRUE(peer.isOutputQueueEmpty());
+	{
+		std::lock_guard reportsLock(gMasterReportsLock);
+		EXPECT_EQ(1U, gLostChunks.size());
+		EXPECT_EQ(1U, gDamagedChunks.size());
+	}
+
+	// Report ownership stays with the configured connection, even in identity mode.
+	auto &configured = addConnection();
+	configured.setSendInventory(false);
+	registerHost(configured);
+	configured.resetPackets();
+	masterconn_check_hdd_reports(state_);
+	ASSERT_NO_FATAL_FAILURE(expectNegativeReports(configured));
+	EXPECT_TRUE(peer.isOutputQueueEmpty());
+	EXPECT_TRUE(configured.isRegistered());
+}
+
 TEST_F(MasterConnSpaceReportTests, RefreshesSpaceAfterInitialZeroBeforePullStart) {
 	auto &connection = addConnection();
 	registerHost(connection);

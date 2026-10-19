@@ -136,27 +136,27 @@ void masterconn_report_space(MasterConnReconciliationState &state) {
 	}
 }
 
-void masterconn_check_hdd_reports() {
-	for (auto &slot : gConnectionState.connections) {
+void masterconn_check_hdd_reports(MasterConnReconciliationState &state) {
+	for (auto &slot : state.connections) {
 		if (slot.connection && !slot.retiring &&
 		    slot.connection->mode() == ConnectionMode::CONNECTED) {
 			slot.connection->checkPullRegistration();
 		}
 	}
 
-	masterconn_report_space(gConnectionState);
+	masterconn_report_space(state);
 
 	// Only the configured connection consumes physical loss and damage reports.
-	MasterConn *eptr = configuredConnection();
+	MasterConn *eptr = state.connections.front().connection.get();
+	const auto chunkBulkSize = gChunkBulkSize.load(std::memory_order_relaxed);
 	uint32_t errorcounter;
-	if (eptr != nullptr && eptr->isRegistered()) {
+	// REGISTER_SPACE is queued in these states, so negative reports may safely follow it.
+	if (eptr != nullptr && eptr->canSendSpaceUpdates()) {
 		errorcounter = hddGetAndResetErrorCounter();
 		while (errorcounter) {
 			eptr->createAttachedNoVersionPacket(CSTOMA_ERROR_OCCURRED);
 			errorcounter--;
 		}
-
-		const auto chunkBulkSize = gChunkBulkSize.load(std::memory_order_relaxed);
 
 		std::vector<ChunkWithType> chunks_with_type;
 		hddGetDamagedChunks(chunks_with_type, chunkBulkSize);
@@ -168,7 +168,9 @@ void masterconn_check_hdd_reports() {
 		if (!chunks_with_type.empty()) {
 			eptr->createAttachedPacket(cstoma::chunkLost::build(chunks_with_type));
 		}
+	}
 
+	if (eptr != nullptr && eptr->isRegistered()) {
 		if (eptr->sendsInventory()) {
 			std::vector<ChunkWithVersionAndType> chunks_with_version;
 			bool chunksFromScan = false;
@@ -189,6 +191,10 @@ void masterconn_check_hdd_reports() {
 			hddDiscardNewChunks();
 		}
 	}
+}
+
+void masterconn_check_hdd_reports() {
+	masterconn_check_hdd_reports(gConnectionState);
 }
 
 void masterconn_unwantedjobfinished(uint8_t status, void *packet) {

@@ -63,6 +63,9 @@ struct MasterConnReconciliationState {
 /// Broadcasts changed disk-space counters without consuming inventory reports.
 void masterconn_report_space(MasterConnReconciliationState &state);
 
+/// Advances registration and queues disk reports for the supplied connections.
+void masterconn_check_hdd_reports(MasterConnReconciliationState &state);
+
 /// Applies the configured connection's latest snapshot after the current poll batch is served.
 void masterconn_reconcile_connections(MasterConnReconciliationState &state,
                                       const std::shared_ptr<MasterJobPool> &jobPool,

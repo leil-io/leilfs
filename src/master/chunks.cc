@@ -2477,7 +2477,7 @@ void chunk_damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunk_t
 			return;
 		}
 	}
-	c->parts.push_back(ChunkPart(server_csid, ChunkPart::INVALID, 0, slice_traits::standard::ChunkPartType()));
+	c->parts.push_back(ChunkPart(server_csid, ChunkPart::INVALID, 0, chunk_type));
 	c->updateStats();
 	c->needVersionIncrease = 1;
 }
