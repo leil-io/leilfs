@@ -241,6 +241,10 @@ void DefaultDiskManager::reloadDisksFromCfg() {
 		while (std::getline(hddFile, line)) {
 			parseCfgLine(std::move(line));
 		}
+		// A read error ends the loop as the end of the file would.
+		if (hddFile.bad()) {
+			throw InitializeException("can't read hdd config file " + hddFilename);
+		}
 	} catch (...) {
 		// The pass never reached the lines below the failing one, so their
 		// Disks are still marked as gone. Clear the marks before anything acts

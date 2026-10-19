@@ -550,3 +550,20 @@ TEST(DiskTests, ReloadTakesOnlyTheMissingLock) {
 	EXPECT_FALSE(isLockFree(meta + ".lock"));
 	EXPECT_FALSE(isLockFree(data + ".lock"));
 }
+
+TEST(DiskTests, ReloadRefusesADiskListThatFailsToRead) {
+	TemporaryDirectory dir("/tmp", "disk-reload-read-error");
+	const std::string line = dir.name() + "/";
+	const ReloadCleanup cleanup;
+	configureDiskList(dir.name(), line);
+	IDisk &disk = startDisk(line);
+
+	// A regular file whose reads fail with EIO from its first byte.
+	std::ofstream(dir.name() + "/test.cfg") << "HDD_CONF_FILENAME = /proc/self/mem\n";
+	ASSERT_EQ(cfg_reload(), 0);
+
+	DefaultDiskManager manager;
+	EXPECT_THROW(manager.reloadDisksFromCfg(), InitializeException);
+	EXPECT_FALSE(disk.wasRemovedFromConfig());
+	EXPECT_EQ(gDiskActions, 1);
+}
