@@ -311,8 +311,9 @@ TEST(MasterConnReconciliationTests, DetachedLockDoesNotBlockEndpointReplacement)
 	auto *writeEndPacket = new OutputPacket;
 	cstoma::writeEndStatus::serialize(writeEndPacket->packet, chunkId, chunkType,
 	                                  SAUNAFS_STATUS_OK);
-	ASSERT_TRUE(harness.jobs->startChunkLock(MasterConn::sauJobFinished(originalConnection),
-	                                         writeEndPacket, chunkId, chunkType, 1));
+	ASSERT_EQ(harness.jobs->startChunkLock(MasterConn::sauJobFinished(originalConnection),
+	                                       writeEndPacket, chunkId, chunkType, 0, 0, 1),
+	          MasterJobPool::LockStart::kInstalled);
 	ASSERT_FALSE(harness.jobs->isListenerIdle(1));
 
 	harness.stage({replacement});
@@ -324,11 +325,11 @@ TEST(MasterConnReconciliationTests, DetachedLockDoesNotBlockEndpointReplacement)
 	EXPECT_EQ(replacementConnection.address(), harness.replacementServer.address());
 	EXPECT_TRUE(harness.jobs->isListenerIdle(1));
 
-	EXPECT_TRUE(harness.jobs->enforceChunkLock(chunkId, chunkType));
+	EXPECT_TRUE(harness.jobs->enforceChunkLock(chunkId, chunkType, 0));
 	replacementConnection.resetPackets();
-	harness.jobs->endChunkLock(chunkId, chunkType, SAUNAFS_STATUS_OK);
+	harness.jobs->endChunkLock(chunkId, chunkType, SAUNAFS_STATUS_OK, 0);
 	EXPECT_TRUE(replacementConnection.isOutputQueueEmpty());
-	EXPECT_FALSE(harness.jobs->enforceChunkLock(chunkId, chunkType));
+	EXPECT_FALSE(harness.jobs->enforceChunkLock(chunkId, chunkType, 0));
 }
 
 TEST(MasterConnReconciliationTests, ReusedSlotDoesNotReceivePreviousPeersReply) {
@@ -437,6 +438,53 @@ void checkReconciliationAdmissionFailure(bool failSecondPool) {
 	EXPECT_EQ(harness.jobs->allocatedListenerCount(), 3U);
 	EXPECT_EQ(harness.replications->allocatedListenerCount(), 3U);
 	EXPECT_EQ(survivingConnection->socketFD(), survivorSocket);
+}
+
+TEST(MasterConnReconciliationTests, LocksNameTheServerTheConfiguredConnectionReached) {
+	ReconciliationHarness harness;
+	harness.initialize();
+	harness.jobs->enableIdentityMode();
+	auto &seed = *harness.state.connections[0].connection;
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	constexpr uint64_t chunkId = 7;
+	auto lock = matocs::chunkLock::build(chunkId, chunkType);
+	removeHeaderInPlace(lock);
+	const auto snapshotOf = [](uint32_t seedId) {
+		auto snapshot = matocs::clusterMembers::build(seedId, {});
+		removeHeaderInPlace(snapshot);
+		return snapshot;
+	};
+
+	// Until its first snapshot the configured connection does not know which server it reached,
+	// so it takes no lock.
+	seed.lockChunk(lock);
+	EXPECT_TRUE(harness.jobs->isListenerIdle(0));
+
+	// Server 1's snapshot: the lock is server 1's, and only server 1 unlocks it.
+	seed.receiveClusterSnapshot(snapshotOf(1));
+	seed.lockChunk(lock);
+	EXPECT_FALSE(harness.jobs->isListenerIdle(0));
+	harness.jobs->eraseChunkLock(chunkId, chunkType, 2);
+	EXPECT_FALSE(harness.jobs->isListenerIdle(0));
+	harness.jobs->eraseChunkLock(chunkId, chunkType, 1);
+	EXPECT_TRUE(harness.jobs->isListenerIdle(0));
+
+	// A new socket may reach another server behind the same address: no lock until its snapshot,
+	// and then the locks are that server's.
+	seed.setMode(ConnectionMode::KILL);
+	seed.setMode(ConnectionMode::CONNECTED);
+	seed.setSendInventory(false);
+	auto registered = matocs::registerHost::build(SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX, "default");
+	removeHeaderInPlace(registered);
+	seed.onRegistered(registered);
+	seed.lockChunk(lock);
+	EXPECT_TRUE(harness.jobs->isListenerIdle(0));
+	seed.receiveClusterSnapshot(snapshotOf(2));
+	seed.lockChunk(lock);
+	harness.jobs->eraseChunkLock(chunkId, chunkType, 1);
+	EXPECT_FALSE(harness.jobs->isListenerIdle(0));
+	harness.jobs->eraseChunkLock(chunkId, chunkType, 2);
+	EXPECT_TRUE(harness.jobs->isListenerIdle(0));
 }
 
 }  // namespace

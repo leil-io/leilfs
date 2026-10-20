@@ -111,8 +111,19 @@ static std::vector<std::pair<IDisk *, std::vector<ChunkWithType>>>
     gNewDisksToBeDeletedWithPendingChunks;
 
 static std::mutex gAlreadyRepliedInputBuffersMutex;
-using InputBufferWithWriteInfo = std::pair<std::shared_ptr<InputBuffer>, std::vector<WriteInfo>>;
-static std::unordered_map<ChunkWithType, std::list<InputBufferWithWriteInfo>, KeyOperations,
+/// The input buffer of a write already replied to its client, with what it replied.
+struct RepliedInputBuffer {
+	/// The written data, until its write job flushed it.
+	std::shared_ptr<InputBuffer> buffer;
+	/// What each replied block wrote, as the client sent it.
+	std::vector<WriteInfo> writeInfo;
+	/// The chunk version of the write session; none under Master, where every buffer is served.
+	std::optional<uint32_t> version;
+
+	/// Whether a read of the part at @p partVersion includes this buffer's data.
+	bool servedAt(uint32_t partVersion) const { return !version || *version == partVersion; }
+};
+static std::unordered_map<ChunkWithType, std::list<RepliedInputBuffer>, KeyOperations,
                           KeyOperations>
     gAlreadyRepliedInputBuffers;
 
@@ -707,6 +718,7 @@ int hddClose(IChunk *chunk) {
 }
 
 void hddInsertAlreadyRepliedInputBuffer(uint64_t chunkId, ChunkPartType chunkType,
+                                        std::optional<uint32_t> sessionVersion,
                                         std::shared_ptr<InputBuffer> inputBuffer,
                                         bool isFirstReply) {
 	TRACETHIS2(chunkId, chunkType.toString());
@@ -714,8 +726,8 @@ void hddInsertAlreadyRepliedInputBuffer(uint64_t chunkId, ChunkPartType chunkTyp
 	std::lock_guard lock(gAlreadyRepliedInputBuffersMutex);
 	if (isFirstReply) {
 		auto writeInfoVec = inputBuffer->getWriteInfoVector();
-		gAlreadyRepliedInputBuffers[{chunkId, chunkType}].emplace_back(std::move(inputBuffer),
-		                                                               std::move(writeInfoVec));
+		gAlreadyRepliedInputBuffers[{chunkId, chunkType}].push_back(
+		    {std::move(inputBuffer), std::move(writeInfoVec), sessionVersion});
 	} else {
 		// For subsequent replies, we need to find the existing input buffer and update its write
 		// info vector
@@ -727,9 +739,9 @@ void hddInsertAlreadyRepliedInputBuffer(uint64_t chunkId, ChunkPartType chunkTyp
 		auto &inputBufferList = it->second;
 		// We assume that the input buffer is already in the list, since it should have been added
 		// when the first reply was done. If it's not found, we just skip the update.
-		for (auto &inputBufferWithWriteInfo : inputBufferList) {
-			if (inputBufferWithWriteInfo.first == inputBuffer) {
-				inputBufferWithWriteInfo.second = inputBuffer->getWriteInfoVector();
+		for (auto &replied : inputBufferList) {
+			if (replied.buffer == inputBuffer) {
+				replied.writeInfo = inputBuffer->getWriteInfoVector();
 				break;
 			}
 		}
@@ -743,9 +755,8 @@ void hddRemoveAlreadyRepliedInputBuffer(uint64_t chunkId, ChunkPartType chunkTyp
 	std::lock_guard lock(gAlreadyRepliedInputBuffersMutex);
 	if (gAlreadyRepliedInputBuffers.contains({chunkId, chunkType})) {
 		auto &inputBufferList = gAlreadyRepliedInputBuffers[{chunkId, chunkType}];
-		inputBufferList.remove_if([&inputBuffer](const InputBufferWithWriteInfo &item) {
-			return item.first == inputBuffer;
-		});
+		inputBufferList.remove_if(
+		    [&inputBuffer](const RepliedInputBuffer &item) { return item.buffer == inputBuffer; });
 		if (inputBufferList.empty()) { gAlreadyRepliedInputBuffers.erase({chunkId, chunkType}); }
 	}
 }
@@ -755,11 +766,13 @@ void hddRemoveAlreadyRepliedInputBuffer(uint64_t chunkId, ChunkPartType chunkTyp
 // patch the output buffer with the data that should be already in the disk.
 // @param chunkId the id of the chunk being read
 // @param chunkType the type of the chunk being read
+// @param partVersion the version of the part being read
 // @param offset the offset of the read request
 // @param size the size of the read request
 // @param outputBuffer the output buffer to be updated
 void hddUpdateOutputBufferWithAlreadyRepliedInputBuffers(uint64_t chunkId, ChunkPartType chunkType,
-                                                         uint32_t offset, uint32_t size,
+                                                         uint32_t partVersion, uint32_t offset,
+                                                         uint32_t size,
                                                          OutputBuffer *outputBuffer) {
 	TRACETHIS2(chunkId, chunkType.toString());
 
@@ -775,7 +788,10 @@ void hddUpdateOutputBufferWithAlreadyRepliedInputBuffers(uint64_t chunkId, Chunk
 	if (it == gAlreadyRepliedInputBuffers.end()) { return; }
 	auto &inputBufferList = it->second;
 
-	for (const auto &[inputBuffer, writeInfoVec] : inputBufferList) {
+	for (const auto &replied : inputBufferList) {
+		if (!replied.servedAt(partVersion)) { continue; }
+		const auto &inputBuffer = replied.buffer;
+		const auto &writeInfoVec = replied.writeInfo;
 		uint16_t repliedBlocks = inputBuffer->repliedBlocks;
 
 		// For each block that was replied to the client, check if it overlaps with the
@@ -825,17 +841,21 @@ void hddUpdateOutputBufferWithAlreadyRepliedInputBuffers(uint64_t chunkId, Chunk
 	}
 }
 
-// One past the highest block acknowledged to a writer, flushed or not: reads already serve them.
-static uint16_t hddAlreadyRepliedBlocksEnd(uint64_t chunkId, ChunkPartType chunkType) {
+// One past the highest block acknowledged to a writer, flushed or not: reads of the part at
+// @p partVersion already serve them.
+uint16_t hddAlreadyRepliedBlocksEnd(uint64_t chunkId, ChunkPartType chunkType,
+                                    uint32_t partVersion) {
 	std::lock_guard lock(gAlreadyRepliedInputBuffersMutex);
 	auto buffers = gAlreadyRepliedInputBuffers.find({chunkId, chunkType});
 	if (buffers == gAlreadyRepliedInputBuffers.end()) { return 0; }
 
 	uint16_t blocksEnd = 0;
-	for (const auto &[inputBuffer, writeInfoVec] : buffers->second) {
-		size_t repliedBlocks = std::min<size_t>(inputBuffer->repliedBlocks, writeInfoVec.size());
+	for (const auto &replied : buffers->second) {
+		if (!replied.servedAt(partVersion)) { continue; }
+		size_t repliedBlocks =
+		    std::min<size_t>(replied.buffer->repliedBlocks, replied.writeInfo.size());
 		for (size_t index = 0; index < repliedBlocks; ++index) {
-			blocksEnd = std::max<uint16_t>(blocksEnd, writeInfoVec[index].blockNum + 1);
+			blocksEnd = std::max<uint16_t>(blocksEnd, replied.writeInfo[index].blockNum + 1);
 		}
 	}
 	return blocksEnd;
@@ -1124,8 +1144,8 @@ int hddRead(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
 	}
 
 	if (status == SAUNAFS_STATUS_OK) {
-		hddUpdateOutputBufferWithAlreadyRepliedInputBuffers(chunkId, chunkType, originalOffset,
-		                                                    originalSize, outputBuffer);
+		hddUpdateOutputBufferWithAlreadyRepliedInputBuffers(
+		    chunkId, chunkType, chunk->version(), originalOffset, originalSize, outputBuffer);
 	}
 
 	PRINTTHIS(status);
@@ -1204,7 +1224,8 @@ int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
 	}
 
 	// A replication copies this many blocks, so it must include writes still being flushed.
-	*blocks = std::max(chunk->blocks(), hddAlreadyRepliedBlocksEnd(chunkId, chunkType));
+	*blocks =
+	    std::max(chunk->blocks(), hddAlreadyRepliedBlocksEnd(chunkId, chunkType, chunk->version()));
 	hddChunkRelease(chunk);
 
 	return SAUNAFS_STATUS_OK;
@@ -1218,6 +1239,16 @@ int hddChunkGetVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t *vers
 	*version = chunk->version();
 	hddChunkRelease(chunk);
 	return SAUNAFS_STATUS_OK;
+}
+
+int hddChunkRunAtVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t version,
+                         const std::function<int(IChunk *)> &action) {
+	TRACETHIS1(chunkId);
+	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
+	if (chunk == ChunkNotFound) { return SAUNAFS_ERROR_NOCHUNK; }
+	const int status = chunk->version() == version ? action(chunk) : SAUNAFS_ERROR_WRONGVERSION;
+	hddChunkRelease(chunk);
+	return status;
 }
 
 std::pair<int, IChunk *> hddInternalCreateChunk(uint64_t chunkId,

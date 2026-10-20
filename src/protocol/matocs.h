@@ -99,10 +99,15 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t,  newVersion)
 
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, chunkLock, kECChunks, 0)
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, chunkLock, kWithChunkVersion, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocs, chunkLock, SAU_MATOCS_LOCK_CHUNK, kECChunks,
 		uint64_t,  chunkId,
 		ChunkPartType, chunkType)
+// Installed only on a part at chunkVersion (kFirstVersionWithVersionedChunkLock)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, chunkLock, SAU_MATOCS_LOCK_CHUNK, kWithChunkVersion,
+                                    uint64_t, chunkId, ChunkPartType, chunkType, uint32_t,
+                                    chunkVersion)
 
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, chunkUnlock, kECChunks, 0)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(

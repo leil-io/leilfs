@@ -342,12 +342,34 @@ bool WriteHighLevelOp::isInputBufferFreezable() const {
 	return inputBuffer_ != nullptr && !inputBuffer_->isBeingUpdated();
 }
 
-void WriteHighLevelOp::startOpenWriteJob() {
+void WriteHighLevelOp::startOpenWriteJob(bool atSessionVersion) {
+	// The open job joins the session's lock once the part matched the session's version
+	std::function<void()> joinLock;
+	if (atSessionVersion) {
+		joinedLock_ = std::make_shared<uint64_t>(0);
+		joinLock = [joined = joinedLock_, chunkId = chunkId_, chunkType = chunkType_,
+		            chunkVersion = chunkVersion_] {
+			*joined = masterconn_get_job_pool()->enforceChunkLock(chunkId, chunkType, chunkVersion);
+		};
+	}
+
 	writeJobWriteId_ = 0;
 	writeJobId_ = job_open(
 	    *workerJobPool(),
 	    [this](uint8_t status, void *entry) { this->openWriteFinishedCallback(status, entry); },
-	    chunkId_, chunkType_);
+	    chunkId_, chunkType_, atSessionVersion ? std::optional(chunkVersion_) : std::nullopt,
+	    std::move(joinLock));
+}
+
+void WriteHighLevelOp::adoptJoinedLock() {
+	if (!joinedLock_) { return; }
+	lockIdentity_ = *joinedLock_;
+	isChunkLocked_ = lockIdentity_ != 0;
+	joinedLock_.reset();
+
+	// The joined lock holds requests back from now on; a refused session holds none
+	masterconn_get_job_pool()->releaseChunkLockReservation(chunkId_, chunkType_, reservedLock_);
+	reservedLock_ = 0;
 }
 
 void WriteHighLevelOp::updateUsingWriteStatusAndReply(uint8_t status, uint32_t writeId) {
@@ -382,6 +404,11 @@ void WriteHighLevelOp::decreasePendingWriteJobsToCheckAndApplyClosedOnParent() {
 
 void WriteHighLevelOp::delayedCloseCallback(uint8_t status, void * /*entry*/) {
 	assert(getParentState() == ChunkserverEntry::State::CloseWait);
+
+	if (isOpenWriteJobBeingProcessed()) {
+		// The open job may have joined a lock before the close: it ends with the session
+		adoptJoinedLock();
+	}
 
 	if (isOpenWriteJobBeingProcessed() && status == SAUNAFS_STATUS_OK) {
 		// this was job_open (write)
@@ -608,6 +635,7 @@ void WriteHighLevelOp::openWriteFinishedCallback(uint8_t status, void * /*entry*
 		               __func__, writeJobWriteId_, chunkId_, status);
 	}
 	setNoWriteJobBeingProcessed();
+	adoptJoinedLock();
 
 	// We should assume that writeJobWriteId is 0 here, because this callback
 	// is called after job_open, which should have set writeJobWriteId to 0.
@@ -646,8 +674,20 @@ void WriteHighLevelOp::setup(uint64_t chunkId, uint32_t chunkVersion, ChunkPartT
 	chunkVersion_ = chunkVersion;
 	chunkType_ = chunkType;
 
-	isChunkLocked_ = masterconn_get_job_pool()->enforceChunkLock(chunkId_, chunkType_);
-	startOpenWriteJob();
+	auto &jobPool = *masterconn_get_job_pool();
+	if (jobPool.identityMode()) {
+		// Commands of metadata servers wait behind a lock at the session's version from now on, as
+		// under Master; the identity that lets the session end the lock is taken only once the
+		// open matched the part's version, so a refused session ends no lock and holds no command
+		reservedLock_ = jobPool.reserveChunkLock(chunkId_, chunkType_, chunkVersion_);
+		startOpenWriteJob(true);
+		return;
+	}
+
+	// Under Master the session joins the part's lock at once, as before
+	lockIdentity_ = jobPool.enforceChunkLock(chunkId_, chunkType_, chunkVersion_);
+	isChunkLocked_ = lockIdentity_ != 0;
+	startOpenWriteJob(false);
 }
 
 void WriteHighLevelOp::prepareForNewWriteData(bool mustForward, uint8_t *headerBuffer) {
@@ -685,6 +725,10 @@ ssize_t WriteHighLevelOp::writeData(int sock, size_t bytesToWrite) {
 }
 
 bool WriteHighLevelOp::trySeal() {
+	// An open that checks the session's version settles the session's lock first; a write end
+	// before it is too early, as one before the replies
+	if (joinedLock_) { return false; }
+
 	if (inputBuffer_ != nullptr) {
 		// If there is an input buffer, we can only seal if all its data has been replied
 		if (inputBuffer_->isBeingUpdated()) { return false; }
@@ -734,9 +778,10 @@ bool WriteHighLevelOp::isCompleted() const {
 void WriteHighLevelOp::delayedClose() {
 	inDelayedClose_ = true;
 
-	// Only write init received - disable open write job
+	// Only write init received - disable open write job, unless it checks the session's version:
+	// that open settles the session's lock, which the cleanup then ends
 	if (isOpenWriteJobBeingProcessed()) {
-		workerJobPool()->disableJob(writeJobId_);
+		if (!joinedLock_) { workerJobPool()->disableJob(writeJobId_); }
 		workerJobPool()->changeCallback(
 		    writeJobId_,
 		    [this](uint8_t status, void *entry) { this->delayedCloseCallback(status, entry); },
@@ -818,13 +863,14 @@ void WriteHighLevelOp::cleanup() {
 		if (isChunkLocked_) {
 			// We need to wait for the metadata to be synced before releasing the lock, so we use a
 			// callback to release the lock afterward
-			job_close(*workerJobPool(), jobCloseWriteCallback(chunkId_, chunkType_, untoldStatus_),
+			job_close(*workerJobPool(),
+			          jobCloseWriteCallback(chunkId_, chunkType_, untoldStatus_, lockIdentity_),
 			          chunkId_, chunkType_);
 		} else {
 			job_close(*workerJobPool(), kEmptyCallback, chunkId_, chunkType_);
 		}
 	} else if (isChunkLocked_) {
-		masterconn_get_job_pool()->endChunkLock(chunkId_, chunkType_, untoldStatus_);
+		masterconn_get_job_pool()->endChunkLock(chunkId_, chunkType_, untoldStatus_, lockIdentity_);
 	}
 }
 
@@ -852,11 +898,15 @@ void WriteHighLevelOp::tryInstantReply(bool fromFlushDataCall) {
 
 	// Instant reply for a single buffer, it is assumed that we can reply for all blocks in
 	// the buffer.
-	auto bufferLevelInstantReply = [this](std::shared_ptr<InputBuffer> &buffer) {
+	// Under several metadata servers the replied data is served only at the session's version: a
+	// version change past the session, by the server that took the chunk over, leaves it out
+	const auto servedVersion =
+	    masterconn_get_job_pool()->identityMode() ? std::optional(chunkVersion_) : std::nullopt;
+	auto bufferLevelInstantReply = [this, servedVersion](std::shared_ptr<InputBuffer> &buffer) {
 		auto &writeInfoVec = buffer->getWriteInfoVector();
 
 		if (writeInfoVec.size() > 0) {
-			hddInsertAlreadyRepliedInputBuffer(chunkId_, chunkType_, buffer,
+			hddInsertAlreadyRepliedInputBuffer(chunkId_, chunkType_, servedVersion, buffer,
 			                                   buffer->repliedBlocks == 0);
 		}
 
@@ -904,12 +954,13 @@ void WriteHighLevelOp::tryInstantReply(bool fromFlushDataCall) {
 
 std::function<void(uint8_t status, void *packet)> jobCloseWriteCallback(uint64_t chunkId,
                                                                         ChunkPartType chunkType,
-                                                                        uint8_t untoldStatus) {
-	return [chunkId, chunkType, untoldStatus](uint8_t status, void * /*entry*/) {
+                                                                        uint8_t untoldStatus,
+                                                                        uint64_t lockIdentity) {
+	return [chunkId, chunkType, untoldStatus, lockIdentity](uint8_t status, void * /*entry*/) {
 		if (untoldStatus == SAUNAFS_STATUS_OK && status != SAUNAFS_STATUS_OK) {
-			masterconn_get_job_pool()->endChunkLock(chunkId, chunkType, status);
+			masterconn_get_job_pool()->endChunkLock(chunkId, chunkType, status, lockIdentity);
 		} else {
-			masterconn_get_job_pool()->endChunkLock(chunkId, chunkType, untoldStatus);
+			masterconn_get_job_pool()->endChunkLock(chunkId, chunkType, untoldStatus, lockIdentity);
 		}
 	};
 }
