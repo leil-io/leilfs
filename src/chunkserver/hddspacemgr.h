@@ -23,6 +23,8 @@
 #include "common/platform.h"
 
 #include <atomic>
+#include <functional>
+#include <optional>
 #include <vector>
 
 #include "chunkserver-common/chunk_interface.h"
@@ -93,6 +95,11 @@ int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
 /// answer to a metadata server's probe, which needs the version without a block count. This is
 /// the raw version: unlike the inventory, it carries no to-delete flag in the high bit.
 int hddChunkGetVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t *version);
+/// Runs @p action on the part while it is held at @p version, so the version cannot change
+/// before the action is done: NOCHUNK when the part is not on this server, WRONGVERSION at
+/// another version, the action's status otherwise.
+int hddChunkRunAtVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t version,
+                         const std::function<int(IChunk *)> &action);
 
 /* chunk operations */
 int hddTruncate(uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
@@ -147,10 +154,23 @@ int hddInternalUpdateVersion(uint64_t chunkId, uint32_t version,
 /** \brief Inserts the input buffer of already replied write operation to a container, so that it is
  * used to patch some of the read requests coming after the write operation, but before the chunk
  * file is updated on disk. Thread safe.
+ * \param sessionVersion When set, only reads of the part at this version use the buffer.
  */
 void hddInsertAlreadyRepliedInputBuffer(uint64_t chunkId, ChunkPartType chunkType,
+                                        std::optional<uint32_t> sessionVersion,
                                         std::shared_ptr<InputBuffer> inputBuffer,
                                         bool isFirstReply);
+
+/// Patches @p outputBuffer, read from the part at @p partVersion, with the replied writes that a
+/// read at that version serves. Thread safe.
+void hddUpdateOutputBufferWithAlreadyRepliedInputBuffers(uint64_t chunkId, ChunkPartType chunkType,
+                                                         uint32_t partVersion, uint32_t offset,
+                                                         uint32_t size, OutputBuffer *outputBuffer);
+
+/// One past the highest block a replied write that a read at @p partVersion serves has written,
+/// flushed to disk or not; 0 when there is none. Thread safe.
+uint16_t hddAlreadyRepliedBlocksEnd(uint64_t chunkId, ChunkPartType chunkType,
+                                    uint32_t partVersion);
 
 /** \brief Removes the input buffer of already replied write operation from the container, so that
  * it is not used to patch read requests anymore. Thread safe.

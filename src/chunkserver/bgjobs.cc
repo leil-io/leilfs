@@ -476,7 +476,8 @@ uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOper
 
 	std::unique_lock lockedChunkLock(chunkToJobReplyMapMutex_);
 	auto it = chunkToJobReplyMap_.find(chunkWithType);
-	if (it != chunkToJobReplyMap_.end() && it->second.writeInitReceived) {
+	if (it != chunkToJobReplyMap_.end() &&
+	    (it->second.writeInitReceived || it->second.reservedOpens > 0)) {
 		// Chunk is locked, store the job to be added later
 		auto &lockedChunkData = it->second;
 		listener->deferredJobs.fetch_add(1);
@@ -529,6 +530,8 @@ void MasterJobPool::changeLockJobsCallback(const LockJobCallbackMaker &lockJobCa
 	if (listenerInfo == nullptr) { return; }
 
 	std::scoped_lock lock(chunkToJobReplyMapMutex_, listenerInfo->jobsMutex);
+	// A lock still being installed for the closed connection is refused
+	++lockConnectionEpochs_[listenerId];
 	for (auto &[chunkWithType, lockedChunkData] : chunkToJobReplyMap_) {
 		if (lockedChunkData.listenerId == listenerId) {
 			auto jobIterator = listenerInfo->jobHash.find(lockedChunkData.lockJobId);
@@ -559,6 +562,7 @@ void MasterJobPool::detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMa
 	if (listenerInfo == nullptr || targetInfo == nullptr) { return; }
 
 	std::scoped_lock lock(chunkToJobReplyMapMutex_, listenerInfo->jobsMutex, targetInfo->jobsMutex);
+	++lockConnectionEpochs_[listenerId];
 	for (auto &[chunkWithType, lockedChunkData] : chunkToJobReplyMap_) {
 		if (lockedChunkData.listenerId != listenerId) { continue; }
 
@@ -586,30 +590,82 @@ void MasterJobPool::detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMa
 	}
 }
 
-bool MasterJobPool::startChunkLock(const JobPool::JobCallback &callback, void *packet,
-                                   uint64_t chunkId, ChunkPartType chunkType, uint32_t listenerId) {
+MasterJobPool::LockStart MasterJobPool::startChunkLock(const JobPool::JobCallback &callback,
+                                                       void *packet, uint64_t chunkId,
+                                                       ChunkPartType chunkType, uint32_t ownerId,
+                                                       uint32_t chunkVersion, uint32_t listenerId,
+                                                       std::optional<uint32_t> connectionEpoch) {
 	// Resolve the listener before recording it. addLockJob corrects its own copy of the argument,
 	// so the map would otherwise name a listener that never receives the reply, stranding the
 	// lock job on the one that does.
 	listenerForJob(listenerId, __func__);
 
+	// A lock job that waited for its part while its connection closed or retired installs nothing
+	std::optional<LockedChunkData> replaced;
 	std::unique_lock lock(chunkToJobReplyMapMutex_);
-	if (chunkToJobReplyMap_.contains(ChunkWithType{chunkId, chunkType})) {
-		lock.unlock();  // Release the lock before logging to avoid extra contention
-
+	if (connectionEpoch && *connectionEpoch != lockConnectionEpochs_[listenerId]) {
+		lock.unlock();
 		safs::log_warn(
-		    "{}: Chunk lock job already exists for chunkId {:016X}, chunkType {}. Treating request "
-		    "as retransmission; not adding a new lock job.",
-		    __func__, chunkId, chunkType.toString());
-		return false;
+		    "chunk lock refused: chunkId {:016X}, chunkType {}, version {}: its connection closed",
+		    chunkId, chunkType.toString(), chunkVersion);
+		return LockStart::kRefused;
 	}
 
-	chunkToJobReplyMap_[ChunkWithType{chunkId, chunkType}] =
-	    LockedChunkData(addLockJob(callback, packet, listenerId), listenerId);
-	return true;
+	// An existing lock of the part decides first
+	const ChunkWithType key{chunkId, chunkType};
+	if (auto entry = chunkToJobReplyMap_.find(key); entry != chunkToJobReplyMap_.end()) {
+		const uint32_t holder = entry->second.ownerId;
+		const uint32_t heldVersion = entry->second.version;
+
+		// The requester's own lock again, or any lock while every lock is Master's
+		if (!identityMode() || holder == ownerId) {
+			lock.unlock();  // Release the lock before logging to avoid extra contention
+
+			safs::log_warn(
+			    "{}: Chunk lock job already exists for chunkId {:016X}, chunkType {}. Treating "
+			    "request as retransmission; not adding a new lock job.",
+			    __func__, chunkId, chunkType.toString());
+			return LockStart::kExisting;
+		}
+
+		// Another server's lock at the same or a newer version stays
+		if (chunkVersion <= heldVersion) {
+			lock.unlock();
+			safs::log_warn(
+			    "chunk lock refused: chunkId {:016X}, chunkType {}, version {}: metadata server {} "
+			    "holds it at version {}",
+			    chunkId, chunkType.toString(), chunkVersion, holder, heldVersion);
+			return LockStart::kRefused;
+		}
+
+		// Another server's older lock gives way
+		replaced = std::move(entry->second);
+		chunkToJobReplyMap_.erase(entry);
+	}
+
+	// The new lock, with what later requests are judged by
+	LockedChunkData installed(addLockJob(callback, packet, listenerId), listenerId);
+	installed.identity = nextLockIdentity_++;
+	installed.ownerId = ownerId;
+	installed.version = chunkVersion;
+	chunkToJobReplyMap_[key] = std::move(installed);
+	lock.unlock();
+
+	// The new owner's write gets the notice, not the replaced lock; the replaced lock's deferred
+	// work goes ahead as after an unlock
+	if (replaced) {
+		safs::log_info(
+		    "chunk lock of chunkId {:016X}, chunkType {}, version {} replaces the lock of metadata "
+		    "server {} at version {}",
+		    chunkId, chunkType.toString(), chunkVersion, replaced->ownerId, replaced->version);
+		dropLockJob(replaced->lockJobId, replaced->listenerId);
+		for (const auto &addJobFunc : replaced->pendingAddJobs) { addJobFunc(); }
+	}
+	return LockStart::kInstalled;
 }
 
-bool MasterJobPool::enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType) {
+uint64_t MasterJobPool::enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType,
+                                         uint32_t chunkVersion) {
 	std::unique_lock lock(chunkToJobReplyMapMutex_);
 	auto entry = chunkToJobReplyMap_.find(ChunkWithType{chunkId, chunkType});
 	if (entry == chunkToJobReplyMap_.end()) {
@@ -618,15 +674,46 @@ bool MasterJobPool::enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType) 
 		// Master was not waiting for this lock, just log and return
 		safs::log_trace("{}: No chunk lock job found for chunkId {:016X}, chunkType {}. Ignoring.",
 		                __func__, chunkId, chunkType.toString());
-		return false;
+		return 0;
 	}
+	// A session at another version than the lock's belongs to no write of the lock's server
+	if (identityMode() && entry->second.version != chunkVersion) { return 0; }
 
 	entry->second.writeInitReceived = true;
-	return true;
+	return entry->second.identity;
+}
+
+uint64_t MasterJobPool::reserveChunkLock(uint64_t chunkId, ChunkPartType chunkType,
+                                         uint32_t chunkVersion) {
+	std::lock_guard lock(chunkToJobReplyMapMutex_);
+	auto entry = chunkToJobReplyMap_.find(ChunkWithType{chunkId, chunkType});
+	if (entry == chunkToJobReplyMap_.end() || entry->second.version != chunkVersion) { return 0; }
+
+	++entry->second.reservedOpens;
+	return entry->second.identity;
+}
+
+void MasterJobPool::releaseChunkLockReservation(uint64_t chunkId, ChunkPartType chunkType,
+                                                uint64_t lockIdentity) {
+	if (lockIdentity == 0) { return; }
+	std::unique_lock lock(chunkToJobReplyMapMutex_);
+	auto entry = chunkToJobReplyMap_.find(ChunkWithType{chunkId, chunkType});
+	if (entry == chunkToJobReplyMap_.end() || entry->second.identity != lockIdentity) { return; }
+
+	// Requests go ahead once no open is pending and no session joined the lock
+	auto &locked = entry->second;
+	--locked.reservedOpens;
+	if (locked.reservedOpens > 0 || locked.writeInitReceived) { return; }
+
+	auto pendingAddJobs = std::move(locked.pendingAddJobs);
+	locked.pendingAddJobs.clear();
+	lock.unlock();
+	for (const auto &addJobFunc : pendingAddJobs) { addJobFunc(); }
 }
 
 bool MasterJobPool::releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkType,
-                                          const char *callerName, uint32_t &lockJobId,
+                                          const char *callerName, std::optional<uint32_t> ownerId,
+                                          std::optional<uint64_t> identity, uint32_t &lockJobId,
                                           uint32_t &listenerId,
                                           std::vector<AddJobFunc> &pendingAddJobs) {
 	std::unique_lock lock(chunkToJobReplyMapMutex_);
@@ -640,6 +727,27 @@ bool MasterJobPool::releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkT
 		return false;
 	}
 
+	// An unlock erases only its requester's lock
+	if (ownerId && identityMode() && entry->second.ownerId != *ownerId) {
+		const uint32_t holder = entry->second.ownerId;
+		lock.unlock();
+		safs::log_warn(
+		    "{}: chunk lock of chunkId {:016X}, chunkType {} belongs to metadata server {}, not "
+		    "{}. Ignoring.",
+		    callerName, chunkId, chunkType.toString(), holder, *ownerId);
+		return false;
+	}
+
+	// A write session ends only the lock it joined
+	if (identity && identityMode() && entry->second.identity != *identity) {
+		lock.unlock();
+		safs::log_warn(
+		    "{}: the chunk lock of chunkId {:016X}, chunkType {} is not the one the write session "
+		    "joined. Ignoring.",
+		    callerName, chunkId, chunkType.toString());
+		return false;
+	}
+
 	lockJobId = entry->second.lockJobId;
 	listenerId = entry->second.listenerId;
 	pendingAddJobs = std::move(entry->second.pendingAddJobs);
@@ -647,13 +755,14 @@ bool MasterJobPool::releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkT
 	return true;
 }
 
-void MasterJobPool::endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint8_t status) {
+void MasterJobPool::endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint8_t status,
+                                 uint64_t lockIdentity) {
 	uint32_t lockJobId;
 	uint32_t listenerId;
 	std::vector<AddJobFunc> pendingAddJobs;
 
-	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, lockJobId, listenerId,
-	                           pendingAddJobs)) {
+	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, std::nullopt, lockIdentity, lockJobId,
+	                           listenerId, pendingAddJobs)) {
 		return;  // No lock job found, just return
 	}
 
@@ -662,19 +771,38 @@ void MasterJobPool::endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint
 	sendStatus(lockJobId, status, listenerId);
 }
 
-void MasterJobPool::eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType) {
+void MasterJobPool::eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint32_t ownerId) {
 	uint32_t lockJobId;
 	uint32_t listenerId;
 	std::vector<AddJobFunc> pendingAddJobs;
 
-	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, lockJobId, listenerId,
-	                           pendingAddJobs)) {
+	if (!releaseChunkLockEntry(chunkId, chunkType, __func__, ownerId, std::nullopt, lockJobId,
+	                           listenerId, pendingAddJobs)) {
 		return;  // No lock job found, just return
 	}
 
 	for (const auto &addJobFunc : pendingAddJobs) { addJobFunc(); }
 
-	// Remove the lock job and the related packet
+	dropLockJob(lockJobId, listenerId);
+}
+
+void MasterJobPool::followChunkLockVersion(uint64_t chunkId, ChunkPartType chunkType,
+                                           uint32_t ownerId, uint32_t newVersion) {
+	if (!identityMode()) { return; }
+	std::lock_guard lock(chunkToJobReplyMapMutex_);
+	auto entry = chunkToJobReplyMap_.find(ChunkWithType{chunkId, chunkType});
+	if (entry != chunkToJobReplyMap_.end() && entry->second.ownerId == ownerId) {
+		entry->second.version = newVersion;
+	}
+}
+
+uint32_t MasterJobPool::lockConnectionEpoch(uint32_t listenerId) {
+	if (listenerId >= kMaxMetadataConnections) { return 0; }
+	std::lock_guard lock(chunkToJobReplyMapMutex_);
+	return lockConnectionEpochs_[listenerId];
+}
+
+void MasterJobPool::dropLockJob(uint32_t lockJobId, uint32_t listenerId) {
 	auto *listenerInfo = listenerInfos_[listenerId].load(std::memory_order_acquire);
 	if (listenerInfo == nullptr) { return; }
 	std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex);
@@ -743,9 +871,21 @@ void ClientJobPool::getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_
 }
 
 uint32_t job_open(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
-                  ChunkPartType chunkType, uint32_t listenerId) {
+                  ChunkPartType chunkType, std::optional<uint32_t> chunkVersion,
+                  std::function<void()> atVersion, uint32_t listenerId) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
-		return hddOpen(chunkId, chunkType);
+		if (!chunkVersion) { return hddOpen(chunkId, chunkType); }
+		const int status =
+		    hddChunkRunAtVersion(chunkId, chunkType, *chunkVersion, [&atVersion](IChunk *chunk) {
+			    if (atVersion) { atVersion(); }
+			    return hddOpen(chunk);
+		    });
+		if (status == SAUNAFS_ERROR_NOCHUNK || status == SAUNAFS_ERROR_WRONGVERSION) {
+			safs::log_warn("write session refused: chunkId {:016X}, chunkType {}, version {}: {}",
+			               chunkId, chunkType.toString(), *chunkVersion,
+			               saunafs_error_string(status));
+		}
+		return status;
 	};
 	return jobPool.addJob(JobPool::ChunkOperation::Open, std::move(callback), kEmptyExtra,
 	                      processJob, listenerId);
@@ -917,6 +1057,24 @@ uint32_t job_probe(MasterJobPool &jobPool, JobPool::JobCallback callback, void *
 	};
 	return jobPool.addJob(JobPool::ChunkOperation::ProbeVersion, std::move(callback), extra,
 	                      processJob, listenerId);
+}
+
+uint32_t job_lock(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                  uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
+                  std::function<uint8_t()> install, uint32_t listenerId) {
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		const int status = hddChunkRunAtVersion(chunkId, chunkType, chunkVersion,
+		                                        [&install](IChunk *) { return install(); });
+		if (status == SAUNAFS_ERROR_NOCHUNK || status == SAUNAFS_ERROR_WRONGVERSION) {
+			safs::log_warn("chunk lock refused: chunkId {:016X}, chunkType {}, version {}: {}",
+			               chunkId, chunkType.toString(), chunkVersion,
+			               saunafs_error_string(status));
+		}
+		return status;
+	};
+	// Not deferred behind an existing lock: a newer lock of another metadata server replaces it
+	return jobPool.addJob(JobPool::ChunkOperation::Lock, std::move(callback), extra, processJob,
+	                      listenerId);
 }
 
 uint32_t job_replicate(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,

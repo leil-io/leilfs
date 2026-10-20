@@ -96,6 +96,11 @@ bool chunk_operation_owes_replies(uint64_t chunkid);
 /// or a write still uses them. For a KV backend that moved the cached version to its shared
 /// record: those parts describe what this process saw before, not what the servers hold now.
 void chunk_forget_parts_at_other_versions(uint64_t chunkid);
+
+/// Brings a cached chunk to a shared record that another metadata server moved on: the record's
+/// version and lock, no parts, no operation, nothing owed. For a KV backend whose emergency
+/// version increase the record refused; the parts and the operation are the other server's now.
+void chunk_reset_to_record(uint64_t chunkid, uint32_t version, uint32_t lockid, uint32_t lockedto);
 #endif
 
 /// Restores an in-memory chunk from persisted version, refs and lock state.
