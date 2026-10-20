@@ -177,6 +177,31 @@ csdbentry *matocsserv_get_csdb(matocsserventry *eptr) {
 	return eptr->csdb;
 }
 
+matocsserventry *matocsserv_test_connection(csdbentry *entry, uint32_t ip, uint16_t port,
+                                            uint32_t version) {
+	auto *eptr = new matocsserventry();
+	eptr->mode = ChunkserverConnectionMode::CONNECTED;
+	eptr->sock = -1;
+	eptr->pdescpos = -1;
+	eptr->version = version;
+	eptr->servip = ip;
+	eptr->servport = port;
+	eptr->timeout = 0;
+	eptr->usedspace = eptr->totalspace = eptr->todelusedspace = eptr->todeltotalspace = 0;
+	eptr->chunkscount = eptr->todelchunkscount = eptr->errorcounter = 0;
+	eptr->rrepcounter = eptr->wrepcounter = eptr->delcounter = 0;
+	eptr->load_factor = 0;
+	eptr->csdb = entry;
+	if (entry != nullptr) { entry->eptr = eptr; }
+	return eptr;
+}
+
+void matocsserv_test_connection_free(matocsserventry *eptr) {
+	if (eptr == nullptr) { return; }
+	if (eptr->csdb != nullptr && eptr->csdb->eptr == eptr) { eptr->csdb->eptr = nullptr; }
+	delete eptr;
+}
+
 bool matocsserv_sorted_servers_need_refresh() {
 	return gSortedServersNeedsRefresh;
 }
@@ -568,6 +593,11 @@ const char* matocsserv_getstrip(matocsserventry *eptr) {
 uint32_t matocsserv_get_servip(matocsserventry *eptr) {
 	assert(eptr);
 	return eptr->servip;
+}
+
+uint16_t matocsserv_get_servport(matocsserventry *eptr) {
+	assert(eptr);
+	return eptr->servport;
 }
 
 int matocsserv_getlocation(matocsserventry *eptr,uint32_t *servip,uint16_t *servport,

@@ -68,16 +68,35 @@ bool chunk_get_version_and_goal_counters(uint64_t chunkid, uint32_t &version,
 /// Returns false if the chunk is unknown.
 bool chunk_get_lock_state(uint64_t chunkid, uint32_t &lockid, uint32_t &lockedto);
 
+/// Returns true if the chunk is present in the in-memory hash.
+bool chunk_exists(uint64_t chunkid);
+
+#ifndef METARESTORE
 /// True when the chunk's copies changed since the last version operation completed, so the
 /// next write must bump the version first. False for an unknown chunk.
 bool chunk_needs_version_increase(uint64_t chunkid);
 
-/// Returns true if the chunk is present in the in-memory hash.
-bool chunk_exists(uint64_t chunkid);
+/// Marks a cached chunk as owing a version increase without changing its parts or lock.
+/// For a backend restoring the requirement on re-entry; an unknown chunk is ignored.
+void chunk_require_version_increase(uint64_t chunkid);
 
 /// True when the in-memory chunk knows at least one part, whatever its state. A chunk rebuilt
 /// from durable metadata alone knows none.
 bool chunk_has_parts(uint64_t chunkid);
+
+/// True while the in-memory chunk's operation is not finished. False for an unknown chunk.
+bool chunk_operation_running(uint64_t chunkid);
+
+/// True while some chunkserver still owes the in-memory chunk's operation its answer: false on
+/// the last answer, when the operation finishes and its clients are told. False for an unknown
+/// chunk.
+bool chunk_operation_owes_replies(uint64_t chunkid);
+
+/// Forgets the parts a cached chunk records at another version than its own, unless an operation
+/// or a write still uses them. For a KV backend that moved the cached version to its shared
+/// record: those parts describe what this process saw before, not what the servers hold now.
+void chunk_forget_parts_at_other_versions(uint64_t chunkid);
+#endif
 
 /// Restores an in-memory chunk from persisted version, refs and lock state.
 /// Used by on-demand restore paths when a chunk is not present in memory yet.
@@ -89,6 +108,8 @@ uint8_t chunk_apply_modification(uint32_t ts, uint64_t oldChunkId, uint32_t lock
 		bool doIncreaseVersion, uint64_t *newChunkId);
 
 bool should_increase_chunk_version_on_modification(uint8_t operation);
+/// True when an operation started by a write start or a truncate waits for chunkserver replies.
+bool chunk_operation_waits_for_replies(uint8_t operation);
 
 // Tries to set next chunk id to a passed value, returns status
 uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet);
@@ -157,6 +178,71 @@ int chunk_get_publishable_parts(uint64_t chunkid, uint32_t &version,
 /// copies are included, as in chunk_get_publishable_parts.
 int chunk_get_parts_at_version(uint64_t chunkid, uint32_t version,
                                std::vector<ChunkPartLocation> &parts, size_t maxParts);
+
+/// Current valid destinations at @p version, including commands still awaiting replies.
+/// This snapshot is for a backend's open mutation row, never for final membership publication.
+/// An error leaves the output empty; locks and running operations are allowed.
+int chunk_get_mutation_parts(uint64_t chunkid, uint32_t version,
+                             std::vector<ChunkPartLocation> &parts, size_t maxParts);
+
+/// What a write start or a truncate decided, computed without changing the in-memory chunk
+/// registry, so a KV backend can make the decision durable before anything changes.
+struct ChunkMutationPlan {
+	/// SAUNAFS_STATUS_OK, or the answer to the client; a plan that is not OK is never applied.
+	uint8_t status = SAUNAFS_STATUS_OK;
+	/// The operation the target starts, as the opflag a client is answered with.
+	uint8_t operation = 0;
+	/// The chunk the request named, 0 when the file has no chunk at that index yet.
+	uint64_t chunkId = 0;
+	/// That chunk's version when the plan was made.
+	uint32_t chunkVersion = 0;
+	/// The chunk the client gets: chunkId, or a new id for a create or a copy on write.
+	uint64_t targetChunkId = 0;
+	/// The target's version once the plan is applied.
+	uint32_t targetVersion = 0;
+	/// The target's lock once the plan is applied.
+	uint32_t lockId = 0;
+	/// When that lock expires.
+	uint32_t lockedTo = 0;
+	/// The goal of the file reference a create or a copy on write gives the target.
+	uint8_t goal = 0;
+	/// The new chunk length of a truncate.
+	uint32_t length = 0;
+	/// A part the operation addresses, by the chunkserver's registry id and address: a plan
+	/// applied after a KV commit outlives the connections it was made on, and a registry id can
+	/// be freed and reused meanwhile, so the address names the server and the id confirms it.
+	struct Part {
+		/// The chunkserver's id in the chunkserver registry.
+		uint16_t csid = 0;
+		/// The chunkserver's address, the registry's key.
+		uint32_t ip = 0;
+		uint16_t port = 0;
+		/// The part type on that chunkserver.
+		ChunkPartType type;
+	};
+	/// The parts the operation addresses: a created chunk's, or the valid parts of the chunk the
+	/// request named.
+	std::vector<Part> parts;
+};
+
+/// Decides a write start on @p ochunkid (0 creates a chunk) as chunk_multi_modify would.
+ChunkMutationPlan chunk_plan_modify(uint64_t ochunkid, uint32_t lockid, uint8_t goal,
+                                    bool quota_exceeded, uint32_t min_server_version);
+
+/// Decides a truncate of @p ochunkid as chunk_multi_truncate would.
+ChunkMutationPlan chunk_plan_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length,
+                                      uint8_t goal, bool denyTruncatingParityParts,
+                                      bool quota_exceeded);
+
+/// Tells the client waiting for @p operation on @p chunkid that it failed, as Master does when the
+/// chunk is no longer writable once its chunkservers answered.
+void chunk_report_failed_operation(uint64_t chunkid, uint8_t operation);
+
+/// Applies an OK plan to the in-memory registry and sends its chunkserver commands, exactly as
+/// chunk_multi_modify and chunk_multi_truncate do, and stores the operation the target started
+/// in @p operation. Changes nothing and returns false when the registry moved since the plan was
+/// made, which only an apply deferred past a KV commit can see.
+bool chunk_apply_mutation_plan(const ChunkMutationPlan &plan, uint8_t &operation);
 
 uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal, bool quota_exceeded,
                            uint8_t *opflag, uint64_t *nchunkid, uint32_t min_server_version);

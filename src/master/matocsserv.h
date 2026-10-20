@@ -132,6 +132,8 @@ void matocsserv_getspace(uint64_t* totalspace, uint64_t* availspace);
 uint16_t matocsserv_get_listen_port();
 const char* matocsserv_getstrip(matocsserventry* eptr);
 uint32_t matocsserv_get_servip(matocsserventry *eptr);
+/// The advertised port, also while the connection is closing.
+uint16_t matocsserv_get_servport(matocsserventry *eptr);
 int matocsserv_getlocation(matocsserventry* eptr, uint32_t* servip, uint16_t* servport,
 		MediaLabel* label);
 uint16_t matocsserv_replication_read_counter(matocsserventry* eptr);
@@ -168,3 +170,9 @@ int matocsserv_send_duptruncchunk(matocsserventry* eptr,
 int matocsserv_init();
 void matocsserv_getserverdata(const matocsserventry* eptr, ChunkserverListEntry &result);
 csdbentry *matocsserv_get_csdb(matocsserventry* eptr);
+
+/// A connected chunkserver entry for unit tests, linked with @p entry both ways when one is
+/// given, so the chunk registry addresses it and sends to it as it does to a registered one.
+matocsserventry *matocsserv_test_connection(csdbentry *entry, uint32_t ip, uint16_t port,
+                                            uint32_t version);
+void matocsserv_test_connection_free(matocsserventry *eptr);

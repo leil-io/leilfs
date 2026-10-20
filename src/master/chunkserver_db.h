@@ -23,6 +23,8 @@
 
 #include "common/platform.h"
 
+#include <cstdint>
+
 #include "common/media_label.h"
 #include "protocol/chunkserver_list_entry.h"
 
@@ -97,11 +99,13 @@ csdbentry *csdb_find(uint32_t ip, uint16_t port);
  *
  * \param id Chunkserver id.
  *
- * \return Pointer to database entry structure.
+ * \return Pointer to database entry, or nullptr for an unallocated id.
  */
 inline csdbentry *csdb_find(int id) {
 	assert(id >= 0 && id < csdbentry::kMaxIdCount);
-	return gIdToCSEntry[id];
+	// Free slots encode the next index, not an entry pointer.
+	auto *entry = gIdToCSEntry[id];
+	return reinterpret_cast<std::uintptr_t>(entry) < csdbentry::kMaxIdCount ? nullptr : entry;
 }
 
 /*! \brief Return chunkserver configurations
