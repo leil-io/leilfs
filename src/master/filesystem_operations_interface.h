@@ -983,20 +983,25 @@ public:
 	///
 	/// @param chunkid The chunk ID to unlock (obtained from trySetLength's chunkid output).
 	/// @param fsOpContext The filesystem operation context (transaction).
+	/// @param lockId The lock the truncate holds, 0 for a forced unlock (a client that left). The
+	///        in-memory backend checked it when the truncate started; a KV backend checks it
+	///        against its records here and refuses a lock they no longer hold.
 	///
-	/// @return SAUNAFS_STATUS_OK on success, or SAUNAFS_ERROR_NOCHUNK if the chunk doesn't exist.
+	/// @return SAUNAFS_STATUS_OK after the in-memory unlock, even if the cached chunk is absent.
+	///         A KV backend may refuse a missing record or a lock its records no longer hold;
+	///         any non-OK result stops file length finalization.
 	///
 	/// @note This function does not modify file metadata; it only unlocks the chunk.
 	/// @note The chunk lock is maintained between trySetLength and endSetLength to prevent
 	///       concurrent modifications during the asynchronous chunk operation.
-	/// @note After calling this function, doSetLength() should be called to complete the truncate.
+	/// @note After a successful return, doSetLength() completes the truncate.
 	/// @note This function must be called for any truncate flow in which trySetLength()
 	///       acquired a chunk lock, including both delayed chunkserver truncation
 	///       (SAUNAFS_ERROR_DELAYED) and client-performs truncate/end flows where
 	///       trySetLength() can return SAUNAFS_ERROR_NOTPOSSIBLE (e.g. FUSE_TRUNCATE_END).
 	/// @see trySetLength, doSetLength
-	virtual uint8_t endSetLength(const FilesystemOperationContext &fsOpContext,
-	                             uint64_t chunkid) = 0;
+	virtual uint8_t endSetLength(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	                             uint32_t lockId) = 0;
 
 	/// Sets attributes for a filesystem node (file, directory, etc.).
 	///

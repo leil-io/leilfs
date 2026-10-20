@@ -127,6 +127,13 @@ public:
 	                              uint32_t lockid, uint32_t length, uint8_t goal,
 	                              bool denyTruncatingParityParts, bool quotaExceeded,
 	                              uint64_t *nchunkid) = 0;
+	/// Retain after multiModify, before commit: a deferred backend fills this status when its
+	/// plan applies. The immediate client reply checks it after commit. Synchronous backends
+	/// return nullptr because a successful multiModify already installed the grant.
+	virtual std::shared_ptr<const uint8_t> writeStartStatus(const FilesystemOperationContext &,
+	                                                        uint64_t) const {
+		return {};
+	}
 	virtual int canUnlock(uint64_t chunkid, uint32_t lockid) = 0;
 
 	/// Locations for a client that holds the write lock. A backend that hides a chunk's readable

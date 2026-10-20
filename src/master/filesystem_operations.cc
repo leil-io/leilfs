@@ -1479,11 +1479,17 @@ uint8_t FilesystemOperationsBase::setNextChunkId(const FsContext &context, uint6
 
 #ifndef METARESTORE
 uint8_t FilesystemOperationsBase::endSetLength(const FilesystemOperationContext &fsOpContext,
-                                               uint64_t chunkid) {
+                                               uint64_t chunkid, uint32_t lockId) {
+	// The in-memory registry's lock was checked when the truncate started; a KV backend checks
+	// it against its records here.
+	(void)lockId;
 	uint32_t timeStamp = eventloop_time();
 	ChecksumUpdater checksumUpdater(timeStamp);
 	changeLog(fsOpContext, timeStamp, "UNLOCK(%" PRIu64 ")", chunkid);
-	return gChunkOperations->unlock(chunkid);
+	// File length finalization must proceed even if the cached chunk disappeared meanwhile.
+	const uint8_t status = gChunkOperations->unlock(chunkid);
+	if (status == SAUNAFS_ERROR_NOCHUNK) { return SAUNAFS_STATUS_OK; }
+	return status;
 }
 #endif
 

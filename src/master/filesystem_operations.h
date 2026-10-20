@@ -235,7 +235,8 @@ public:
 
 	/// Unlocks a chunk after a truncate operation completes (phase 1.5).
 	/// @see IFilesystemOperations::endSetLength
-	uint8_t endSetLength(const FilesystemOperationContext &fsOpContext, uint64_t chunkid) override;
+	uint8_t endSetLength(const FilesystemOperationContext &fsOpContext, uint64_t chunkid,
+	                     uint32_t lockId) override;
 
 	/// Sets attributes for a filesystem node (file, directory, etc.).
 	/// @see IFilesystemOperations::setAttr
