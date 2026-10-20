@@ -192,10 +192,19 @@ public:
 
 	static std::function<void(uint8_t status, void *packet)> sauJobFinished(MasterConn *masterConn);
 
+	/// Locks the part once its command left it at @p chunkVersion, before the command's reply.
 	static std::function<void(uint8_t status, void *packet)> sauJobFinishedAndLock(
-	    MasterConn *masterConn, uint64_t chunkId, ChunkPartType chunkType);
+	    MasterConn *masterConn, uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion);
+
+	/// Moves the requester's lock of the part along with a version change of the command.
+	static std::function<void(uint8_t status, void *packet)> sauJobFinishedAndFollowLock(
+	    MasterConn *masterConn, uint64_t chunkId, ChunkPartType chunkType, uint32_t newVersion);
 
 	void sauJobFinished(uint8_t status, void *packet);
+
+	/// False, after logging the refusal, for a lock of a metadata server whose identity this
+	/// connection does not know yet, while locks name their installer (identity mode).
+	bool lockOwnerKnown(uint64_t chunkId, ChunkPartType chunkType, uint32_t ownerId);
 
 	// Termination
 
@@ -230,6 +239,10 @@ public:
 	/// Metadata server id the discovery snapshot named; 0 for the configured connection.
 	uint32_t serverId() const { return serverId_; }
 
+	/// The metadata server this connection reached: the configured connection learns it from the
+	/// discovery snapshot of its current socket. 0 while unknown.
+	uint32_t metadataServerId() const { return isConfigured() ? seedId_ : serverId_; }
+
 	bool isRegistered() const {
 		return mode_ == ConnectionMode::CONNECTED &&
 		       registrationStatus_ == RegistrationStatus::kChunksRegistered;
@@ -240,6 +253,8 @@ public:
 			callbackActive_ = std::make_shared<bool>(true);
 			// Retain the last peer's report policy while offline; negotiate again on a new socket.
 			sendInventory_ = true;
+			// A new socket may reach another metadata server behind the configured address.
+			seedId_ = 0;
 		}
 		mode_ = newMode;
 
@@ -303,6 +318,8 @@ private:
 	std::shared_ptr<bool> callbackActive_{std::make_shared<bool>(true)};
 	/// Discovery snapshot waiting for the connection manager; only the configured one fills it.
 	std::optional<MetadataClusterSnapshot> clusterSnapshot_;
+	/// Metadata server that produced the configured connection's latest snapshot on this socket.
+	uint32_t seedId_{0};
 
 	// For compatibility with old masters (version < 5.0)
 	void handleRegistrationAttempt();

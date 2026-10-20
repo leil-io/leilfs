@@ -321,11 +321,11 @@ TEST_F(JobPoolTest, ChunkLocking) {
 	ChunkWithType chunkWithType3{chunkId3, chunkType};
 	ChunkWithType chunkWithType4{chunkId4, chunkType};
 
-	masterJobPool->startChunkLock(mockJobCallback, &counters[0], chunkId1, chunkType, 0);
-	masterJobPool->startChunkLock(mockJobCallback, &counters[0], chunkId2, chunkType, 0);
-	masterJobPool->startChunkLock(mockJobCallback, nullptr, chunkId4, chunkType, 0);
-	masterJobPool->enforceChunkLock(chunkId1, chunkType);
-	masterJobPool->enforceChunkLock(chunkId4, chunkType);
+	masterJobPool->startChunkLock(mockJobCallback, &counters[0], chunkId1, chunkType, 0, 0, 0);
+	masterJobPool->startChunkLock(mockJobCallback, &counters[0], chunkId2, chunkType, 0, 0, 0);
+	masterJobPool->startChunkLock(mockJobCallback, nullptr, chunkId4, chunkType, 0, 0, 0);
+	masterJobPool->enforceChunkLock(chunkId1, chunkType, 0);
+	masterJobPool->enforceChunkLock(chunkId4, chunkType, 0);
 
 	masterJobPool->addJobIfNotLocked(chunkWithType1, JobPool::ChunkOperation::Read, mockJobCallback,
 	                                 &counters[0], mockProcessJob);
@@ -353,18 +353,18 @@ TEST_F(JobPoolTest, ChunkLocking) {
 	// Job should not be processed because chunk is locked and enforced
 	EXPECT_EQ(counters[0].load(), 2);
 
-	masterJobPool->endChunkLock(chunkId1, chunkType, SAUNAFS_STATUS_OK);
+	masterJobPool->endChunkLock(chunkId1, chunkType, SAUNAFS_STATUS_OK, 0);
 	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
 	// Now the job for chunkWithType1 should be processed because the lock is released and the
 	// callback for the lock job should be called
 	EXPECT_EQ(counters[0].load(), 4);
 
-	masterJobPool->endChunkLock(chunkId2, chunkType, SAUNAFS_STATUS_OK);
+	masterJobPool->endChunkLock(chunkId2, chunkType, SAUNAFS_STATUS_OK, 0);
 	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
 	// Now the callback for the lock job of chunkWithType2 should be called
 	EXPECT_EQ(counters[0].load(), 5);
 
-	masterJobPool->eraseChunkLock(chunkId4, chunkType);
+	masterJobPool->eraseChunkLock(chunkId4, chunkType, 0);
 	std::this_thread::sleep_for(std::chrono::milliseconds(kWaitTimeMs));
 	// Now the jobs for chunkWithType4 should be processed because the lock is released, but the
 	// callback for the lock job should not be called
@@ -466,4 +466,243 @@ TEST_F(JobPoolTest, AllocatesSingleListenerInitiallyAndExpandsOnDemand) {
 	testPool->processCompletedJobs(1);
 	EXPECT_EQ(callbackRan.load(), 1);
 	EXPECT_TRUE(testPool->isEmpty());
+}
+
+namespace {
+
+constexpr uint64_t kLockedChunk = 123;
+constexpr uint32_t kServerA = 1;
+constexpr uint32_t kServerB = 2;
+
+/// Delivers the completions of @p listenerId once one is queued, within a second.
+bool deliverCompletions(MasterJobPool &pool, int descriptor, uint32_t listenerId) {
+	pollfd ready{descriptor, POLLIN, 0};
+	if (poll(&ready, 1, 1000) != 1) { return false; }
+	pool.processCompletedJobs(listenerId);
+	return true;
+}
+
+}  // namespace
+
+TEST(ChunkLockOwnershipTest, NewerLockOfAnotherServerReplacesTheLock) {
+	MasterJobPool pool("lock-ownership", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0), pool.allocateListener(1)};
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t noticesOfA = 0;
+	uint32_t noticesOfB = 0;
+	uint32_t deferredRuns = 0;
+	const JobPool::JobCallback noticeA = [&](uint8_t, void *) { ++noticesOfA; };
+	const JobPool::JobCallback noticeB = [&](uint8_t, void *) { ++noticesOfB; };
+
+	// A's lock at version 3, reporting through listener 1, with a write session and a command
+	// deferred behind it.
+	ASSERT_EQ(pool.startChunkLock(noticeA, nullptr, kLockedChunk, chunkType, kServerA, 3, 1),
+	          MasterJobPool::LockStart::kInstalled);
+	ASSERT_NE(pool.enforceChunkLock(kLockedChunk, chunkType, 3), 0U);
+	pool.addJobIfNotLocked(
+	    {kLockedChunk, chunkType}, JobPool::ChunkOperation::ChangeVersion,
+	    [&](uint8_t, void *) { ++deferredRuns; }, nullptr,
+	    []() -> uint8_t { return SAUNAFS_STATUS_OK; }, 1);
+
+	// A's lock again is a retransmission; B's at the same or an older version is refused.
+	EXPECT_EQ(pool.startChunkLock(noticeA, nullptr, kLockedChunk, chunkType, kServerA, 3, 1),
+	          MasterJobPool::LockStart::kExisting);
+	EXPECT_EQ(pool.startChunkLock(noticeB, nullptr, kLockedChunk, chunkType, kServerB, 3, 0),
+	          MasterJobPool::LockStart::kRefused);
+	EXPECT_EQ(pool.startChunkLock(noticeB, nullptr, kLockedChunk, chunkType, kServerB, 2, 0),
+	          MasterJobPool::LockStart::kRefused);
+
+	// B's lock at a newer version replaces it: the deferred command runs, A gets no notice.
+	ASSERT_EQ(pool.startChunkLock(noticeB, nullptr, kLockedChunk, chunkType, kServerB, 4, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	ASSERT_TRUE(deliverCompletions(pool, descriptors[1], 1));
+	EXPECT_EQ(deferredRuns, 1U);
+	EXPECT_TRUE(pool.isListenerIdle(1));
+
+	// The lock is B's now, and the end of the write under it notifies B.
+	EXPECT_EQ(pool.startChunkLock(noticeB, nullptr, kLockedChunk, chunkType, kServerB, 4, 0),
+	          MasterJobPool::LockStart::kExisting);
+	const uint64_t joined = pool.enforceChunkLock(kLockedChunk, chunkType, 4);
+	ASSERT_NE(joined, 0U);
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joined);
+	ASSERT_TRUE(deliverCompletions(pool, descriptors[0], 0));
+	EXPECT_EQ(noticesOfB, 1U);
+	EXPECT_EQ(noticesOfA, 0U);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+}
+
+TEST(ChunkLockOwnershipTest, SessionJoinsOnlyALockAtItsVersionAndEndsOnlyThatLock) {
+	MasterJobPool pool("lock-session", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0), pool.allocateListener(1)};
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t noticesOfB = 0;
+	const JobPool::JobCallback noticeB = [&](uint8_t, void *) { ++noticesOfB; };
+
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 1),
+	          MasterJobPool::LockStart::kInstalled);
+	EXPECT_EQ(pool.enforceChunkLock(kLockedChunk, chunkType, 2), 0U);
+	const uint64_t joinedA = pool.enforceChunkLock(kLockedChunk, chunkType, 3);
+	ASSERT_NE(joinedA, 0U);
+
+	// B's newer lock replaces A's: the session that joined A's lock cannot end B's.
+	ASSERT_EQ(pool.startChunkLock(noticeB, nullptr, kLockedChunk, chunkType, kServerB, 4, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joinedA);
+	EXPECT_FALSE(pool.isListenerIdle(0));
+
+	const uint64_t joinedB = pool.enforceChunkLock(kLockedChunk, chunkType, 4);
+	ASSERT_NE(joinedB, 0U);
+	EXPECT_NE(joinedB, joinedA);
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joinedB);
+	ASSERT_TRUE(deliverCompletions(pool, descriptors[0], 0));
+	EXPECT_EQ(noticesOfB, 1U);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+}
+
+TEST(ChunkLockOwnershipTest, ReservationHoldsRequestsBackUntilTheOpenSettles) {
+	// No worker runs: a request let through stays queued, one held back by a lock is not queued.
+	MasterJobPool pool("lock-reservation", 0, 10);
+	ASSERT_GE(pool.allocateListener(0), 0);
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	const auto request = [&] {
+		pool.addJobIfNotLocked(
+		    {kLockedChunk, chunkType}, JobPool::ChunkOperation::ChangeVersion, {}, nullptr,
+		    []() -> uint8_t { return SAUNAFS_STATUS_OK; }, 0);
+	};
+
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	EXPECT_EQ(pool.reserveChunkLock(kLockedChunk, chunkType, 2), 0U);
+
+	// Two sessions at the lock's version: a request waits until both opens found the part at
+	// another version.
+	const uint64_t reserved = pool.reserveChunkLock(kLockedChunk, chunkType, 3);
+	ASSERT_NE(reserved, 0U);
+	ASSERT_EQ(pool.reserveChunkLock(kLockedChunk, chunkType, 3), reserved);
+	request();
+	pool.releaseChunkLockReservation(kLockedChunk, chunkType, reserved);
+	EXPECT_EQ(pool.getJobCount(), 0U);
+	pool.releaseChunkLockReservation(kLockedChunk, chunkType, reserved);
+	EXPECT_EQ(pool.getJobCount(), 1U);
+
+	// A session whose open joined the lock holds requests back until its end.
+	ASSERT_EQ(pool.reserveChunkLock(kLockedChunk, chunkType, 3), reserved);
+	ASSERT_EQ(pool.enforceChunkLock(kLockedChunk, chunkType, 3), reserved);
+	pool.releaseChunkLockReservation(kLockedChunk, chunkType, reserved);
+	request();
+	EXPECT_EQ(pool.getJobCount(), 1U);
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, reserved);
+	EXPECT_EQ(pool.getJobCount(), 2U);
+
+	// The reservation of a lock replaced meanwhile releases nothing of the new lock.
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t replaced = pool.reserveChunkLock(kLockedChunk, chunkType, 3);
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerB, 4, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t current = pool.reserveChunkLock(kLockedChunk, chunkType, 4);
+	ASSERT_NE(current, 0U);
+	request();
+	pool.releaseChunkLockReservation(kLockedChunk, chunkType, replaced);
+	EXPECT_EQ(pool.getJobCount(), 2U);
+	pool.releaseChunkLockReservation(kLockedChunk, chunkType, current);
+	EXPECT_EQ(pool.getJobCount(), 3U);
+}
+
+TEST(ChunkLockOwnershipTest, OnlyTheInstallingServerUnlocks) {
+	MasterJobPool pool("lock-unlock", 1, 10);
+	ASSERT_GE(pool.allocateListener(0), 0);
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	pool.eraseChunkLock(kLockedChunk, chunkType, kServerB);
+	EXPECT_FALSE(pool.isListenerIdle(0));
+	pool.eraseChunkLock(kLockedChunk, chunkType, kServerA);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+}
+
+TEST(ChunkLockOwnershipTest, LockFollowsOnlyItsOwnersVersionChange) {
+	MasterJobPool pool("lock-version", 1, 10);
+	ASSERT_GE(pool.allocateListener(0), 0);
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	pool.followChunkLockVersion(kLockedChunk, chunkType, kServerA, 4);
+	pool.followChunkLockVersion(kLockedChunk, chunkType, kServerB, 9);
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerB, 4, 0),
+	          MasterJobPool::LockStart::kRefused);
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerB, 5, 0),
+	          MasterJobPool::LockStart::kInstalled);
+}
+
+TEST(ChunkLockOwnershipTest, DetachedLockKeepsItsOwner) {
+	MasterJobPool pool("lock-detach", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0), pool.allocateListener(1)};
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t noticesOfA = 0;
+
+	// A's connection retires and its lock moves to listener 0, which B's connection may share.
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 1),
+	          MasterJobPool::LockStart::kInstalled);
+	pool.detachLockJobs(
+	    [&](ChunkWithType, uint32_t) { return [&](uint8_t, void *) { ++noticesOfA; }; }, 1, 0);
+
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerB, 3, 0),
+	          MasterJobPool::LockStart::kRefused);
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerB, 4, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	pool.eraseChunkLock(kLockedChunk, chunkType, kServerB);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+	EXPECT_EQ(noticesOfA, 0U);
+}
+
+TEST(ChunkLockOwnershipTest, LockOfAClosedConnectionIsNotInstalled) {
+	MasterJobPool pool("lock-closed", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0), pool.allocateListener(1)};
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	const auto offline = [](ChunkWithType, uint32_t) { return [](uint8_t, void *) {}; };
+
+	// The connection closes while its lock job still waits for the part: the job's late
+	// installation leaves no lock with the closed connection's callback.
+	uint32_t requested = pool.lockConnectionEpoch(1);
+	pool.changeLockJobsCallback(offline, 1);
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 1, requested),
+	          MasterJobPool::LockStart::kRefused);
+	EXPECT_TRUE(pool.isListenerIdle(1));
+
+	// So does one whose connection retired, its slot to be reused.
+	requested = pool.lockConnectionEpoch(1);
+	pool.detachLockJobs(offline, 1, 0);
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 1, requested),
+	          MasterJobPool::LockStart::kRefused);
+	EXPECT_TRUE(pool.isListenerIdle(1));
+
+	// A lock requested on the listener's next connection is installed.
+	requested = pool.lockConnectionEpoch(1);
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 1, requested),
+	          MasterJobPool::LockStart::kInstalled);
+	EXPECT_FALSE(pool.isListenerIdle(1));
+}
+
+TEST(ChunkLockOwnershipTest, WithoutIdentityModeEveryLockBehavesAsUnderMaster) {
+	MasterJobPool pool("lock-legacy", 1, 10);
+	ASSERT_GE(pool.allocateListener(0), 0);
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerB, 4, 0),
+	          MasterJobPool::LockStart::kExisting);
+	pool.followChunkLockVersion(kLockedChunk, chunkType, 0, 4);
+	pool.eraseChunkLock(kLockedChunk, chunkType, kServerB);
+	EXPECT_TRUE(pool.isListenerIdle(0));
 }
