@@ -2696,10 +2696,14 @@ int FilesystemOperationsBase::locksClearSession(
 	    [sessionid](const FileLocks::Lock::Owner &owner) { return owner.sessionid == sessionid; });
 
 	if (range.first < range.second) {
+		// Only the waiters that now fit are granted and answered; the others wait on, as after
+		// any unlock.
 		FileLocks::LockQueue queue;
 		locks->gatherCandidates(inode, range.first, range.second, queue);
 		for (auto &candidate : queue) {
-			applied.insert(applied.end(), candidate.owners.begin(), candidate.owners.end());
+			if (locks->apply(inode, candidate)) {
+				applied.insert(applied.end(), candidate.owners.begin(), candidate.owners.end());
+			}
 		}
 	}
 	if (context.isPersonalityMaster()) {
