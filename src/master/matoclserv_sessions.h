@@ -23,6 +23,7 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -60,10 +61,9 @@ Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId);
 
 /// Finds the session for a given ID.
 /// @param sessionId The session ID to search for
-/// @param session Set to the session if found, nullptr otherwise
-/// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID when the session is gone, or
-///         SAUNAFS_ERROR_IO when the session store could not be read
-uint8_t matoclserv_find_session(uint32_t sessionId, Session *&session);
+/// @return The session, or SAUNAFS_ERROR_BADSESSIONID when it is gone, or SAUNAFS_ERROR_IO when
+///         the session store could not be read
+std::expected<Session *, uint8_t> matoclserv_find_session(uint32_t sessionId);
 
 /// Marks a session as explicitly closed in manager state.
 /// @param sessionId The session ID to mark as closed

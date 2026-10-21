@@ -42,6 +42,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <ranges>
 #include <unordered_map>
 #include <vector>
 
@@ -62,8 +63,8 @@
 #include "common/tls_session.h"
 #include "common/type_defs.h"
 #include "errors/sfserr.h"
-#include "mount/exports.h"
 #include "mount/g_io_limiters.h"
+#include "mount/exports.h"
 #include "mount/notification_area_logging.h"
 #include "mount/stats.h"
 #include "protocol/SFSCommunication.h"
@@ -647,12 +648,8 @@ static void fs_set_current_server(const ServerAddress &server) {
 static std::vector<ServerAddress> fs_resolve_seeds(bool verbose, const std::string &hostNames,
                                                    const std::string &defaultPortName) {
 	std::vector<ServerAddress> seeds;
-	size_t start = 0;
-	while (start <= hostNames.size()) {
-		size_t end = hostNames.find(';', start);
-		if (end == std::string::npos) { end = hostNames.size(); }
-		std::string hostName = hostNames.substr(start, end - start);
-		start = end + 1;
+	for (const auto entry : std::views::split(hostNames, ';')) {
+		std::string hostName(entry.begin(), entry.end());
 		if (hostName.empty()) { continue; }
 
 		std::string portName = defaultPortName;
@@ -686,7 +683,7 @@ static std::vector<ServerAddress> fs_candidate_servers(bool verbose) {
 	std::vector<ServerAddress> candidates;
 	const auto add = [&candidates](const ServerAddress &server) {
 		if (server.ip == 0 || server.port == 0) { return; }
-		if (std::find(candidates.begin(), candidates.end(), server) != candidates.end()) { return; }
+		if (std::ranges::find(candidates, server) != candidates.end()) { return; }
 		candidates.push_back(server);
 	};
 
@@ -697,7 +694,7 @@ static std::vector<ServerAddress> fs_candidate_servers(bool verbose) {
 		std::lock_guard lock(gDiscoveredServersMutex);
 		discovered = gDiscoveredServers;
 	}
-	std::shuffle(discovered.begin(), discovered.end(), std::mt19937(std::random_device{}()));
+	std::ranges::shuffle(discovered, std::mt19937(std::random_device{}()));
 	for (const auto &server : discovered) { add(server); }
 
 	for (const auto &seed : fs_resolve_seeds(verbose, gInitParams.host, gInitParams.port)) {

@@ -85,16 +85,15 @@ Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId) {
 	return gSessionManager->newSession(newSession, noNewId);
 }
 
-uint8_t matoclserv_find_session(uint32_t sessionId, Session *&session) {
+std::expected<Session *, uint8_t> matoclserv_find_session(uint32_t sessionId) {
 	sassert(gSessionManager != nullptr);
 	try {
-		session = gSessionManager->findSession(sessionId);
+		if (Session *session = gSessionManager->findSession(sessionId)) { return session; }
+		return std::unexpected<uint8_t>(SAUNAFS_ERROR_BADSESSIONID);
 	} catch (const kv::TransactionError &error) {
 		safs::log_warn("session {} could not be read from the store: {}", sessionId, error.what());
-		session = nullptr;
-		return SAUNAFS_ERROR_IO;
+		return std::unexpected<uint8_t>(SAUNAFS_ERROR_IO);
 	}
-	return session != nullptr ? SAUNAFS_STATUS_OK : SAUNAFS_ERROR_BADSESSIONID;
 }
 
 void matoclserv_close_session(uint32_t sessionId) {

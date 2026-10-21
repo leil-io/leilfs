@@ -51,6 +51,7 @@
 #include <random>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 #include "common/charts.h"
 #include "common/chunk_type_with_address.h"
@@ -177,6 +178,14 @@ struct ChunkCleanup {
 /// as both end with lock id 0.
 static std::vector<ChunkCleanup> gChunkCleanups;
 
+/// A blocking lock request a connection waits on. The mount reuses a thread's message id, so the
+/// request id tells the thread's waits apart.
+struct LockWait {
+	uint32_t messageId;
+	uint32_t requestId;
+	bool operator==(const LockWait &) const = default;
+};
+
 ///< This looks to be the client type.
 ///< This is set in matoclserv_serve and matoclserv_fuse_register, and there are 4 possible values:
 enum class ClientState {
@@ -228,11 +237,10 @@ struct matoclserventry {
 	/// attach sessions to one server. Work done for this connection commits only while the
 	/// session's attachment still holds it.
 	uint64_t attachmentGeneration = 0;
-	/// Lock waits this connection queued, as (message id, request id), when its session is
-	/// attached to this server. An answer is sent only to the wait it belongs to: the mount
-	/// reuses a thread's message id, so a stale grant could otherwise answer that thread's
-	/// next request.
-	std::vector<std::pair<uint32_t, uint32_t>> lockWaits;
+	/// Lock waits this connection queued, when its session is attached to this server. An answer
+	/// is sent only to the wait it belongs to, so a stale grant cannot answer the thread's next
+	/// request.
+	std::vector<LockWait> lockWaits;
 	///< Challenge data for admin authentication
 	std::unique_ptr<SauMatoclAdminRegisterChallengeData> adminChallenge;
 	AdminTask adminTask;  ///< admin task requested by this client
@@ -1612,6 +1620,18 @@ void matoclserv_chunk_status(uint64_t chunkId, uint8_t status, bool isFailedCrea
 	safs_pretty_syslog(LOG_WARNING, "got chunk status, but don't want it");
 }
 
+/// The cleanup of @p operation, with what it needs of @p eptr's session.
+static ChunkCleanup matoclserv_chunk_cleanup(const matoclserventry *eptr,
+                                             const DelayedChunkOperation &operation) {
+	ChunkCleanup cleanup{operation};
+	if (eptr->sessionData != nullptr) {
+		cleanup.hasSession = true;
+		cleanup.rootInode = eptr->sessionData->rootInode;
+		cleanup.sessionFlags = eptr->sessionData->flags;
+	}
+	return cleanup;
+}
+
 /// Handles a completed chunkserver operation for a delayed op already removed from its
 /// client's queue: builds and sends the client reply, committing any metadata
 /// finalization. The truncate finalize commits while concurrent writers' async commits
@@ -1690,7 +1710,7 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 			return SAUNAFS_STATUS_OK;
 		};
 		// A cleanup that did not commit is kept and retried until it does.
-		ChunkCleanup retry{operation, true, eptr->sessionData->rootInode, eptr->sessionData->flags};
+		ChunkCleanup retry = matoclserv_chunk_cleanup(eptr, operation);
 		retry.operation.statusArrived = removeChunk;
 		retry.operation.pendingIsFailedCreate = removeChunk;
 		matoclserv_submit_unfenced_op(
@@ -2476,6 +2496,14 @@ void matoclserv_cluster_servers(matoclserventry *eptr, const uint8_t *data, uint
 	matoclserv_createpacket(eptr, matocl::clusterServers::build(messageId, status, servers));
 }
 
+/// Stores the session a mount registers, attached to this server. Without its store this server
+/// cannot register the mount, but another may: the mount is told to try another server.
+static uint8_t matoclserv_attach_new_session(matoclserventry *eptr) {
+	const uint8_t status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true, 0);
+	eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
+	return status == SAUNAFS_ERROR_IO ? SAUNAFS_ERROR_TEMP_NOTPOSSIBLE : status;
+}
+
 /// For a mount's registration that failed because the session store is unavailable: a mount
 /// that can move its session is answered "try another server". An older mount takes any error
 /// as a lost session, so it is not answered: it loses the connection and reconnects later.
@@ -2705,10 +2733,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				    (path != nullptr) ? reinterpret_cast<const char *>(path) : "unknown path",
 				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
-				status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true, 0);
-				eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
-				// Without its store this server cannot register the mount; another may.
-				if (status == SAUNAFS_ERROR_IO) { status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE; }
+				status = matoclserv_attach_new_session(eptr);
 			}
 
 			// answer
@@ -2815,10 +2840,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info",
 				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
-				status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true, 0);
-				eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
-				// Without its store this server cannot register the mount; another may.
-				if (status == SAUNAFS_ERROR_IO) { status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE; }
+				status = matoclserv_attach_new_session(eptr);
 			}
 
 			// answer
@@ -2864,7 +2886,13 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				return;
 			}
 
-			status = matoclserv_find_session(sessionId, eptr->sessionData);
+			if (const auto found = matoclserv_find_session(sessionId)) {
+				eptr->sessionData = *found;
+				status = SAUNAFS_STATUS_OK;
+			} else {
+				eptr->sessionData = nullptr;
+				status = found.error();
+			}
 			if (status == SAUNAFS_STATUS_OK && eptr->sessionData->peerIpAddress == 0) {
 				status = SAUNAFS_ERROR_BADSESSIONID;
 			}
@@ -3002,16 +3030,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 	const bool transactional = fsOpContext.hasReadWriteTransaction();
 
 	// Each batch transaction commits only while this connection still serves the session.
-	const auto fenceBatch = [eptr, &fsOpContext]() {
-		if (eptr->attachmentGeneration == 0) { return true; }
-		if (matoclserv_check_attachment(fsOpContext, eptr->sessionData->sessionId,
-		                                eptr->attachmentGeneration) == SAUNAFS_STATUS_OK) {
-			return true;
-		}
-		eptr->mode = ClientConnectionMode::KILL;
-		return false;
-	};
-	if (!fenceBatch()) {
+	if (!matoclserv_still_serves(eptr, fsOpContext)) {
 		changelog_enable_flush();
 		return;
 	}
@@ -3063,7 +3082,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 				safs::log_err("{}: failed to commit release batch for reserving inodes", __func__);
 			}
 			applyBatches(committed);
-			if (!fenceBatch()) {
+			if (!matoclserv_still_serves(eptr, fsOpContext)) {
 				changelog_enable_flush();
 				return;
 			}
@@ -3088,7 +3107,7 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 				safs::log_err("{}: failed to commit acquire batch for reserving inodes", __func__);
 			}
 			applyBatches(committed);
-			if (!fenceBatch()) {
+			if (!matoclserv_still_serves(eptr, fsOpContext)) {
 				changelog_enable_flush();
 				return;
 			}
@@ -6204,7 +6223,7 @@ static void matoclserv_route_lock_answers(const FilesystemOperationContext &fsOp
                                           safs_locks::Type type) {
 	std::erase_if(owners, [&](const FileLocks::Owner &owner) {
 		const bool local = matoclserv_route_lock_answer(fsOpContext, owner.sessionid, owner.msgid,
-		                                                owner.reqid, static_cast<uint8_t>(type));
+		                                                owner.reqid, std::to_underlying(type));
 		if (!local) { gLockAnswersRecorded = true; }
 		return !local;
 	});
@@ -6216,8 +6235,8 @@ static void matoclserv_record_lock_wait(matoclserventry *eptr, uint32_t messageI
                                         uint32_t requestId) {
 	if (eptr->attachmentGeneration == 0) { return; }
 	std::erase_if(eptr->lockWaits,
-	              [messageId](const auto &wait) { return wait.first == messageId; });
-	eptr->lockWaits.emplace_back(messageId, requestId);
+	              [messageId](const LockWait &wait) { return wait.messageId == messageId; });
+	eptr->lockWaits.push_back(LockWait{messageId, requestId});
 }
 
 /// How often the recorded lock answers are looked for, in milliseconds.
@@ -6236,9 +6255,9 @@ static void matoclserv_deliver_lock_answers() {
 			    eptr->attachmentGeneration != generation) {
 				continue;
 			}
-			if (std::erase(eptr->lockWaits, std::pair{messageId, requestId}) == 0) { return; }
+			if (std::erase(eptr->lockWaits, LockWait{messageId, requestId}) == 0) { return; }
 			MessageBuffer reply;
-			if (lockType == static_cast<uint8_t>(safs_locks::Type::kFlock)) {
+			if (lockType == std::to_underlying(safs_locks::Type::kFlock)) {
 				matocl::fuseFlock::serialize(reply, messageId, SAUNAFS_STATUS_OK);
 			} else {
 				matocl::fuseSetlk::serialize(reply, messageId, SAUNAFS_STATUS_OK);
@@ -6631,8 +6650,8 @@ void matoclserv_fuse_locks_interrupt(matoclserventry *eptr, const uint8_t *data,
 
 	cltoma::fuseFlock::deserialize(data, length, messageId, interruptData);
 	// The thread gave up its wait: a grant that wins the race must not answer its next one.
-	std::erase_if(eptr->lockWaits, [&interruptData](const auto &wait) {
-		return wait.second == interruptData.reqid;
+	std::erase_if(eptr->lockWaits, [&interruptData](const LockWait &wait) {
+		return wait.requestId == interruptData.reqid;
 	});
 
 	// There is no reply, but pending-lock removal still needs KV conflict retry;
@@ -6985,8 +7004,7 @@ void matoclserv_admin_save_metadata(matoclserventry* eptr, const uint8_t* data, 
 
 void matoclserv_drop_mount_connections() {
 	for (const auto &eptr : matoclservList) {
-		if (eptr->registered == ClientState::kRegistered && eptr->sessionData != nullptr &&
-		    eptr->mode != ClientConnectionMode::KILL) {
+		if (eptr->registered == ClientState::kRegistered && eptr->sessionData != nullptr) {
 			eptr->mode = ClientConnectionMode::KILL;
 		}
 	}
@@ -7047,7 +7065,7 @@ void matocl_locks_release(const FsContext &context, const FilesystemOperationCon
 	std::vector<FileLocks::Owner> applied;
 	for (const auto type : {safs_locks::Type::kFlock, safs_locks::Type::kPosix}) {
 		applied.clear();
-		gFSOperations->locksClearSession(context, fsOpContext, static_cast<uint8_t>(type), inode,
+		gFSOperations->locksClearSession(context, fsOpContext, std::to_underlying(type), inode,
 		                                 sessionId, applied);
 		matoclserv_route_lock_answers(fsOpContext, applied, type);
 		for (const auto &owner : applied) { wakeUps.emplace_back(owner, type); }
@@ -7127,8 +7145,6 @@ bool matocl_close_files(Session *currentSession) {
 		}
 		matocl_locks_release(context, fsOpContext, openFileInode, currentSession->sessionId,
 		                     pendingWakeUps);
-		if (!contextHasTransaction) { wakeUp(); }
-
 		if (contextHasTransaction) {
 			pendingOperations--;
 			pendingBatch.push_back(openFileInode);
@@ -7145,6 +7161,8 @@ bool matocl_close_files(Session *currentSession) {
 				anyFailure = true;
 				break;
 			}
+		} else {
+			wakeUp();
 		}
 	}
 
@@ -7303,13 +7321,7 @@ void matocl_before_disconnect(matoclserventry *eptr) {
 	// cleanup that cannot commit now is kept and retried until it does.
 	std::vector<ChunkCleanup> cleanups;
 	for (const auto &operation : eptr->delayedChunkOperations) {
-		ChunkCleanup cleanup{*operation};
-		if (eptr->sessionData != nullptr) {
-			cleanup.hasSession = true;
-			cleanup.rootInode = eptr->sessionData->rootInode;
-			cleanup.sessionFlags = eptr->sessionData->flags;
-		}
-		cleanups.push_back(std::move(cleanup));
+		cleanups.push_back(matoclserv_chunk_cleanup(eptr, *operation));
 	}
 	eptr->delayedChunkOperations.clear();
 
@@ -7683,10 +7695,10 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				case CLTOMA_FUSE_SETXATTR:
 				    matoclserv_fuse_setxattr(eptr, data, length);
 				    break;
-			    case SAU_CLTOMA_CLUSTER_SERVERS:
+				case SAU_CLTOMA_CLUSTER_SERVERS:
 				    matoclserv_cluster_servers(eptr, data, length);
 				    break;
-				    /* for tools - also should be available for registered clients */
+					/* for tools - also should be available for registered clients */
 				case CLTOMA_CSERV_LIST:
 				    matoclserv_cserv_list(eptr, data, length);
 				    break;
