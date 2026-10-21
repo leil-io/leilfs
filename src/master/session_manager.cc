@@ -99,7 +99,7 @@ void SessionManagerBase::closeSession(uint32_t sessionId) {
 	if (session->connections == 1 && session->newSession < 2) { session->newSession += 2; }
 }
 
-uint8_t SessionManagerBase::attachSession(Session &session, bool isNew) {
+uint8_t SessionManagerBase::attachSession(Session &session, bool isNew, uint32_t /*attempt*/) {
 	if (isNew) { persistSession(session); }
 	return SAUNAFS_STATUS_OK;
 }

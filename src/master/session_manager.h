@@ -143,11 +143,13 @@ public:
 	///
 	/// With @p isNew the session is persisted together with its first attachment. Backends
 	/// whose sessions are not attached to one server only persist a new session.
+	/// @p attempt numbers the client's reconnect requests (0 when it sends none): a request
+	/// older than the one that attached the session last is refused, as the client has moved on.
 	///
 	/// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID when the session was released or
 	///         is unknown to the backing store, or SAUNAFS_ERROR_IO when the store could not be
-	///         updated.
-	virtual uint8_t attachSession(Session &session, bool isNew) = 0;
+	///         updated or the request is older than the latest one.
+	virtual uint8_t attachSession(Session &session, bool isNew, uint32_t attempt) = 0;
 
 	/// Checks, inside @p fsOpContext's transaction, that this server still serves @p sessionId
 	/// under @p generation. The read conflicts with any change of the attachment, so a
@@ -324,7 +326,7 @@ public:
 
 	/// @copydoc ISessionManager::attachSession
 	/// @note Persists a new session through persistSession() and keeps generation 0.
-	uint8_t attachSession(Session &session, bool isNew) override;
+	uint8_t attachSession(Session &session, bool isNew, uint32_t attempt) override;
 
 	/// @copydoc ISessionManager::checkAttachment
 	/// @note Always passes: the session is served by this process only.

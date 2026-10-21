@@ -71,8 +71,9 @@ void matoclserv_close_session(uint32_t sessionId);
 
 /// Makes this server the one serving @p session's client (see ISessionManager::attachSession).
 /// @param isNew True for a session being registered, false for a reconnect
+/// @param attempt The client's reconnect request number, 0 when it sends none
 /// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID or SAUNAFS_ERROR_IO
-uint8_t matoclserv_attach_session(Session *session, bool isNew);
+uint8_t matoclserv_attach_session(Session *session, bool isNew, uint32_t attempt);
 
 /// Releases a session at once, whichever server serves it (see
 /// ISessionManager::releaseSessionNow).

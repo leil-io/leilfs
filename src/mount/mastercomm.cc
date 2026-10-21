@@ -156,9 +156,13 @@ static std::mutex fdMutex, recMutex;
 
 static uint32_t sessionid;
 
+/// Numbers this mount's reconnect requests. A server that handles one late, as after it froze,
+/// cannot take the session back from a newer request another server accepted.
+static uint32_t gAttachAttempt = 0;
+
 constexpr uint32_t fuseRegisterReconnectDataLength =
     sizeof(sessionid) + kSaunafsVersionMajorLength + kSaunafsVersionMinorLength +
-    kSaunafsVersionMicroLength;
+    kSaunafsVersionMicroLength + sizeof(gAttachAttempt);
 constexpr uint32_t fuseRegisterWithReconnectPacketInfoLength =
     kFuseRegisterSessionTypeLength + fuseRegisterReconnectDataLength;
 constexpr uint32_t registerReconnectTotalPacketLength = registerTotalHeaderInfoLength +
@@ -1445,6 +1449,9 @@ static ReconnectOutcome fs_reconnect_to_current() {
 	put16bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MAJOR);
 	put8bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MINOR);
 	put8bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MICRO);
+	// The numbers wrap, skipping 0, which means a request without a number.
+	if (++gAttachAttempt == 0) { ++gAttachAttempt; }
+	put32bit(&messageToMaster, gAttachAttempt);
 
 	int writtenBytes = fs_write(fd, registrationMessageBuffer.data(),
 	                            registerReconnectTotalPacketLength, kDefaultTcpCommTimeoutMSeconds);

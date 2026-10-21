@@ -51,7 +51,8 @@ inline constexpr std::string_view kSessionOpenKeyPrefix = "SESS_OPEN_";
 /// Prefix for per-session attachments: which metadata server serves the session's client.
 /// Format: SESS_STATE_<SessionId>:<SerializedSessionAttachment>
 /// - SessionId: uint32_t serialized as Big Endian
-/// - Value: serving server id and incarnation, generation, connection state and its time.
+/// - Value: serving server id and incarnation, generation, connection state and its time, and
+///   the number of the client's reconnect request that attached the session.
 /// @note This row is intentionally separate from @c SESS_REC_: work for the client reads it
 ///       to check that its server still serves the session, and must not conflict with
 ///       record updates.

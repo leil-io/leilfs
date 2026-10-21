@@ -102,10 +102,10 @@ void matoclserv_close_session(uint32_t sessionId) {
 	gSessionManager->closeSession(sessionId);
 }
 
-uint8_t matoclserv_attach_session(Session *session, bool isNew) {
+uint8_t matoclserv_attach_session(Session *session, bool isNew, uint32_t attempt) {
 	sassert(gSessionManager != nullptr);
 	if (session == nullptr) { return SAUNAFS_ERROR_BADSESSIONID; }
-	return gSessionManager->attachSession(*session, isNew);
+	return gSessionManager->attachSession(*session, isNew, attempt);
 }
 
 uint8_t matoclserv_release_session_now(uint32_t sessionId,

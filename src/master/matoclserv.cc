@@ -2561,6 +2561,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 		uint32_t rootUid, rootGid;
 		uint32_t mapAllUid, mapAllGid;
 		uint32_t infoLength, pathLength, bytesAfterInfo;
+		uint32_t attachAttempt;
 		uint8_t rcode;
 		const uint8_t *path;
 		const char *info;
@@ -2704,7 +2705,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				    (path != nullptr) ? reinterpret_cast<const char *>(path) : "unknown path",
 				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
-				status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true);
+				status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true, 0);
 				eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
 				// Without its store this server cannot register the mount; another may.
 				if (status == SAUNAFS_ERROR_IO) { status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE; }
@@ -2814,7 +2815,7 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info",
 				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
-				status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true);
+				status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true, 0);
 				eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
 				// Without its store this server cannot register the mount; another may.
 				if (status == SAUNAFS_ERROR_IO) { status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE; }
@@ -2852,6 +2853,12 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			}
 			get32bit(&rptr, sessionId);
 			get32bit(&rptr, eptr->version);
+			// A mount that moves between servers numbers its reconnects; older ones send none.
+			attachAttempt = 0;
+			if (rcode == REGISTER_RECONNECT &&
+			    length >= kRegisterWithSessionIdAndVersion + sizeof(attachAttempt)) {
+				get32bit(&rptr, attachAttempt);
+			}
 
 			if (!checkMinimumVersion(eptr)) {
 				return;
@@ -2868,7 +2875,8 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				} else if (rcode == REGISTER_RECONNECT) {
 					// The client's session is served here from now on; work still in flight
 					// for it on any other connection or server is refused from this point.
-					status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/false);
+					status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/false,
+					                                   attachAttempt);
 					eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
 				} else {
 					status = SAUNAFS_STATUS_OK;
