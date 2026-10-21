@@ -104,6 +104,10 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, probeChunk, SAU_CSTOMA_PROBE_CHUNK, 
                                     chunkId, ChunkPartType, chunkType, uint32_t, chunkVersion,
                                     uint8_t, status)
 
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, maintenanceFence, kDefault, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, maintenanceFence, SAU_CSTOMA_MAINTENANCE_FENCE,
+                                    kDefault, uint64_t, epoch, uint8_t, status)
+
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, setVersion, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(

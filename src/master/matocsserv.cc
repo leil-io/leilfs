@@ -724,6 +724,29 @@ int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPar
 	return SAUNAFS_STATUS_OK;
 }
 
+int matocsserv_send_maintenance_fence(matocsserventry *eptr, uint64_t epoch) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL ||
+	    eptr->version < kFirstVersionWithMaintenanceFence) {
+		return SAUNAFS_ERROR_ENOTSUP;
+	}
+	eptr->outputPackets.emplace_back();
+	matocs::maintenanceFence::serialize(eptr->outputPackets.back().packet, epoch);
+	return SAUNAFS_STATUS_OK;
+}
+
+void matocsserv_got_maintenance_fence(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t epoch;
+	uint8_t status;
+
+	PacketVersion v;
+	deserializePacketVersionNoHeader(data, v);
+	if (v != cstoma::maintenanceFence::kDefault) {
+		throw IncorrectDeserializationException("unsupported maintenance fence packet version");
+	}
+	cstoma::maintenanceFence::deserialize(data, epoch, status);
+	gChunkOperations->maintenanceFenceAnswered(eptr, epoch, status);
+}
+
 void matocsserv_got_probechunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
@@ -1442,6 +1465,9 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 			break;
 		case SAU_CSTOMA_PROBE_CHUNK:
 			matocsserv_got_probechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_MAINTENANCE_FENCE:
+			matocsserv_got_maintenance_fence(eptr, data);
 			break;
 		case SAU_CSTOMA_TRUNCATE:
 			matocsserv_got_sau_truncatechunk_status(eptr, data);

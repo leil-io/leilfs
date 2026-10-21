@@ -24,9 +24,11 @@
 
 #include <array>
 #include <atomic>
+#include <compare>
 #include <cstdint>
 #include <functional>
 #include <list>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -50,6 +52,61 @@ enum class IOPriorityMode : uint8_t {
 };
 
 inline IOPriorityMode gIOPriorityMode;
+
+/// The maintenance fence of a chunkserver, shared by its master job pools: one metadata server
+/// connection at a time replicates and deletes here, the others are answered NOTDONE when their
+/// job is dequeued. Set only by a metadata server that records copies by identity; Master and
+/// Shadow never set it, and without a pair every check admits everything, as released.
+class MaintenanceFence {
+public:
+	/// What a job is stamped with when it is received: its listener, that listener's connection
+	/// at the time and the fenced epoch at the time, so a reconnected server's older jobs, and a
+	/// server's jobs from before its later claim on the same socket, are told from its new ones.
+	struct Stamp {
+		uint32_t listenerId;
+		uint32_t connectionEpoch;
+		uint64_t fenceEpoch;  ///< The pair's epoch at receipt, 0 without a pair.
+		auto operator<=>(const Stamp &) const = default;
+	};
+
+	/// The stamp a job of @p listenerId receives now.
+	Stamp stamp(uint32_t listenerId) const;
+
+	/// A closed or retired connection of @p listenerId; the jobs it left keep its stamp.
+	void connectionClosed(uint32_t listenerId);
+
+	/// Sets the pair for a higher epoch from any connection, or for the current epoch from the
+	/// pair's own connection (a repeat) or from its successor on the same listener once it closed
+	/// (a reconnect); refused for a lower epoch and for another live connection at the same one.
+	/// @return false when refused
+	bool fence(uint64_t epoch, Stamp stamp);
+
+	/// The current pair as the stamp its jobs carry, none without a fence.
+	std::optional<Stamp> pair() const;
+
+	/// Whether a replicate or delete job with @p stamp may run: no pair, or the pair's own stamp.
+	bool admits(Stamp stamp) const;
+
+	/// Admits and counts a replicate or delete job with @p stamp as running, in one step, so an
+	/// ack decided meanwhile cannot miss it.
+	/// @return false when the job may not run, and nothing is counted
+	bool start(Stamp stamp);
+
+	/// A job counted by start() ended.
+	void end(Stamp stamp);
+
+	/// Whether a replicate or delete job of a stamp other than @p stamp is still running.
+	bool othersRunning(Stamp stamp) const;
+
+private:
+	mutable std::mutex mutex_;
+	/// Each listener's connection count; guarded by mutex_.
+	std::array<uint32_t, kMaxMetadataConnections> connectionEpochs_{};
+	/// The fenced epoch and the connection it belongs to, as a stamp; guarded by mutex_.
+	std::optional<Stamp> pair_;
+	/// Running replicate and delete jobs by stamp; guarded by mutex_.
+	std::map<Stamp, uint32_t> running_;
+};
 
 /**
  * @class JobPool
@@ -147,9 +204,25 @@ public:
 	/// @param extra Additional data to be passed to the callback.
 	/// @param processJob The callback function to process the job.
 	/// @param listenerId The ID of the listener associated with the job.
+	/// @param stamp The stamp of the job's origin, for a job held back until now
+	/// (addJobIfNotLocked) or queued for a closed connection; the listener's current one when
+	/// absent.
 	/// @return The ID of the added job.
 	uint32_t addJob(ChunkOperation operation, JobCallback callback, void *extra,
-	                ProcessJobCallback processJob, uint32_t listenerId = 0);
+	                ProcessJobCallback processJob, uint32_t listenerId = 0,
+	                std::optional<MaintenanceFence::Stamp> stamp = std::nullopt);
+
+	/// Shares the chunkserver's maintenance fence with this pool; without one nothing is fenced.
+	void setMaintenanceFence(std::shared_ptr<MaintenanceFence> fence) {
+		maintenanceFence_ = std::move(fence);
+	}
+
+	const std::shared_ptr<MaintenanceFence> &maintenanceFence() const { return maintenanceFence_; }
+
+	/// The operations the maintenance fence governs.
+	static bool fencedOperation(uint32_t operation) {
+		return operation == ChunkOperation::Replicate || operation == ChunkOperation::Delete;
+	}
 
 	/// @brief Returns whether all jobs in the JobPool have been processed by the worker threads.
 	/// This is a very accurate way to check if there are pending jobs in the JobPool, as it counts
@@ -232,6 +305,7 @@ protected:
 		void *extra;                    // Additional data for the callback.
 		JobPool::State state;           // The state of the job.
 		uint32_t listenerId;            // The ID of the listener associated with the job.
+		MaintenanceFence::Stamp stamp;  // The origin the maintenance fence judges the job by.
 	};
 
 	/// @brief Structure to hold information about a listener.
@@ -291,6 +365,8 @@ protected:
 	/// @brief Monotonically allocated table of listeners. Lazily allocated on first use,
 	/// never freed during pool lifetime to eliminate worker thread use-after-free hazards.
 	std::array<std::atomic<ListenerInfo *>, kMaxMetadataConnections> listenerInfos_{};
+	/// The chunkserver's maintenance fence, null for pools that are never fenced (clients).
+	std::shared_ptr<MaintenanceFence> maintenanceFence_;
 	std::string name_;                       /// Human readable id of the JobPool.
 	uint8_t workers;                         /// Number of worker threads in the pool.
 	std::vector<std::thread> workerThreads;  /// Vector of worker threads.
@@ -314,8 +390,10 @@ class MasterJobPool : public JobPool {
 public:
 	/// @brief Function type for creating lock job callbacks based on chunk information and listener
 	/// ID.
-	using LockJobCallbackMaker =
-	    std::function<JobCallback(ChunkWithType chunkWithType, uint32_t listenerId)>;
+	/// @p origin is the stamp of the connection that held the lock, taken before it closed or
+	/// retired, so work the callback queues later keeps that origin under the maintenance fence.
+	using LockJobCallbackMaker = std::function<JobCallback(
+	    ChunkWithType chunkWithType, uint32_t listenerId, MaintenanceFence::Stamp origin)>;
 
 	/// @brief Constructor for MasterJobPool.
 	/// @param name Human readable name for this pool, useful for debugging.
@@ -349,10 +427,13 @@ public:
 	/// @param extra Additional data to be passed to the callback.
 	/// @param processJob The callback function to process the job.
 	/// @param listenerId The ID of the listener associated with the job.
+	/// @param stamp The job's origin under the maintenance fence; the listener's current one
+	/// when absent.
 	/// @return The ID of the added job, or the lock job ID if the chunk is locked.
 	uint32_t addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
 	                           JobCallback callback, void *extra, ProcessJobCallback processJob,
-	                           uint32_t listenerId = 0);
+	                           uint32_t listenerId = 0,
+	                           std::optional<MaintenanceFence::Stamp> stamp = std::nullopt);
 
 	/// @brief Changes the callback function for all lock jobs associated with a specific listener.
 	/// This function is used to update the callback for all lock jobs when the master server
@@ -477,6 +558,9 @@ private:
 		uint64_t identity = 0;
 		/// The metadata server that installed the lock; kept when the lock job is detached.
 		uint32_t ownerId = 0;
+		/// The connection that installed the lock, as the maintenance fence knows it: work its
+		/// callbacks queue keeps this origin through every later close and detach.
+		MaintenanceFence::Stamp origin{};
 		/// The chunk version the lock was taken at.
 		uint32_t version = 0;
 
@@ -727,7 +811,8 @@ uint32_t job_invalid(MasterJobPool &jobPool, JobPool::JobCallback callback, void
 /// @return The ID of the added job.
 uint32_t job_delete(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                     uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                    uint32_t listenerId = 0);
+                    uint32_t listenerId = 0,
+                    std::optional<MaintenanceFence::Stamp> stamp = std::nullopt);
 
 /// @brief Adds a create job to the JobPool.
 ///

@@ -75,6 +75,10 @@ SAUNAFS_DEFINE_PACKET_VERSION(matocs, probeChunk, kDefault, 0)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, probeChunk, SAU_MATOCS_PROBE_CHUNK, kDefault, uint64_t,
                                     chunkId, ChunkPartType, chunkType)
 
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, maintenanceFence, kDefault, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, maintenanceFence, SAU_MATOCS_MAINTENANCE_FENCE,
+                                    kDefault, uint64_t, epoch)
+
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
