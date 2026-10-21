@@ -46,6 +46,7 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <random>
 #include <stdexcept>
@@ -162,6 +163,20 @@ struct DelayedChunkOperation {
 	bool pendingIsFailedCreate = false;  ///< stashed isFailedCreateOperation flag
 };
 
+/// The end of a chunk operation whose cleanup did not commit, with what it needs of the
+/// client's session.
+struct ChunkCleanup {
+	DelayedChunkOperation operation;
+	bool hasSession = false;
+	inode_t rootInode = 0;
+	uint8_t sessionFlags = 0;
+};
+
+/// Write cleanups whose commit failed, retried until they commit. A truncate's unlock is not
+/// kept: its lock expires as on Master, and a retry could not tell it from a newer truncate,
+/// as both end with lock id 0.
+static std::vector<ChunkCleanup> gChunkCleanups;
+
 ///< This looks to be the client type.
 ///< This is set in matoclserv_serve and matoclserv_fuse_register, and there are 4 possible values:
 enum class ClientState {
@@ -209,6 +224,15 @@ struct matoclserventry {
 	static constexpr uint8_t kPasswordSize = 32;
 	uint8_t randomPassword[kPasswordSize];  ///< Random password for authentication
 	Session *sessionData;                   ///< Pointer to the session data for this client
+	/// Attachment generation this connection was accepted under; 0 when the backend does not
+	/// attach sessions to one server. Work done for this connection commits only while the
+	/// session's attachment still holds it.
+	uint64_t attachmentGeneration = 0;
+	/// Lock waits this connection queued, as (message id, request id), when its session is
+	/// attached to this server. An answer is sent only to the wait it belongs to: the mount
+	/// reuses a thread's message id, so a stale grant could otherwise answer that thread's
+	/// next request.
+	std::vector<std::pair<uint32_t, uint32_t>> lockWaits;
 	///< Challenge data for admin authentication
 	std::unique_ptr<SauMatoclAdminRegisterChallengeData> adminChallenge;
 	AdminTask adminTask;  ///< admin task requested by this client
@@ -460,6 +484,56 @@ static BlockingRecoveryResult matoclserv_recover_transaction_blocking(
 		safs::log_err("matoclserv: backend recovery failed non-retryably (err {}): {}",
 		              e.errorCode(), e.what());
 		return {nullptr, true};
+	}
+}
+
+/// Wraps a client op body with the session fence: the body runs, and its transaction commits,
+/// only while this server still serves the client's session under the attachment the
+/// connection was accepted with. Without an attachment (Master) the body is returned as is.
+static OpReplay matoclserv_fenced(matoclserventry *eptr, OpReplay body) {
+	if (eptr->sessionData == nullptr || eptr->attachmentGeneration == 0) { return body; }
+
+	return [eptr, sessionId = eptr->sessionData->sessionId, generation = eptr->attachmentGeneration,
+	        body = std::move(body)](FilesystemOperationContext &ctx) -> uint8_t {
+		const uint8_t status = matoclserv_check_attachment(ctx, sessionId, generation);
+		if (status != SAUNAFS_STATUS_OK) {
+			// The session moved to another server or was released: this connection no longer
+			// serves it, and the client learns where it stands by registering again.
+			eptr->mode = ClientConnectionMode::KILL;
+			return status;
+		}
+		return body(ctx);
+	};
+}
+
+/// For the best-effort commits made outside the op harness (atime and goal fixes on reads):
+/// true while @p eptr's work may still commit, checked in @p fsOpContext's transaction as
+/// matoclserv_fenced() does, which also drops a connection whose session moved.
+static bool matoclserv_still_serves(matoclserventry *eptr,
+                                    const FilesystemOperationContext &fsOpContext) {
+	if (eptr->sessionData == nullptr || eptr->attachmentGeneration == 0) { return true; }
+	if (matoclserv_check_attachment(fsOpContext, eptr->sessionData->sessionId,
+	                                eptr->attachmentGeneration) == SAUNAFS_STATUS_OK) {
+		return true;
+	}
+	eptr->mode = ClientConnectionMode::KILL;
+	return false;
+}
+
+/// Admits a recursive job for @p eptr. Its tasks commit in transactions of their own that the
+/// fence does not check, so a job starts only while this server serves the session; once
+/// started it finishes here, as a Master job finishes after its client reconnects.
+static bool matoclserv_admit_job(matoclserventry *eptr) {
+	if (eptr->sessionData == nullptr || eptr->attachmentGeneration == 0) { return true; }
+	try {
+		auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+		    FilesystemOperationContext::TransactionType::kReadWrite);
+		return matoclserv_still_serves(eptr, fsOpContext);
+	} catch (const kv::TransactionError &error) {
+		safs::log_warn("job of session {} not started, the store failed: {}",
+		               eptr->sessionData->sessionId, error.what());
+		eptr->mode = ClientConnectionMode::KILL;
+		return false;
 	}
 }
 
@@ -760,6 +834,18 @@ static void matoclserv_finish_member(BatchMember &member, uint8_t status) {
 	if (member.eptr->mode != ClientConnectionMode::KILL && member.finish) { member.finish(status); }
 }
 
+/// Ends a member the store failed to run or commit with an I/O error, unless this server
+/// cannot reach the store and the client's session is attached to it: its connection is then
+/// dropped instead, so the mount resends the request through a server that can. A store that
+/// works but keeps failing the request (conflicts) still answers the error.
+static void matoclserv_fail_member_on_store(BatchMember &member) {
+	if (member.eptr->attachmentGeneration != 0 && gStoreUnreachableHook &&
+	    gStoreUnreachableHook()) {
+		member.eptr->mode = ClientConnectionMode::KILL;
+	}
+	matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+}
+
 /// Runs one member's body at `idx` on the shared `ctx` transaction. On success, advances
 /// `idx` to the next member; on an op error, replies to that member and removes it; on a
 /// retryable read error still within budget, keeps it for the rebuild. Returns true when
@@ -800,7 +886,7 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 			safs::log_warn(
 			    "matoclserv: batch member read retry exhausted after {} attempts (err {}): {}",
 			    member.attempts, e.errorCode(), e.what());
-			matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+			matoclserv_fail_member_on_store(member);
 			members.erase(members.begin() + idx);
 		} else {
 			member.attempts++;
@@ -817,7 +903,7 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 		ctx.finishTransactionEffects(FilesystemTransactionOutcome::kAborted);
 		safs::log_err("matoclserv: backend transaction error in batch member (err {}): {}",
 		              e.errorCode(), e.what());
-		matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+		matoclserv_fail_member_on_store(member);
 		members.erase(members.begin() + idx);
 		return true;
 	} catch (const std::exception &e) {
@@ -825,7 +911,7 @@ static bool matoclserv_replay_members_iteration(std::vector<BatchMember> &member
 		// member with EIO instead of taking the whole server down with std::terminate.
 		ctx.finishTransactionEffects(FilesystemTransactionOutcome::kAborted);
 		safs::log_err("matoclserv: exception in batch member: {}", e.what());
-		matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+		matoclserv_fail_member_on_store(member);
 		members.erase(members.begin() + idx);
 		return true;
 	}
@@ -916,14 +1002,13 @@ static void matoclserv_join_open_batch(BatchMember member) {
 	matoclserv_release_idle_open_batch();
 }
 
-/// Entry point for converted write-op handlers: routes the op into the group-commit
-/// batch. `finish` always runs exactly once with the op/commit status; the optional
-/// `onCommit` durable hook runs first, with the same status, even for a killed client.
-/// An isolated member runs between committed batches; Master still executes it inline.
-static void matoclserv_submit_op(matoclserventry *eptr, OpReplay body,
-                                 std::function<void(uint8_t status)> finish,
-                                 std::function<void(uint8_t status)> onCommit = {},
-                                 bool isolated = false) {
+/// Routes an op into the group-commit batch without checking that this server still serves the
+/// client's session: only for work that must finish wherever the session went, such as the
+/// end of a chunk operation the chunkservers already ran. Otherwise as matoclserv_submit_op.
+static void matoclserv_submit_unfenced_op(matoclserventry *eptr, OpReplay body,
+                                          std::function<void(uint8_t status)> finish,
+                                          std::function<void(uint8_t status)> onCommit = {},
+                                          bool isolated = false) {
 	eptr->pendingCommits++;
 	if (gBatchMaintenanceRequested || gInFlightBatch.has_value() || gBatchRetry.has_value() ||
 	    gBatchResolving || !gHeldOps.empty()) {
@@ -937,6 +1022,33 @@ static void matoclserv_submit_op(matoclserventry *eptr, OpReplay body,
 	}
 	matoclserv_join_open_batch(
 	    BatchMember{eptr, std::move(finish), std::move(body), 0, std::move(onCommit), isolated});
+}
+
+/// True when the backend refused to release a file for now (busy freeing its chunks, or a store
+/// failure): the release must be retried. Other errors mean the session holds nothing to release.
+static bool matoclserv_release_refused(uint8_t status) {
+	return status == SAUNAFS_ERROR_LOCKED || status == SAUNAFS_ERROR_IO;
+}
+
+/// True when the client opening @p inode may keep the file data it cached before. The data cache
+/// manager only sees writes through this server; where the session is attached to one server
+/// among several, a write through another server goes unseen, so the client never keeps it.
+static bool matoclserv_may_keep_data_cache(matoclserventry *eptr, inode_t inode) {
+	if (eptr->attachmentGeneration != 0) { return false; }
+	return dcm_open(inode, eptr->sessionData->sessionId) != 0;
+}
+
+/// Entry point for converted write-op handlers: routes the op into the group-commit
+/// batch. `finish` always runs exactly once with the op/commit status; the optional
+/// `onCommit` durable hook runs first, with the same status, even for a killed client.
+/// An isolated member runs between committed batches; Master still executes it inline.
+/// The op commits only while this server still serves the client's session.
+static void matoclserv_submit_op(matoclserventry *eptr, OpReplay body,
+                                 std::function<void(uint8_t status)> finish,
+                                 std::function<void(uint8_t status)> onCommit = {},
+                                 bool isolated = false) {
+	matoclserv_submit_unfenced_op(eptr, matoclserv_fenced(eptr, std::move(body)), std::move(finish),
+	                              std::move(onCommit), isolated);
 }
 
 /// Runs once per event-loop iteration (after the serve pass): finalizes an
@@ -1016,7 +1128,7 @@ static void matoclserv_poll_batch() {
 			              commitError, retryable);
 			gInFlightBatch->ctx.finishTransactionEffectsAfterCommit(false);
 			for (BatchMember &member : gInFlightBatch->members) {
-				matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+				matoclserv_fail_member_on_store(member);
 			}
 			gInFlightBatch.reset();
 		}
@@ -1072,7 +1184,7 @@ static void matoclserv_poll_batch() {
 					safs::log_err("matoclserv: batch recovery failed (err {}), giving up: {}",
 					              e.errorCode(), e.what());
 					for (BatchMember &member : retry.members) {
-						matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+						matoclserv_fail_member_on_store(member);
 					}
 				}
 			} else if (std::chrono::steady_clock::now() >=
@@ -1091,7 +1203,7 @@ static void matoclserv_poll_batch() {
 				        .count(),
 				    retry.members.size());
 				for (BatchMember &member : retry.members) {
-					matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+					matoclserv_fail_member_on_store(member);
 				}
 			}
 		} else if (std::chrono::steady_clock::now() >= gBatchRetry->notBefore) {
@@ -1577,8 +1689,13 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 			}
 			return SAUNAFS_STATUS_OK;
 		};
-		matoclserv_submit_op(
-		    eptr, std::move(runCleanup), {}, [inode, chunkId, cleanupStatus](uint8_t commitStatus) {
+		// A cleanup that did not commit is kept and retried until it does.
+		ChunkCleanup retry{operation, true, eptr->sessionData->rootInode, eptr->sessionData->flags};
+		retry.operation.statusArrived = removeChunk;
+		retry.operation.pendingIsFailedCreate = removeChunk;
+		matoclserv_submit_unfenced_op(
+		    eptr, std::move(runCleanup), {},
+		    [inode, chunkId, cleanupStatus, retry](uint8_t commitStatus) {
 			    if (*cleanupStatus == SAUNAFS_ERROR_WRONGLOCKID ||
 			        *cleanupStatus == SAUNAFS_ERROR_NOTLOCKED) {
 				    safs::log_info(
@@ -1587,8 +1704,9 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 			    } else if (commitStatus != SAUNAFS_STATUS_OK) {
 				    safs::log_err(
 				        "matoclserv_process_chunk_status: transaction failed to commit "
-				        "while releasing the write chunk lock: inode {}, chunkId {}",
+				        "while releasing the write chunk lock: inode {}, chunkId {}; retrying",
 				        inode, chunkId);
+				    gChunkCleanups.push_back(retry);
 			    }
 		    });
 		return;
@@ -1616,7 +1734,7 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 			};
 			// Reply (kill-gated) lives in finish; the commit-failure log lives in the
 			// always-run onCommit hook, so a killed client cannot suppress it.
-			matoclserv_submit_op(
+			matoclserv_submit_unfenced_op(
 			    eptr, std::move(runUnlock),
 			    [eptr, serializer, operationType, messageId, status](uint8_t) {
 				    std::vector<uint8_t> reply;
@@ -1653,7 +1771,7 @@ static void matoclserv_process_chunk_status(matoclserventry *eptr,
 				}
 				matoclserv_createpacket(eptr, std::move(reply));
 			};
-			matoclserv_submit_op(
+			matoclserv_submit_unfenced_op(
 			    eptr, std::move(runFinalize),
 			    [sendFinalizeReply](uint8_t commitStatus) { sendFinalizeReply(commitStatus); });
 			return;
@@ -2336,6 +2454,41 @@ void matoclserv_metadataservers_list(matoclserventry* eptr, const uint8_t* data,
 	matoclserv_createpacket(eptr, matocl::metadataserversList::build(SAUNAFS_VERSHEX, entries));
 }
 
+/// Answers a mount which other metadata servers it may move its session to. Only a routing
+/// hint: a failed listing answers an error, never an empty list, so the mount keeps the one it
+/// had.
+void matoclserv_cluster_servers(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	uint32_t messageId = 0;
+	cltoma::clusterServers::deserialize(data, length, messageId);
+
+	uint8_t status = SAUNAFS_STATUS_OK;
+	std::vector<MetadataClusterMember> servers;
+	if (gClientClusterServersHook) {
+		try {
+			servers = gClientClusterServersHook();
+		} catch (const std::exception &exception) {
+			safs::log_warn("main master server module: cluster servers list failed: {}",
+			               exception.what());
+			status = SAUNAFS_ERROR_IO;
+			servers.clear();
+		}
+	}
+	matoclserv_createpacket(eptr, matocl::clusterServers::build(messageId, status, servers));
+}
+
+/// For a mount's registration that failed because the session store is unavailable: a mount
+/// that can move its session is answered "try another server". An older mount takes any error
+/// as a lost session, so it is not answered: it loses the connection and reconnects later.
+/// @return False when the connection is dropped instead.
+static bool matoclserv_answer_try_another(matoclserventry *eptr, uint8_t &status) {
+	if (eptr->version >= kFirstVersionWithClientFailover) {
+		status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
+		return true;
+	}
+	eptr->mode = ClientConnectionMode::KILL;
+	return false;
+}
+
 static void matoclserv_send_iolimits_cfg(matoclserventry *eptr) {
 	MessageBuffer buffer;
 	matocl::iolimitsConfig::serialize(buffer, gIoLimitsConfigId,
@@ -2551,7 +2704,10 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				    (path != nullptr) ? reinterpret_cast<const char *>(path) : "unknown path",
 				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
-				matoclserv_persist_session(eptr->sessionData);
+				status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true);
+				eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
+				// Without its store this server cannot register the mount; another may.
+				if (status == SAUNAFS_ERROR_IO) { status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE; }
 			}
 
 			// answer
@@ -2658,7 +2814,10 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info",
 				    ipToString(eptr->peerIpAddress), eptr->peerPort);
 
-				matoclserv_persist_session(eptr->sessionData);
+				status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/true);
+				eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
+				// Without its store this server cannot register the mount; another may.
+				if (status == SAUNAFS_ERROR_IO) { status = SAUNAFS_ERROR_TEMP_NOTPOSSIBLE; }
 			}
 
 			// answer
@@ -2698,21 +2857,32 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				return;
 			}
 
-			eptr->sessionData = matoclserv_find_session(sessionId);
-			if (eptr->sessionData == nullptr || eptr->sessionData->peerIpAddress == 0) {
+			status = matoclserv_find_session(sessionId, eptr->sessionData);
+			if (status == SAUNAFS_STATUS_OK && eptr->sessionData->peerIpAddress == 0) {
 				status = SAUNAFS_ERROR_BADSESSIONID;
-			} else {
+			}
+			if (status == SAUNAFS_STATUS_OK) {
 				if ((eptr->sessionData->flags & SESFLAG_DYNAMICIP) == 0 &&
 				    eptr->peerIpAddress != eptr->sessionData->peerIpAddress) {
 					status = SAUNAFS_ERROR_EACCES;
+				} else if (rcode == REGISTER_RECONNECT) {
+					// The client's session is served here from now on; work still in flight
+					// for it on any other connection or server is refused from this point.
+					status = matoclserv_attach_session(eptr->sessionData, /*isNew=*/false);
+					eptr->attachmentGeneration = eptr->sessionData->attachmentGeneration;
 				} else {
 					status = SAUNAFS_STATUS_OK;
+				}
+				if (status == SAUNAFS_STATUS_OK) {
 					safs::log_info(
 					    "Session {} reconnected for mount: {} with ip: {} and port: {}",
 					    eptr->sessionData->sessionId,
 					    !eptr->sessionData->info.empty() ? eptr->sessionData->info : "unknown info",
 					    ipToString(eptr->peerIpAddress), eptr->peerPort);
 				}
+			}
+			if (status == SAUNAFS_ERROR_IO && !matoclserv_answer_try_another(eptr, status)) {
+				return;
 			}
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER, sizeof(status));
 			put8bit(&wptr, status);
@@ -2823,6 +2993,21 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 	std::set<inode_t> &openFiles = eptr->sessionData->openFilesSet;
 	const bool transactional = fsOpContext.hasReadWriteTransaction();
 
+	// Each batch transaction commits only while this connection still serves the session.
+	const auto fenceBatch = [eptr, &fsOpContext]() {
+		if (eptr->attachmentGeneration == 0) { return true; }
+		if (matoclserv_check_attachment(fsOpContext, eptr->sessionData->sessionId,
+		                                eptr->attachmentGeneration) == SAUNAFS_STATUS_OK) {
+			return true;
+		}
+		eptr->mode = ClientConnectionMode::KILL;
+		return false;
+	};
+	if (!fenceBatch()) {
+		changelog_enable_flush();
+		return;
+	}
+
 	std::vector<inode_t> toRelease;
 	for (inode_t openFileIno : openFiles) {
 		if (inodes_to_reserve.contains(openFileIno)) {
@@ -2851,7 +3036,12 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 	};
 
 	for (inode_t openFileIno : toRelease) {
-		gFSOperations->release(context, fsOpContext, openFileIno, eptr->sessionData->sessionId);
+		// A refused release keeps the file open in the session, so a later close or teardown
+		// releases it; forgetting it would leave the file open in the store for good.
+		if (matoclserv_release_refused(gFSOperations->release(context, fsOpContext, openFileIno,
+		                                                      eptr->sessionData->sessionId))) {
+			continue;
+		}
 		if (!transactional) {
 			openFiles.erase(openFileIno);
 			continue;
@@ -2865,6 +3055,10 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 				safs::log_err("{}: failed to commit release batch for reserving inodes", __func__);
 			}
 			applyBatches(committed);
+			if (!fenceBatch()) {
+				changelog_enable_flush();
+				return;
+			}
 		}
 	}
 
@@ -2886,6 +3080,10 @@ void matoclserv_fuse_reserved_inodes(matoclserventry *eptr, const uint8_t *data,
 				safs::log_err("{}: failed to commit acquire batch for reserving inodes", __func__);
 			}
 			applyBatches(committed);
+			if (!fenceBatch()) {
+				changelog_enable_flush();
+				return;
+			}
 		}
 	}
 
@@ -3461,7 +3659,8 @@ void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32
 
 	status = gFSOperations->readlink(context, fsOpContext, inode, path);
 
-	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction() &&
+	    matoclserv_still_serves(eptr, fsOpContext)) {
 		if (!fsOpContext.commitTransaction()) {
 			// Best-effort: atime update only, do not fail the readlink.
 			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
@@ -3712,9 +3911,9 @@ void matoclserv_fuse_create(matoclserventry *eptr, PacketHeader header, const ui
 	                                         Attributes replyAttr) {
 		MessageBuffer reply;
 		if (replyStatus == SAUNAFS_STATUS_OK) {
-			// When the data cache manager cannot keep this open coherent (dcm_open == 0), clear
-			// the ALLOWDATACACHE attribute bit so the client does not cache this file's data.
-			if (dcm_open(ino, eptr->sessionData->sessionId) == 0) {
+			// When this open cannot be kept coherent, clear the ALLOWDATACACHE attribute bit so
+			// the client does not cache this file's data.
+			if (!matoclserv_may_keep_data_cache(eptr, ino)) {
 				replyAttr[1] &= (0xFF ^ (MATTR_ALLOWDATACACHE << 4));
 			}
 			matocl::fuseCreate::serialize(reply, messageId, ino, replyAttr);
@@ -3874,6 +4073,7 @@ void matoclserv_fuse_recursive_remove_wake_up(uint32_t session_id, uint32_t msgi
 }
 
 void matoclserv_fuse_recursive_remove(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
+	if (!matoclserv_admit_job(eptr)) { return; }
 	inode_t parent_inode;
 	uint32_t uid, gid;
 	uint32_t msgid;
@@ -4174,7 +4374,8 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 			status = gFSOperations->readdir(context, fsOpContext, inode, first_entry,
 			                                number_of_entries, dir_entries);
 
-			if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+			if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction() &&
+			    matoclserv_still_serves(eptr, fsOpContext)) {
 				if (!fsOpContext.commitTransaction()) {
 					// Best-effort: atime update only, do not fail the directory listing.
 					safs::log_err("{}: Failed to commit atime update for inode {}", __func__,
@@ -4260,7 +4461,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr, const uint8_t *data, uint32_t
 		gFSOperations->readdirData(context, fsOpContext, flags, custom, ptr);
 
 		// Best effort to update atime
-		if (fsOpContext.hasReadWriteTransaction()) {
+		if (fsOpContext.hasReadWriteTransaction() && matoclserv_still_serves(eptr, fsOpContext)) {
 			if (!fsOpContext.commitTransaction()) {
 				safs::log_err("{}: Failed to commit atime update for inode {}", __func__, inode);
 			}
@@ -4298,7 +4499,7 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 	auto sendOpenReply = [eptr, msgid](uint8_t st, Attributes replyAttr, inode_t ino) {
 		uint8_t *ptr;
 		if (st == SAUNAFS_STATUS_OK) {
-			if (dcm_open(ino, eptr->sessionData->sessionId) == 0) {
+			if (!matoclserv_may_keep_data_cache(eptr, ino)) {
 				replyAttr[1] &= (0xFF ^ (MATTR_ALLOWDATACACHE << 4));
 			}
 			ptr = matoclserv_createpacket(eptr, MATOCL_FUSE_OPEN, sizeof(msgid) + replyAttr.size());
@@ -4391,7 +4592,8 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 		}
 	}
 
-	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction() &&
+	    matoclserv_still_serves(eptr, fsOpContext)) {
 		if (!fsOpContext.commitTransaction()) {
 			// Best-effort: atime update only, do not fail the chunk read.
 			safs::log_err("{}: transaction failed to commit: inode {}, chunk index {}", __func__,
@@ -4868,6 +5070,7 @@ void matoclserv_fuse_settrashtime_wake_up(uint32_t session_id, uint32_t msgid,
 }
 
 void matoclserv_fuse_settrashtime(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
+	if (!matoclserv_admit_job(eptr)) { return; }
 	inode_t inode;
 	uint32_t uid, trashtime, msgid;
 	uint8_t smode, status;
@@ -4932,7 +5135,8 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 	uint8_t status =
 	    gFSOperations->getGoal(matoclserv_get_context(eptr), fsOpContext, inode, gmode, fgtab, dgtab);
 
-	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction() &&
+	    matoclserv_still_serves(eptr, fsOpContext)) {
 		if (!fsOpContext.commitTransaction()) {
 			safs::log_err("{}: transaction failed to commit: inode {}, gmode {}", __func__, inode,
 			              static_cast<uint32_t>(gmode));
@@ -4982,6 +5186,7 @@ void matoclserv_fuse_setgoal_wake_up(uint32_t session_id, uint32_t msgid, uint32
 }
 
 void matoclserv_fuse_setgoal(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
+	if (!matoclserv_admit_job(eptr)) { return; }
 	inode_t inode;
 	uint32_t uid;
 	uint32_t msgid;
@@ -5409,6 +5614,7 @@ void matoclserv_fuse_snapshot_wake_up(uint32_t type, uint32_t session_id, uint32
 }
 
 void matoclserv_fuse_snapshot(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
+	if (!matoclserv_admit_job(eptr)) { return; }
 	inode_t inode;
 	inode_t inode_dst;
 	uint32_t uid, gid;
@@ -5975,20 +6181,90 @@ static void matoclserv_lock_wake_up(std::vector<FileLocks::Owner> &owners, safs_
 	}
 }
 
+/// Lock waiters to answer once the transaction that granted them committed.
+using LockWakeUps = std::vector<std::pair<FileLocks::Owner, safs_locks::Type>>;
+
+/// Set when a lock answer was recorded for deliverLockAnswers(), so it is sent right after
+/// the commit instead of at the next poll.
+static bool gLockAnswersRecorded = false;
+
+/// Keeps in @p owners only the granted waiters this server answers itself after the commit.
+/// The other answers are recorded in @p fsOpContext's transaction, for the server that serves
+/// the waiter's session to send.
+static void matoclserv_route_lock_answers(const FilesystemOperationContext &fsOpContext,
+                                          std::vector<FileLocks::Owner> &owners,
+                                          safs_locks::Type type) {
+	std::erase_if(owners, [&](const FileLocks::Owner &owner) {
+		const bool local = matoclserv_route_lock_answer(fsOpContext, owner.sessionid, owner.msgid,
+		                                                owner.reqid, static_cast<uint8_t>(type));
+		if (!local) { gLockAnswersRecorded = true; }
+		return !local;
+	});
+}
+
+/// Remembers the wait @p eptr's blocking lock request queued, so its answer reaches it. A new
+/// wait with the same message id means the thread gave up the earlier one.
+static void matoclserv_record_lock_wait(matoclserventry *eptr, uint32_t messageId,
+                                        uint32_t requestId) {
+	if (eptr->attachmentGeneration == 0) { return; }
+	std::erase_if(eptr->lockWaits,
+	              [messageId](const auto &wait) { return wait.first == messageId; });
+	eptr->lockWaits.emplace_back(messageId, requestId);
+}
+
+/// How often the recorded lock answers are looked for, in milliseconds.
+constexpr uint64_t kLockAnswerDeliveryPeriodMs = 200;
+
+/// Sends the recorded lock answers for the waits of connections served here. A wait whose
+/// connection is gone was answered an I/O error then, so its answer is dropped.
+static void matoclserv_deliver_lock_answers() {
+	gLockAnswersRecorded = false;
+	matoclserv_deliver_recorded_lock_answers([](uint32_t sessionId, uint64_t generation,
+	                                            uint32_t messageId, uint32_t requestId,
+	                                            uint8_t lockType) {
+		for (const auto &eptr : matoclservList) {
+			if (eptr->mode == ClientConnectionMode::KILL || eptr->sessionData == nullptr ||
+			    eptr->sessionData->sessionId != sessionId ||
+			    eptr->attachmentGeneration != generation) {
+				continue;
+			}
+			if (std::erase(eptr->lockWaits, std::pair{messageId, requestId}) == 0) { return; }
+			MessageBuffer reply;
+			if (lockType == static_cast<uint8_t>(safs_locks::Type::kFlock)) {
+				matocl::fuseFlock::serialize(reply, messageId, SAUNAFS_STATUS_OK);
+			} else {
+				matocl::fuseSetlk::serialize(reply, messageId, SAUNAFS_STATUS_OK);
+			}
+			matoclserv_createpacket(eptr.get(), std::move(reply));
+			return;
+		}
+	});
+}
+
+/// Sends at once the lock answers the last committed operation recorded.
+static void matoclserv_deliver_recorded_now() {
+	if (gLockAnswersRecorded) { matoclserv_deliver_lock_answers(); }
+}
+
 /// Runs a lock mutation through commit retry and returns client-visible status.
 /// WAITING must commit because it persists a pending lock, so map it to OK for the
 /// harness and restore WAITING afterwards. `applied` is per-attempt wakeup state;
 /// non-committed outcomes clear it so callers can wake unconditionally.
-static uint8_t matoclserv_run_lock_op(std::vector<FileLocks::Owner> &applied,
-                                      const OpReplay &lockOp) {
+static uint8_t matoclserv_run_lock_op(matoclserventry *eptr, std::vector<FileLocks::Owner> &applied,
+                                      safs_locks::Type lockType, const OpReplay &lockOp) {
 	uint8_t lockStatus = SAUNAFS_STATUS_OK;
-	uint8_t commitStatus =
-	    matoclserv_commit_op_with_retry([&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+	uint8_t commitStatus = matoclserv_commit_op_with_retry(
+	    matoclserv_fenced(eptr, [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
 		    applied.clear();  // reset per attempt so a replay cannot duplicate the wake set
 		    lockStatus = lockOp(fsOpContext);
+		    matoclserv_route_lock_answers(fsOpContext, applied, lockType);
 		    if (lockStatus == SAUNAFS_ERROR_WAITING) { return SAUNAFS_STATUS_OK; }
 		    return lockStatus;
-	    });
+	    }));
+	if (commitStatus == SAUNAFS_ERROR_BADSESSIONID) {  // fenced: the body never ran
+		applied.clear();
+		return commitStatus;
+	}
 
 	if (lockStatus != SAUNAFS_STATUS_OK && lockStatus != SAUNAFS_ERROR_WAITING) {
 		applied.clear();  // op error, nothing committed: never wake owners for it
@@ -6032,13 +6308,18 @@ void matoclserv_fuse_flock(matoclserventry *eptr, const uint8_t *data, uint32_t 
 
 	std::vector<FileLocks::Owner> applied;
 	status = matoclserv_run_lock_op(
-	    applied, [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+	    eptr, applied, safs_locks::Type::kFlock,
+	    [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
 		    return gFSOperations->flockOperation(context, fsOpContext, inode, owner,
 		                                         eptr->sessionData->sessionId, requestId,
 		                                         messageId, op, nonblocking, applied);
 	    });
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kFlock);
+	if (status == SAUNAFS_ERROR_WAITING && !nonblocking) {
+		matoclserv_record_lock_wait(eptr, messageId, requestId);
+	}
+	matoclserv_deliver_recorded_now();
 
 	// If it was a release request, do not respond
 	if (op == safs_locks::kRelease) {
@@ -6134,7 +6415,8 @@ void matoclserv_fuse_setlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 
 	std::vector<FileLocks::Owner> applied;
 	status = matoclserv_run_lock_op(
-	    applied, [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+	    eptr, applied, safs_locks::Type::kPosix,
+	    [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
 		    return gFSOperations->posixLockOperation(context, fsOpContext, inode,
 		                                             lock_info.l_start, lock_end, owner,
 		                                             eptr->sessionData->sessionId, request_id,
@@ -6142,6 +6424,10 @@ void matoclserv_fuse_setlk(matoclserventry *eptr, const uint8_t *data, uint32_t 
 	    });
 
 	matoclserv_lock_wake_up(applied, safs_locks::Type::kPosix);
+	if (status == SAUNAFS_ERROR_WAITING && !nonblocking) {
+		matoclserv_record_lock_wait(eptr, message_id, request_id);
+	}
+	matoclserv_deliver_recorded_now();
 
 	// If it was a release request, do not respond
 	if (op == safs_locks::kRelease) {
@@ -6282,6 +6568,8 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 				                                         posix_applied);
 			    }
 		    }
+		    matoclserv_route_lock_answers(fsOpContext, flocks_applied, safs_locks::Type::kFlock);
+		    matoclserv_route_lock_answers(fsOpContext, posix_applied, safs_locks::Type::kPosix);
 		    return st;
 	    });
 
@@ -6299,6 +6587,7 @@ void matoclserv_manage_locks_unlock(matoclserventry *eptr, const uint8_t *data, 
 		matoclserv_lock_wake_up(sessionAndMsg.sessionid, sessionAndMsg.msgid,
 		                        safs_locks::Type::kPosix);
 	}
+	matoclserv_deliver_recorded_now();
 
 	MessageBuffer reply;
 	matocl::manageLocksUnlock::serialize(reply, status);
@@ -6333,15 +6622,19 @@ void matoclserv_fuse_locks_interrupt(matoclserventry *eptr, const uint8_t *data,
 	}
 
 	cltoma::fuseFlock::deserialize(data, length, messageId, interruptData);
+	// The thread gave up its wait: a grant that wins the race must not answer its next one.
+	std::erase_if(eptr->lockWaits, [&interruptData](const auto &wait) {
+		return wait.second == interruptData.reqid;
+	});
 
 	// There is no reply, but pending-lock removal still needs KV conflict retry;
 	// otherwise a routine commit conflict can silently leave the pending lock behind.
-	matoclserv_commit_op_with_retry([&](FilesystemOperationContext &fsOpContext) -> uint8_t {
-		return gFSOperations->locksRemovePending(context, fsOpContext, type,
-		                                         interruptData.owner,
-		                                         eptr->sessionData->sessionId,
-		                                         interruptData.ino, interruptData.reqid);
-	});
+	matoclserv_commit_op_with_retry(
+	    matoclserv_fenced(eptr, [&](FilesystemOperationContext &fsOpContext) -> uint8_t {
+		    return gFSOperations->locksRemovePending(
+		        context, fsOpContext, type, interruptData.owner, eptr->sessionData->sessionId,
+		        interruptData.ino, interruptData.reqid);
+	    }));
 }
 
 void matoclserv_update_credentials(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -6682,6 +6975,15 @@ void matoclserv_admin_save_metadata(matoclserventry* eptr, const uint8_t* data, 
 	}
 }
 
+void matoclserv_drop_mount_connections() {
+	for (const auto &eptr : matoclservList) {
+		if (eptr->registered == ClientState::kRegistered && eptr->sessionData != nullptr &&
+		    eptr->mode != ClientConnectionMode::KILL) {
+			eptr->mode = ClientConnectionMode::KILL;
+		}
+	}
+}
+
 void matoclserv_broadcast_metadata_saved(uint8_t status) {
 	if (exiting) {
 		return;
@@ -6733,22 +7035,14 @@ void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status) {
 }
 
 void matocl_locks_release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
-                          inode_t inode, uint32_t sessionId) {
+                          inode_t inode, uint32_t sessionId, LockWakeUps &wakeUps) {
 	std::vector<FileLocks::Owner> applied;
-
-	gFSOperations->locksClearSession(context, fsOpContext, (uint8_t)safs_locks::Type::kFlock, inode,
-	                                 sessionId, applied);
-
-	for (auto candidate : applied) {
-		matoclserv_lock_wake_up(candidate.sessionid, candidate.msgid, safs_locks::Type::kFlock);
-	}
-
-	applied.clear();
-	gFSOperations->locksClearSession(context, fsOpContext, (uint8_t)safs_locks::Type::kPosix, inode,
-	                                 sessionId, applied);
-
-	for (auto candidate : applied) {
-		matoclserv_lock_wake_up(candidate.sessionid, candidate.msgid, safs_locks::Type::kPosix);
+	for (const auto type : {safs_locks::Type::kFlock, safs_locks::Type::kPosix}) {
+		applied.clear();
+		gFSOperations->locksClearSession(context, fsOpContext, static_cast<uint8_t>(type), inode,
+		                                 sessionId, applied);
+		matoclserv_route_lock_answers(fsOpContext, applied, type);
+		for (const auto &owner : applied) { wakeUps.emplace_back(owner, type); }
 	}
 }
 
@@ -6777,10 +7071,25 @@ bool matocl_close_files(Session *currentSession) {
 	std::vector<inode_t> pendingBatch;
 	std::vector<inode_t> committed;
 	if (contextHasTransaction) { pendingBatch.reserve(kTransactionBatchSize); }
+	// Lock waiters granted by this teardown, answered only once their grant committed.
+	LockWakeUps pendingWakeUps;
+	const auto wakeUp = [&pendingWakeUps] {
+		for (const auto &[owner, type] : pendingWakeUps) {
+			matoclserv_lock_wake_up(owner.sessionid, owner.msgid, type);
+		}
+		pendingWakeUps.clear();
+		matoclserv_deliver_recorded_now();
+	};
+	// Files whose release the backend refused stay open in the session, for a later teardown.
+	std::vector<inode_t> refused;
 
 	// Commits one pending batch for transactional backends.
 	auto flushBatch = [&](bool isFinal) -> bool {
-		if (!fsOpContext.commitTransaction()) { return false; }
+		if (!fsOpContext.commitTransaction()) {
+			pendingWakeUps.clear();
+			return false;
+		}
+		wakeUp();
 
 		if (!isFinal) {
 			committed.insert(committed.end(), pendingBatch.begin(), pendingBatch.end());
@@ -6800,8 +7109,17 @@ bool matocl_close_files(Session *currentSession) {
 	size_t pendingOperations = currentSession->openFilesSet.size();
 
 	for (inode_t openFileInode : currentSession->openFilesSet) {
-		gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
-		matocl_locks_release(context, fsOpContext, openFileInode, currentSession->sessionId);
+		const uint8_t releaseStatus =
+		    gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
+		if (matoclserv_release_refused(releaseStatus)) {
+			safs::log_warn("{}: release of inode {} refused for session {}: {}", __func__,
+			               openFileInode, currentSession->sessionId,
+			               saunafs_error_string(releaseStatus));
+			refused.push_back(openFileInode);
+		}
+		matocl_locks_release(context, fsOpContext, openFileInode, currentSession->sessionId,
+		                     pendingWakeUps);
+		if (!contextHasTransaction) { wakeUp(); }
 
 		if (contextHasTransaction) {
 			pendingOperations--;
@@ -6827,8 +7145,9 @@ bool matocl_close_files(Session *currentSession) {
 	} else {
 		for (inode_t inode : committed) { currentSession->openFilesSet.erase(inode); }
 	}
+	for (inode_t inode : refused) { currentSession->openFilesSet.insert(inode); }
 
-	return !anyFailure;
+	return !anyFailure && refused.empty();
 }
 
 void matoclserv_session_files(matoclserventry *eptr, [[maybe_unused]] const uint8_t *data,
@@ -6878,10 +7197,22 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint3
 		}
 	}
 
-	if (!target) {
+	// Where sessions live in a shared store, the session is released there, whichever server
+	// serves it; its server then refuses the client's work.
+	status = matoclserv_release_session_now(static_cast<uint32_t>(sessionId), [](Session *session) {
+		return matocl_close_files(session);
+	});
+	if (status != SAUNAFS_ERROR_ENOTSUP) {
+		if (target != nullptr) { target->mode = ClientConnectionMode::KILL; }
+		if (status == SAUNAFS_ERROR_BADSESSIONID) {
+			safs::log_err("SAU_CLTOMA_DELETE_SESSION - session not found (session id: {})",
+			              sessionId);
+		}
+	} else if (!target) {
 		safs::log_err("SAU_CLTOMA_DELETE_SESSION - session not found (session id: {})", sessionId);
 		status = SAUNAFS_ERROR_BADSESSIONID;
 	} else {
+		status = SAUNAFS_STATUS_OK;
 		matoclserv_close_session(sessionId);
 		target->mode = ClientConnectionMode::KILL;
 		// Force closure of files immediately.
@@ -6901,41 +7232,92 @@ void matocl_session_check() {
 	    [](Session *currentSession) { return matocl_session_timedout(currentSession); });
 }
 
-void matocl_before_disconnect(matoclserventry *eptr) {
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
+/// Ends @p cleanup's chunk operation in @p fsOpContext. A lock the store no longer holds for
+/// this operation, because it ended already or a newer writer took the chunk, is left alone,
+/// so a replay after a commit with an unknown outcome changes nothing.
+static void matoclserv_end_chunk_operation(FilesystemOperationContext &fsOpContext,
+                                           const ChunkCleanup &cleanup) {
+	const DelayedChunkOperation &operation = cleanup.operation;
+	if (operation.type == FUSE_TRUNCATE) {
+		gFSOperations->endSetLength(fsOpContext, operation.chunkId, operation.lockId);
+	} else if (operation.type == FUSE_WRITE) {
+		const uint8_t endStatus =
+		    gFSOperations->writeEnd(fsOpContext, 0, 0, operation.chunkId, operation.lockId);
+		if (endStatus != SAUNAFS_STATUS_OK) { return; }
+		if (operation.statusArrived && operation.pendingIsFailedCreate && cleanup.hasSession) {
+			FsContext context = FsContext::getForMasterWithSession(
+			    eventloop_time(), cleanup.rootInode, cleanup.sessionFlags, operation.uid,
+			    operation.gid, operation.auid, operation.agid);
+			gFSOperations->removeChunkFromFile(context, fsOpContext, operation.inode,
+			                                   operation.chunkIndex, operation.chunkId);
+		}
+	}
+}
 
+/// Time after which a pass of chunk cleanup retries starts no further cleanup, so a backlog
+/// left by an outage does not stall the event loop.
+constexpr std::chrono::seconds kChunkCleanupPassBudget{1};
+/// Time one retried cleanup may take.
+constexpr std::chrono::seconds kChunkCleanupDeadline{2};
+/// Longest wait between passes after failures.
+constexpr std::chrono::seconds kChunkCleanupMaxBackoff{60};
+
+/// Retries the kept chunk cleanups, each in its own transaction. A pass stops at the first
+/// failure, as the store is likely unavailable still, and the next one waits twice as long,
+/// counted from when this one ended.
+static void matoclserv_retry_chunk_cleanups() {
+	static std::chrono::steady_clock::time_point nextPass;
+	static std::chrono::seconds backoff{1};
+	const auto start = std::chrono::steady_clock::now();
+	if (gChunkCleanups.empty() || start < nextPass) { return; }
+
+	bool failed = false;
+	std::erase_if(gChunkCleanups, [&](const ChunkCleanup &cleanup) {
+		const auto now = std::chrono::steady_clock::now();
+		if (failed || now >= start + kChunkCleanupPassBudget) { return false; }
+		failed = matoclserv_commit_op_with_retry_impl(
+		             [&cleanup](FilesystemOperationContext &fsOpContext) -> uint8_t {
+			             matoclserv_end_chunk_operation(fsOpContext, cleanup);
+			             return SAUNAFS_STATUS_OK;
+		             },
+		             now + kChunkCleanupDeadline) != SAUNAFS_STATUS_OK;
+		return !failed;
+	});
+	backoff = failed ? std::min(backoff * 2, kChunkCleanupMaxBackoff) : std::chrono::seconds{1};
+	nextPass = std::chrono::steady_clock::now() + backoff;
+}
+
+void matocl_before_disconnect(matoclserventry *eptr) {
 	// Release locks held by delayed chunk ops the client never finished: a killed client sends
 	// no end-of-operation request, so the lock must be released here or it strands and blocks
 	// future writers. For a write op whose status arrived after the client was killed, a failed
-	// create also drops the speculative chunk so it is not left dangling in the file.
+	// create also drops the speculative chunk so it is not left dangling in the file. A write
+	// cleanup that cannot commit now is kept and retried until it does.
+	std::vector<ChunkCleanup> cleanups;
 	for (const auto &operation : eptr->delayedChunkOperations) {
-		if (operation->type == FUSE_TRUNCATE) {
-			gFSOperations->endSetLength(fsOpContext, operation->chunkId, operation->lockId);
-		} else if (operation->type == FUSE_WRITE) {
-			const uint8_t endStatus =
-			    gFSOperations->writeEnd(fsOpContext, 0, 0, operation->chunkId, operation->lockId);
-			if (endStatus != SAUNAFS_STATUS_OK) { continue; }
-			if (operation->statusArrived && operation->pendingIsFailedCreate && eptr->sessionData) {
-				FsContext context = FsContext::getForMasterWithSession(
-				    eventloop_time(), eptr->sessionData->rootInode, eptr->sessionData->flags,
-				    operation->uid, operation->gid, operation->auid, operation->agid);
-				gFSOperations->removeChunkFromFile(context, fsOpContext, operation->inode,
-				                                   operation->chunkIndex, operation->chunkId);
-			}
+		ChunkCleanup cleanup{*operation};
+		if (eptr->sessionData != nullptr) {
+			cleanup.hasSession = true;
+			cleanup.rootInode = eptr->sessionData->rootInode;
+			cleanup.sessionFlags = eptr->sessionData->flags;
 		}
+		cleanups.push_back(std::move(cleanup));
 	}
-
-	// Commit the transaction for KV backends
-	if (fsOpContext.hasReadWriteTransaction()) {
-		if (!fsOpContext.commitTransaction()) {
-			safs::log_critical(
-			    "{}: transaction failed to commit while unlocking chunks for session {}", __func__,
-			    eptr->sessionData ? eptr->sessionData->sessionId : 0);
-		}
-	}
-
 	eptr->delayedChunkOperations.clear();
+
+	if (!cleanups.empty() && matoclserv_commit_op_with_retry(
+	                             [&cleanups](FilesystemOperationContext &fsOpContext) -> uint8_t {
+		                             for (const auto &cleanup : cleanups) {
+			                             matoclserv_end_chunk_operation(fsOpContext, cleanup);
+		                             }
+		                             return SAUNAFS_STATUS_OK;
+	                             }) != SAUNAFS_STATUS_OK) {
+		safs::log_err("{}: could not end the chunk operations of session {}; retrying", __func__,
+		              eptr->sessionData ? eptr->sessionData->sessionId : 0);
+		std::ranges::copy_if(
+		    cleanups, std::back_inserter(gChunkCleanups),
+		    [](const ChunkCleanup &cleanup) { return cleanup.operation.type == FUSE_WRITE; });
+	}
 
 	if (eptr->sessionData) {
 		if (eptr->sessionData->connections > 0) {
@@ -7293,7 +7675,10 @@ void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *d
 				case CLTOMA_FUSE_SETXATTR:
 				    matoclserv_fuse_setxattr(eptr, data, length);
 				    break;
-					/* for tools - also should be available for registered clients */
+			    case SAU_CLTOMA_CLUSTER_SERVERS:
+				    matoclserv_cluster_servers(eptr, data, length);
+				    break;
+				    /* for tools - also should be available for registered clients */
 				case CLTOMA_CSERV_LIST:
 				    matoclserv_cserv_list(eptr, data, length);
 				    break;
@@ -7838,6 +8223,8 @@ void matoclserv_become_master() {
 	}
 
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 10, 0, matocl_session_check);
+	eventloop_timeregister_ms(kLockAnswerDeliveryPeriodMs, matoclserv_deliver_lock_answers);
+	eventloop_timeregister(TIMEMODE_RUN_LATE, 1, 0, matoclserv_retry_chunk_cleanups);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 3600, 0, matocl_session_stats_rotate);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 3600, 0, matocl_clean_unlock_chunks_list);
 	return;

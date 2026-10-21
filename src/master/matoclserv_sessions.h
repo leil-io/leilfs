@@ -58,14 +58,42 @@ int matoclserv_load_sessions();
 /// @return Pointer to the newly created session
 Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId);
 
-/// Returns the session for a given ID.
+/// Finds the session for a given ID.
 /// @param sessionId The session ID to search for
-/// @return Pointer to the session if found, nullptr otherwise
-Session *matoclserv_find_session(uint32_t sessionId);
+/// @param session Set to the session if found, nullptr otherwise
+/// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID when the session is gone, or
+///         SAUNAFS_ERROR_IO when the session store could not be read
+uint8_t matoclserv_find_session(uint32_t sessionId, Session *&session);
 
 /// Marks a session as explicitly closed in manager state.
 /// @param sessionId The session ID to mark as closed
 void matoclserv_close_session(uint32_t sessionId);
+
+/// Makes this server the one serving @p session's client (see ISessionManager::attachSession).
+/// @param isNew True for a session being registered, false for a reconnect
+/// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID or SAUNAFS_ERROR_IO
+uint8_t matoclserv_attach_session(Session *session, bool isNew);
+
+/// Releases a session at once, whichever server serves it (see
+/// ISessionManager::releaseSessionNow).
+uint8_t matoclserv_release_session_now(uint32_t sessionId,
+                                       const std::function<bool(Session *)> &onReleased);
+
+/// Decides who answers a granted lock waiter (see ISessionManager::routeLockAnswer).
+/// @return True when the caller answers the waiter itself after the commit.
+bool matoclserv_route_lock_answer(const FilesystemOperationContext &fsOpContext, uint32_t sessionId,
+                                  uint32_t messageId, uint32_t requestId, uint8_t lockType);
+
+/// Sends the lock answers recorded for sessions served here, as (session id, attachment
+/// generation, message id, request id, lock type) (see ISessionManager::deliverLockAnswers).
+void matoclserv_deliver_recorded_lock_answers(
+    const std::function<void(uint32_t, uint64_t, uint32_t, uint32_t, uint8_t)> &send);
+
+/// Checks, in @p fsOpContext's transaction, that this server still serves @p sessionId under
+/// @p generation (see ISessionManager::checkAttachment).
+/// @return SAUNAFS_STATUS_OK, or SAUNAFS_ERROR_BADSESSIONID when the attachment changed
+uint8_t matoclserv_check_attachment(const FilesystemOperationContext &fsOpContext,
+                                    uint32_t sessionId, uint64_t generation);
 
 /// Returns the number of open files for a given session.
 /// @param currentSession Pointer to the session

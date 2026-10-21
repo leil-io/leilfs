@@ -25,6 +25,8 @@
 #include "common/event_loop.h"
 #include "common/massert.h"
 #include "config/cfg.h"
+#include "errors/leil_error_codes.h"
+#include "kv/ifuture.h"
 #include "master/session_manager.h"
 #include "slogger/slogger.h"
 
@@ -83,14 +85,51 @@ Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId) {
 	return gSessionManager->newSession(newSession, noNewId);
 }
 
-Session *matoclserv_find_session(uint32_t sessionId) {
+uint8_t matoclserv_find_session(uint32_t sessionId, Session *&session) {
 	sassert(gSessionManager != nullptr);
-	return gSessionManager->findSession(sessionId);
+	try {
+		session = gSessionManager->findSession(sessionId);
+	} catch (const kv::TransactionError &error) {
+		safs::log_warn("session {} could not be read from the store: {}", sessionId, error.what());
+		session = nullptr;
+		return SAUNAFS_ERROR_IO;
+	}
+	return session != nullptr ? SAUNAFS_STATUS_OK : SAUNAFS_ERROR_BADSESSIONID;
 }
 
 void matoclserv_close_session(uint32_t sessionId) {
 	sassert(gSessionManager != nullptr);
 	gSessionManager->closeSession(sessionId);
+}
+
+uint8_t matoclserv_attach_session(Session *session, bool isNew) {
+	sassert(gSessionManager != nullptr);
+	if (session == nullptr) { return SAUNAFS_ERROR_BADSESSIONID; }
+	return gSessionManager->attachSession(*session, isNew);
+}
+
+uint8_t matoclserv_release_session_now(uint32_t sessionId,
+                                       const std::function<bool(Session *)> &onReleased) {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->releaseSessionNow(sessionId, onReleased);
+}
+
+bool matoclserv_route_lock_answer(const FilesystemOperationContext &fsOpContext, uint32_t sessionId,
+                                  uint32_t messageId, uint32_t requestId, uint8_t lockType) {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->routeLockAnswer(fsOpContext, sessionId, messageId, requestId, lockType);
+}
+
+void matoclserv_deliver_recorded_lock_answers(
+    const std::function<void(uint32_t, uint64_t, uint32_t, uint32_t, uint8_t)> &send) {
+	sassert(gSessionManager != nullptr);
+	gSessionManager->deliverLockAnswers(send);
+}
+
+uint8_t matoclserv_check_attachment(const FilesystemOperationContext &fsOpContext,
+                                    uint32_t sessionId, uint64_t generation) {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->checkAttachment(fsOpContext, sessionId, generation);
 }
 
 void matoclserv_reset_session_timeouts() {

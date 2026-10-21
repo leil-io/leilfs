@@ -35,6 +35,7 @@
 #include "common/legacy_acl.h"
 #include "common/legacy_string.h"
 #include "common/legacy_vector.h"
+#include "common/metadata_cluster_member.h"
 #include "common/metadataserver_list_entry.h"
 #include "common/richacl.h"
 #include "common/serialization_macros.h"
@@ -276,6 +277,13 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		matocl, metadataserversList, SAU_MATOCL_METADATASERVERS_LIST, 0,
 		uint32_t, masterVersion,
 		std::vector<MetadataserverListEntry>, shadowList)
+
+// SAU_MATOCL_CLUSTER_SERVERS
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+		matocl, clusterServers, SAU_MATOCL_CLUSTER_SERVERS, 0,
+		uint32_t, messageId,
+		uint8_t, status,
+		std::vector<MetadataClusterMember>, servers)
 
 // SAU_MATOCL_INOTIFIER_LIST
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(

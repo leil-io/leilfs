@@ -72,6 +72,10 @@ int matoclserv_network_init();
 /// @param status Status of the metadata saving process
 void matoclserv_broadcast_metadata_saved(uint8_t status);
 
+/// Drops every mount connection without answering, as a lost connection does, so each mount
+/// reconnects, elsewhere when this server cannot serve it. For a server that lost its store.
+void matoclserv_drop_mount_connections();
+
 /// Notify interested clients about the status of metadata checksum recalculation process.
 /// @param status Status of the metadata checksum recalculation process
 void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status);

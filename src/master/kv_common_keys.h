@@ -48,14 +48,29 @@ inline constexpr std::string_view kSessionKeyPrefix = "SESS_REC_";
 /// @note Value is empty; key presence encodes membership in the open-file set.
 inline constexpr std::string_view kSessionOpenKeyPrefix = "SESS_OPEN_";
 
-/// Prefix for per-session runtime ownership state.
-/// Format: SESS_STATE_<SessionId>:<SerializedSessionState>
+/// Prefix for per-session attachments: which metadata server serves the session's client.
+/// Format: SESS_STATE_<SessionId>:<SerializedSessionAttachment>
 /// - SessionId: uint32_t serialized as Big Endian
-/// - Value: versioned runtime state used by the FDB session manager.
-/// @note This row is intentionally separate from @c SESS_REC_ so the stable
-///       session record schema can remain unchanged while MDS-local ownership
-///       and disconnect state evolves.
+/// - Value: serving server id and incarnation, generation, connection state and its time.
+/// @note This row is intentionally separate from @c SESS_REC_: work for the client reads it
+///       to check that its server still serves the session, and must not conflict with
+///       record updates.
 inline constexpr std::string_view kSessionStateKeyPrefix = "SESS_STATE_";
+
+/// Prefix for per-session "lost" marks: the serving server was seen gone.
+/// Format: SESS_LOST_<SessionId (Big Endian)> : <LostSince (uint32_t)><Flag (uint8_t)>
+/// @note Kept apart from SESS_STATE_ so writing or clearing a mark never conflicts with the
+///       serving server's work. The flag is cleared when that server is seen alive again; the
+///       time stays, so a session timeout restarts when its server fails, as on Master.
+inline constexpr std::string_view kSessionLostKeyPrefix = "SESS_LOST_";
+
+/// Prefix for file-lock answers owed to a waiter, one row per wait.
+/// Format: LOCK_ANS_<SessionId><MessageId><RequestId>, all Big Endian : <Generation (uint64_t
+/// Little Endian)><LockType (uint8_t)>
+/// @note Written by the transaction that grants the lock. The server serving the session under
+///       that generation answers the waiter and removes the row; a row whose generation is no
+///       longer the session's is dropped, as its wait failed with its connection.
+inline constexpr std::string_view kLockAnswerKeyPrefix = "LOCK_ANS_";
 
 inline constexpr std::string_view kInodeRangeStartKey = "META_NEXT_INODE_RANGE";
 inline constexpr std::string_view kChunkRangeStartKey = "META_NEXT_CHUNK_RANGE";
@@ -84,6 +99,14 @@ inline constexpr std::string_view kMdsRegistryKeyPrefix = "MDS_REGISTRY_";
 /// until wall time catches up. No ownership or takeover semantics: every MDS only ever
 /// touches its own row.
 inline constexpr std::string_view kMdsHeartbeatKeyPrefix = "MDS_HEARTBEAT_";
+
+/// Prefix for the time each MDS process started serving, for session timeouts.
+/// Format: MDS_SERVING_SINCE_<MdsId (Big Endian)> : <Incarnation><UnixTimestamp>, both uint64_t
+/// Little Endian. Written by the owning MDS when it registers and again when it renews its
+/// heartbeat after the heartbeat lapsed; ordinary renewals leave it alone. A session timeout
+/// counted by that MDS starts no earlier than this time, as Master restarts every timeout when
+/// it starts.
+inline constexpr std::string_view kMdsServingSinceKeyPrefix = "MDS_SERVING_SINCE_";
 
 // Keys for filesystem statistics
 inline constexpr std::string_view kMetaNodesKey = "META_NODES";

@@ -125,6 +125,8 @@ public:
 	///
 	/// @return A pointer to the matching Session owned by this manager, or
 	///         nullptr if no session has the given id.
+	/// @throws kv::TransactionError When a backend that keeps sessions in a store cannot read
+	///         it: an unreadable store does not mean the session is gone.
 	virtual Session *findSession(uint32_t sessionId) = 0;
 
 	/// Marks the session identified by @p sessionId as explicitly closed.
@@ -135,6 +137,58 @@ public:
 	/// matocl_before_disconnect(). Timeout-based reaping is handled by
 	/// removeTimedOutSessions(). If @p sessionId is 0 or unknown this is a no-op.
 	virtual void closeSession(uint32_t sessionId) = 0;
+
+	/// Makes this server the one serving @p session's client, superseding any earlier
+	/// attachment, and stores the new attachment generation in Session::attachmentGeneration.
+	///
+	/// With @p isNew the session is persisted together with its first attachment. Backends
+	/// whose sessions are not attached to one server only persist a new session.
+	///
+	/// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID when the session was released or
+	///         is unknown to the backing store, or SAUNAFS_ERROR_IO when the store could not be
+	///         updated.
+	virtual uint8_t attachSession(Session &session, bool isNew) = 0;
+
+	/// Checks, inside @p fsOpContext's transaction, that this server still serves @p sessionId
+	/// under @p generation. The read conflicts with any change of the attachment, so a
+	/// transaction that passes this check commits only while the attachment is unchanged.
+	/// Backends whose sessions are not attached to one server always pass.
+	///
+	/// @return SAUNAFS_STATUS_OK, or SAUNAFS_ERROR_BADSESSIONID when the attachment changed.
+	virtual uint8_t checkAttachment(const FilesystemOperationContext &fsOpContext,
+	                                uint32_t sessionId, uint64_t generation) = 0;
+
+	/// Decides, inside the transaction that grants a waiting lock, who answers the waiter.
+	/// Backends that attach sessions to one server record the answer in that transaction, so it
+	/// exists exactly when the grant committed, and deliverLockAnswers() sends it from the
+	/// server that serves the session. Other backends leave the answer to the caller, after the
+	/// commit.
+	/// @return True when the caller answers the waiter itself.
+	virtual bool routeLockAnswer(const FilesystemOperationContext &fsOpContext, uint32_t sessionId,
+	                             uint32_t messageId, uint32_t requestId, uint8_t lockType) = 0;
+
+	/// Releases @p sessionId at once, whichever server serves it, as an administrator's delete
+	/// does: no client or server can use the session afterwards. Then releases its files and
+	/// locks through @p onReleased and removes it.
+	/// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID when no such session exists,
+	///         SAUNAFS_ERROR_IO when the release or its cleanup did not complete (a later sweep
+	///         finishes the cleanup), or SAUNAFS_ERROR_ENOTSUP for backends whose sessions are
+	///         only those of this server's connections.
+	virtual uint8_t releaseSessionNow(uint32_t sessionId,
+	                                  const std::function<bool(Session *)> &onReleased) = 0;
+
+	/// A recorded lock answer to send: the waiter's session, its attachment generation when the
+	/// lock was granted, the wait's message and request ids, and the lock type.
+	using LockAnswerSink =
+	    std::function<void(uint32_t sessionId, uint64_t generation, uint32_t messageId,
+	                       uint32_t requestId, uint8_t lockType)>;
+
+	/// Sends through @p send the recorded lock answers for sessions this server serves under
+	/// the answer's generation and removes them, and drops those whose generation is no longer
+	/// the session's. An answer whose removal did not commit is offered again, so @p send must
+	/// ignore one it already sent. Backends whose sessions are not attached to one server
+	/// record none.
+	virtual void deliverLockAnswers(const LockAnswerSink &send) = 0;
 
 	/// Registers @p inode as open on @p currentSession, delegating the
 	/// persistent portion of the acquisition to the metadata backend.
@@ -267,6 +321,29 @@ public:
 
 	/// @copydoc ISessionManager::closeSession
 	void closeSession(uint32_t sessionId) override;
+
+	/// @copydoc ISessionManager::attachSession
+	/// @note Persists a new session through persistSession() and keeps generation 0.
+	uint8_t attachSession(Session &session, bool isNew) override;
+
+	/// @copydoc ISessionManager::checkAttachment
+	/// @note Always passes: the session is served by this process only.
+	uint8_t checkAttachment(const FilesystemOperationContext &fsOpContext, uint32_t sessionId,
+	                        uint64_t generation) override;
+
+	/// @copydoc ISessionManager::routeLockAnswer
+	/// @note Always true: the session is served by this process only.
+	bool routeLockAnswer(const FilesystemOperationContext &fsOpContext, uint32_t sessionId,
+	                     uint32_t messageId, uint32_t requestId, uint8_t lockType) override;
+
+	/// @copydoc ISessionManager::deliverLockAnswers
+	/// @note No-op: no answer is ever recorded.
+	void deliverLockAnswers(const LockAnswerSink &send) override;
+
+	/// @copydoc ISessionManager::releaseSessionNow
+	/// @note Not supported: the caller acts on this server's connection instead.
+	uint8_t releaseSessionNow(uint32_t sessionId,
+	                          const std::function<bool(Session *)> &onReleased) override;
 
 	/// @copydoc ISessionManager::insertOpenFile
 	int insertOpenFile(const FilesystemOperationContext &fsOpContext, Session *currentSession,

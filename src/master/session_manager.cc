@@ -99,6 +99,32 @@ void SessionManagerBase::closeSession(uint32_t sessionId) {
 	if (session->connections == 1 && session->newSession < 2) { session->newSession += 2; }
 }
 
+uint8_t SessionManagerBase::attachSession(Session &session, bool isNew) {
+	if (isNew) { persistSession(session); }
+	return SAUNAFS_STATUS_OK;
+}
+
+uint8_t SessionManagerBase::checkAttachment(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    [[maybe_unused]] uint32_t sessionId, [[maybe_unused]] uint64_t generation) {
+	return SAUNAFS_STATUS_OK;
+}
+
+bool SessionManagerBase::routeLockAnswer(
+    [[maybe_unused]] const FilesystemOperationContext &fsOpContext,
+    [[maybe_unused]] uint32_t sessionId, [[maybe_unused]] uint32_t messageId,
+    [[maybe_unused]] uint32_t requestId, [[maybe_unused]] uint8_t lockType) {
+	return true;
+}
+
+void SessionManagerBase::deliverLockAnswers([[maybe_unused]] const LockAnswerSink &send) {}
+
+uint8_t SessionManagerBase::releaseSessionNow(
+    [[maybe_unused]] uint32_t sessionId,
+    [[maybe_unused]] const std::function<bool(Session *)> &onReleased) {
+	return SAUNAFS_ERROR_ENOTSUP;
+}
+
 int SessionManagerBase::insertOpenFile(const FilesystemOperationContext &fsOpContext,
                                        Session *currentSession, inode_t inode) {
 	if (currentSession->openFilesSet.contains(inode)) {

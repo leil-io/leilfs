@@ -1670,6 +1670,15 @@ enum class SugidClearMode : uint8_t {
 // msgid:32 status:8
 // msgid:32 inode:32 attr:ATTR
 
+// 0x06AF
+#define SAU_CLTOMA_CLUSTER_SERVERS (1000U + 711U)
+// msgid:32
+// The metadata servers a mount may move its session to.
+
+// 0x06B0
+#define SAU_MATOCL_CLUSTER_SERVERS (1000U + 712U)
+// msgid:32 status:8 N * [ serverid:32 ip:32 port:16 version:32 ]
+
 // 0x643
 #define SAU_CLTOMA_ADMIN_DUMP_CONFIG (1000U + 603U)
 /// -
