@@ -1143,6 +1143,18 @@ uint32_t job_probe(MasterJobPool &jobPool, JobPool::JobCallback callback, void *
 	                      processJob, listenerId);
 }
 
+uint32_t job_test(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                  uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                  std::shared_ptr<uint32_t> testedVersion, uint32_t listenerId) {
+	// The worker and the callback share ownership of testedVersion: a connection close replaces the
+	// callback, so the version it reads must outlive a worker that is still writing it.
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddChunkTest(chunkId, chunkVersion, chunkType, testedVersion.get());
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::TestChunk, std::move(callback), extra,
+	                      processJob, listenerId);
+}
+
 uint32_t job_lock(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                   uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
                   std::function<uint8_t()> install, uint32_t listenerId) {

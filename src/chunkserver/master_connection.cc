@@ -709,6 +709,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_PROBE_CHUNK:
 		probeChunk(message);
 		break;
+	case SAU_MATOCS_TEST_CHUNK:
+		testChunk(message);
+		break;
 	case SAU_MATOCS_SET_VERSION:
 		setChunkVersion(message);
 		break;
@@ -798,11 +801,25 @@ void MasterConn::createAndLockChunk(const std::vector<uint8_t> &data) {
 void MasterConn::deleteChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	uint32_t chunkVersion;
+	uint64_t requestId = 0;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 
-	matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
+	// A request that names an id is answered in the same family, echoing it; an old request gets
+	// the byte-identical old reply.
+	PacketVersion packetVersion = 0;
+	deserializePacketVersionNoHeader(data, packetVersion);
+	const bool withRequestId = packetVersion == matocs::deleteChunk::kWithRequestId;
+	if (withRequestId) {
+		matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion, requestId);
+	} else {
+		matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
+	}
 	auto *outputPacket = new OutputPacket;
-	cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
+	if (withRequestId) {
+		cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0, requestId);
+	} else {
+		cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
+	}
 	if (maintenanceFenceRefuses()) {
 		safs::log_info(
 		    "delete of chunk {:016X} refused: another connection holds the maintenance fence",
@@ -821,9 +838,17 @@ void MasterConn::deleteChunk(const std::vector<uint8_t> &data) {
 
 void MasterConn::probeChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
+	uint64_t requestId = 0;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 
-	matocs::probeChunk::deserialize(data, chunkId, chunkType);
+	PacketVersion packetVersion = 0;
+	deserializePacketVersionNoHeader(data, packetVersion);
+	const bool withRequestId = packetVersion == matocs::probeChunk::kWithRequestId;
+	if (withRequestId) {
+		matocs::probeChunk::deserialize(data, chunkId, chunkType, requestId);
+	} else {
+		matocs::probeChunk::deserialize(data, chunkId, chunkType);
+	}
 	if (!jobPool_) {
 		safs::log_err("MasterConn::probeChunk: jobPool is null.");
 		return;
@@ -831,13 +856,54 @@ void MasterConn::probeChunk(const std::vector<uint8_t> &data) {
 	// The reply is built after the job, so the version can travel with the status. A stale
 	// socket drops it like every other late completion.
 	auto version = std::make_shared<uint32_t>(0);
-	auto finished = [this, active = callbackActive_, chunkId, chunkType, version](
-	                    uint8_t status, void * /*extra*/) {
+	auto finished = [this, active = callbackActive_, chunkId, chunkType, version, withRequestId,
+	                 requestId](uint8_t status, void * /*extra*/) {
 		if (*active && mode_ == ConnectionMode::CONNECTED) {
-			createAttachedPacket(cstoma::probeChunk::build(chunkId, chunkType, *version, status));
+			if (withRequestId) {
+				createAttachedPacket(
+				    cstoma::probeChunk::build(chunkId, chunkType, *version, status, requestId));
+			} else {
+				createAttachedPacket(
+				    cstoma::probeChunk::build(chunkId, chunkType, *version, status));
+			}
 		}
 	};
 	job_probe(*jobPool_, std::move(finished), nullptr, chunkId, chunkType, version, listenerId_);
+}
+
+void MasterConn::testChunk(const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	uint32_t chunkVersion;
+	uint64_t requestId = 0;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	matocs::testChunk::deserialize(data, chunkId, chunkType, chunkVersion, requestId);
+
+	// The test reads the part's data like a delete acts on it, so the maintenance fence gates it
+	// the same way: only the connection holding the fence may verify a copy.
+	if (maintenanceFenceRefuses()) {
+		safs::log_info(
+		    "test of chunk {:016X} refused: another connection holds the maintenance fence",
+		    chunkId);
+		createAttachedPacket(
+		    cstoma::testChunk::build(chunkId, chunkType, 0, SAUNAFS_ERROR_NOTDONE, requestId));
+		return;
+	}
+	if (!jobPool_) {
+		safs::log_err("MasterConn::testChunk: jobPool is null.");
+		return;
+	}
+	// The reply is built after the job so the tested version travels with the status; a stale
+	// socket drops it like any late completion.
+	auto testedVersion = std::make_shared<uint32_t>(0);
+	auto finished = [this, active = callbackActive_, chunkId, chunkType, testedVersion, requestId](
+	                    uint8_t status, void * /*extra*/) {
+		if (*active && mode_ == ConnectionMode::CONNECTED) {
+			createAttachedPacket(
+			    cstoma::testChunk::build(chunkId, chunkType, *testedVersion, status, requestId));
+		}
+	};
+	job_test(*jobPool_, std::move(finished), nullptr, chunkId, chunkVersion, chunkType,
+	         testedVersion, listenerId_);
 }
 
 void MasterConn::setChunkVersion(const std::vector<uint8_t> &data) {
@@ -1015,16 +1081,30 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint32_t chunkVersion;
+	uint64_t requestId = 0;
 	uint32_t sourcesBufferSize;
 	const uint8_t *sourcesBuffer;
 
-	matocs::replicateChunk::deserializePartial(data, chunkId, chunkVersion, chunkType,
-	                                           sourcesBuffer);
+	PacketVersion packetVersion = 0;
+	deserializePacketVersionNoHeader(data, packetVersion);
+	const bool withRequestId = packetVersion == matocs::replicateChunk::kWithRequestId;
+	if (withRequestId) {
+		matocs::replicateChunk::deserializePartial(data, chunkId, chunkVersion, chunkType,
+		                                           requestId, sourcesBuffer);
+	} else {
+		matocs::replicateChunk::deserializePartial(data, chunkId, chunkVersion, chunkType,
+		                                           sourcesBuffer);
+	}
 	sourcesBufferSize = data.size() - (sourcesBuffer - data.data());
 
 	auto *outputPacket = new OutputPacket;
-	cstoma::replicateChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK,
-	                                  chunkVersion);
+	if (withRequestId) {
+		cstoma::replicateChunk::serialize(outputPacket->packet, chunkId, chunkType,
+		                                  SAUNAFS_STATUS_OK, chunkVersion, requestId);
+	} else {
+		cstoma::replicateChunk::serialize(outputPacket->packet, chunkId, chunkType,
+		                                  SAUNAFS_STATUS_OK, chunkVersion);
+	}
 	safs::log_debug("cs.matocs.replicate {}", chunkId);
 
 	if (maintenanceFenceRefuses()) {

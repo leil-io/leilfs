@@ -1363,8 +1363,8 @@ int hddInternalCreate(uint64_t chunkId, uint32_t version,
 	return creationStatus;
 }
 
-static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
-                                ChunkPartType chunkType) {
+static int hddInternalTestChunk(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+                                uint32_t *testedVersion = nullptr) {
 	TRACETHIS2(chunkId, version);
 	uint16_t block;
 
@@ -1376,6 +1376,10 @@ static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
 		safs::log_err("hddInternalTestChunk: Couldn't find chunkID {}", chunkId);
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
+
+	// The version the chunkserver actually holds, read under the chunk lock, so the caller learns
+	// it whatever the status (a verified delete needs the exact version to delete).
+	if (testedVersion != nullptr) { *testedVersion = chunk->version(); }
 
 	if (chunk->version() != version && version > 0) {
 		hddChunkRelease(chunk);
@@ -1441,6 +1445,13 @@ static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
 	}
 	hddChunkRelease(chunk);
 	return SAUNAFS_STATUS_OK;
+}
+
+int hddChunkTest(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+                 uint32_t *testedVersion) {
+	// Public entry for the maintenance TEST command: a whole-part CRC test that also reports the
+	// version it tested, so a verified delete names the exact version.
+	return hddInternalTestChunk(chunkId, version, chunkType, testedVersion);
 }
 
 /// Blocks per read+write batch when copying a chunk. It matters most on a

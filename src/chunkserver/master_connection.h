@@ -169,6 +169,7 @@ public:
 	/// Answers a metadata server asking which version of a chunk part this server holds, the
 	/// replacement for the inventory that discovered connections never send.
 	void probeChunk(const std::vector<uint8_t> &data);
+	void testChunk(const std::vector<uint8_t> &data);
 
 	void setChunkVersion(const std::vector<uint8_t> &data);
 

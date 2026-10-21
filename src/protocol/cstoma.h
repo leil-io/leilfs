@@ -103,6 +103,18 @@ SAUNAFS_DEFINE_PACKET_VERSION(cstoma, probeChunk, kDefault, 0)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, probeChunk, SAU_CSTOMA_PROBE_CHUNK, kDefault, uint64_t,
                                     chunkId, ChunkPartType, chunkType, uint32_t, chunkVersion,
                                     uint8_t, status)
+// The request id echoes last, after the existing fields, so the reply's prefix is unchanged.
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, probeChunk, kWithRequestId, 1)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, probeChunk, SAU_CSTOMA_PROBE_CHUNK, kWithRequestId,
+                                    uint64_t, chunkId, ChunkPartType, chunkType, uint32_t,
+                                    chunkVersion, uint8_t, status, uint64_t, requestId)
+
+// Reply to the whole-part CRC test: the status and the version tested under the chunk lock, with
+// the request id echoed last so the prefix matches the other maintenance replies.
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, testChunk, kDefault, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, testChunk, SAU_CSTOMA_TEST_CHUNK, kDefault, uint64_t,
+                                    chunkId, ChunkPartType, chunkType, uint32_t, testedVersion,
+                                    uint8_t, status, uint64_t, requestId)
 
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, maintenanceFence, kDefault, 0)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, maintenanceFence, SAU_CSTOMA_MAINTENANCE_FENCE,
@@ -147,6 +159,12 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint64_t,  chunkId,
 		ChunkPartType, chunkType,
 		uint8_t,   status)
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, deleteChunk, kWithRequestId, 2)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+    cstoma, deleteChunk, SAU_CSTOMA_DELETE_CHUNK, kWithRequestId, uint64_t, chunkId, ChunkPartType,
+    chunkType, uint8_t,
+    status,  // status has to be third field to make overwriteStatusField work!!!
+    uint64_t, requestId)
 
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, createChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, createChunk, kECChunks, 1)
@@ -214,6 +232,12 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		ChunkPartType, chunkType,
 		uint8_t,   status, // status has to be third field to make overwriteStatusField work!!!
 		uint32_t,  chunkVersion)
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, replicateChunk, kWithRequestId, 2)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(
+    cstoma, replicateChunk, SAU_CSTOMA_REPLICATE_CHUNK, kWithRequestId, uint64_t, chunkId,
+    ChunkPartType, chunkType, uint8_t,
+    status,  // status has to be third field to make overwriteStatusField work!!!
+    uint32_t, chunkVersion, uint64_t, requestId)
 
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, chunkDamaged, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(cstoma, chunkDamaged, kECChunks, 1)

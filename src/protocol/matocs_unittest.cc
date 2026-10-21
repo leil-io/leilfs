@@ -159,6 +159,27 @@ TEST(MatocsCommunicationTests, ProbeChunk) {
 	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
 }
 
+TEST(MatocsCommunicationTests, TestChunk) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 52, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, requestId, 0x1122334455667788, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(
+	    matocs::testChunk::serialize(buffer, chunkIdIn, chunkTypeIn, chunkVersionIn, requestIdIn));
+	verifyHeader(buffer, SAU_MATOCS_TEST_CHUNK);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, matocs::testChunk::kDefault);
+	ASSERT_NO_THROW(matocs::testChunk::deserialize(buffer, chunkIdOut, chunkTypeOut,
+	                                               chunkVersionOut, requestIdOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkVersion);
+	SAUNAFS_VERIFY_INOUT_PAIR(requestId);
+}
+
 TEST(MatocsCommunicationTests, MaintenanceFence) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, epoch, 0x1122334455667788, 0);
 
@@ -254,4 +275,121 @@ TEST(MatocsCommunicationTests, Replicate) {
 	SAUNAFS_VERIFY_INOUT_PAIR(chunkVersion);
 	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
 	SAUNAFS_VERIFY_INOUT_PAIR(serverList);
+}
+
+// The id-free families must keep their exact bytes, so Master and Shadow are unchanged.
+TEST(MatocsCommunicationTests, OldFamiliesAreByteIdentical) {
+	std::vector<uint8_t> deletePacket;
+	matocs::deleteChunk::serialize(deletePacket, uint64_t(87), xor_p_of_3, uint32_t(52));
+	EXPECT_EQ(deletePacket,
+	          (std::vector<uint8_t>{0x00, 0x00, 0x04, 0x60, 0x00, 0x00, 0x00, 0x12, 0x00,
+	                                0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	                                0x00, 0x57, 0x00, 0xc0, 0x00, 0x00, 0x00, 0x34}));
+
+	std::vector<uint8_t> probePacket;
+	matocs::probeChunk::serialize(probePacket, uint64_t(87), xor_p_of_3);
+	EXPECT_EQ(probePacket, (std::vector<uint8_t>{0x00, 0x00, 0x04, 0x9a, 0x00, 0x00, 0x00, 0x0e,
+	                                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	                                             0x00, 0x00, 0x00, 0x57, 0x00, 0xc0}));
+
+	std::vector<uint8_t> replicatePacket;
+	std::vector<ChunkTypeWithAddress> noSources;
+	matocs::replicateChunk::serialize(replicatePacket, uint64_t(87), uint32_t(52), xor_p_of_3,
+	                                  noSources);
+	EXPECT_EQ(replicatePacket,
+	          (std::vector<uint8_t>{0x00, 0x00, 0x04, 0x7e, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00,
+	                                0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x57,
+	                                0x00, 0x00, 0x00, 0x34, 0x00, 0xc0, 0x00, 0x00, 0x00, 0x00}));
+}
+
+TEST(MatocsCommunicationTests, DeleteChunkWithRequestId) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 52, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, requestId, 0x1122334455667788, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocs::deleteChunk::serialize(buffer, chunkIdIn, chunkTypeIn, chunkVersionIn,
+	                                               requestIdIn));
+	verifyHeader(buffer, SAU_MATOCS_DELETE_CHUNK);
+	removeHeaderInPlace(buffer);
+	PacketVersion version = 0;
+	deserializePacketVersionNoHeader(buffer, version);
+	ASSERT_EQ(version, matocs::deleteChunk::kWithRequestId);
+	ASSERT_NO_THROW(matocs::deleteChunk::deserialize(buffer, chunkIdOut, chunkTypeOut,
+	                                                 chunkVersionOut, requestIdOut));
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkVersion);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(requestId);
+}
+
+TEST(MatocsCommunicationTests, ProbeChunkWithRequestId) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, requestId, 0x1122334455667788, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocs::probeChunk::serialize(buffer, chunkIdIn, chunkTypeIn, requestIdIn));
+	verifyHeader(buffer, SAU_MATOCS_PROBE_CHUNK);
+	removeHeaderInPlace(buffer);
+	PacketVersion version = 0;
+	deserializePacketVersionNoHeader(buffer, version);
+	ASSERT_EQ(version, matocs::probeChunk::kWithRequestId);
+	ASSERT_NO_THROW(
+	    matocs::probeChunk::deserialize(buffer, chunkIdOut, chunkTypeOut, requestIdOut));
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(requestId);
+}
+
+TEST(MatocsCommunicationTests, ReplicateChunkWithRequestId) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 52, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, requestId, 0x1122334455667788, 0);
+	SAUNAFS_DEFINE_INOUT_VECTOR_PAIR(ChunkTypeWithAddress, serverList) = {
+	    ChunkTypeWithAddress(NetworkAddress(0xC0A80001, 8080), standard, SAUNAFS_VERSHEX),
+	    ChunkTypeWithAddress(NetworkAddress(0xC0A80002, 8081), xor_p_of_6, SAUNAFS_VERSHEX),
+	};
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocs::replicateChunk::serialize(buffer, chunkIdIn, chunkVersionIn,
+	                                                  chunkTypeIn, requestIdIn, serverListIn));
+	verifyHeader(buffer, SAU_MATOCS_REPLICATE_CHUNK);
+	removeHeaderInPlace(buffer);
+	PacketVersion version = 0;
+	deserializePacketVersionNoHeader(buffer, version);
+	ASSERT_EQ(version, matocs::replicateChunk::kWithRequestId);
+
+	// The id reads before the sources, as the chunkserver reads it.
+	const uint8_t *sources = nullptr;
+	ASSERT_NO_THROW(matocs::replicateChunk::deserializePartial(
+	    buffer, chunkIdOut, chunkVersionOut, chunkTypeOut, requestIdOut, sources));
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkId);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkVersion);
+	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
+	SAUNAFS_VERIFY_INOUT_PAIR(requestId);
+	ASSERT_NO_THROW(matocs::replicateChunk::deserialize(buffer, chunkIdOut, chunkVersionOut,
+	                                                    chunkTypeOut, requestIdOut, serverListOut));
+	SAUNAFS_VERIFY_INOUT_PAIR(serverList);
+}
+
+// A chunkserver must not read a new request as an old one, nor the other way round.
+TEST(MatocsCommunicationTests, RequestIdFamiliesDoNotCrossParse) {
+	std::vector<uint8_t> newDelete;
+	matocs::deleteChunk::serialize(newDelete, uint64_t(87), xor_p_of_3, uint32_t(52),
+	                               uint64_t(0x99));
+	removeHeaderInPlace(newDelete);
+	uint64_t chunkId = 0;
+	uint32_t chunkVersion = 0;
+	ChunkPartType chunkType = standard;
+	EXPECT_ANY_THROW(matocs::deleteChunk::deserialize(newDelete, chunkId, chunkType, chunkVersion));
+
+	std::vector<uint8_t> oldDelete;
+	matocs::deleteChunk::serialize(oldDelete, uint64_t(87), xor_p_of_3, uint32_t(52));
+	removeHeaderInPlace(oldDelete);
+	uint64_t requestId = 0;
+	EXPECT_ANY_THROW(
+	    matocs::deleteChunk::deserialize(oldDelete, chunkId, chunkType, chunkVersion, requestId));
 }

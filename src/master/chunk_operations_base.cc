@@ -167,13 +167,14 @@ void ChunkOperationsBase::serverLabelChanged(const MediaLabel &previousLabel,
 }
 
 void ChunkOperationsBase::gotDeleteStatus(matocsserventry *ptr, uint64_t chunkId,
-                                          ChunkPartType chunkType, uint8_t status) {
+                                          ChunkPartType chunkType, uint8_t status,
+                                          uint64_t /*requestId*/) {
 	chunk_got_delete_status(ptr, chunkId, chunkType, status);
 }
 
 void ChunkOperationsBase::gotReplicateStatus(matocsserventry *ptr, uint64_t chunkId,
                                              uint32_t chunkVersion, ChunkPartType chunkType,
-                                             uint8_t status) {
+                                             uint8_t status, uint64_t /*requestId*/) {
 	chunk_got_replicate_status(ptr, chunkId, chunkVersion, chunkType, status);
 }
 

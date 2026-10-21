@@ -140,6 +140,7 @@ public:
 		Create,             ///< Create a chunk. Master only.
 		Replicate,          ///< Replicate a chunk. Master only.
 		ProbeVersion,       ///< Read the stored version of a chunk. Master only.
+		TestChunk,          ///< CRC-test a whole part and report its version. Metadata server job.
 		Lock,               ///< Lock a chunk part held at a given version. Master only.
 		Open,               ///< Open a chunk for reading or writing. Client only.
 		Close,              ///< Close a chunk. Client only.
@@ -856,6 +857,13 @@ uint32_t job_version(MasterJobPool &jobPool, const JobPool::JobCallback &callbac
 uint32_t job_probe(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                    uint64_t chunkId, ChunkPartType chunkType, std::shared_ptr<uint32_t> version,
                    uint32_t listenerId = 0);
+
+/// @brief Adds a whole-part CRC test job; @p testedVersion receives the version the chunkserver
+/// held, read under the chunk lock, so a verified delete names the exact version.
+/// @return The ID of the added job.
+uint32_t job_test(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                  uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                  std::shared_ptr<uint32_t> testedVersion, uint32_t listenerId = 0);
 
 /// @brief Adds a job that runs @p install while the chunk part is held at @p chunkVersion, so a
 /// lock is installed only on a part at the version it names. A part that is missing or at
