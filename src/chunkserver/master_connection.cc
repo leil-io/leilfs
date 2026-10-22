@@ -878,8 +878,10 @@ void MasterConn::testChunk(const std::vector<uint8_t> &data) {
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	matocs::testChunk::deserialize(data, chunkId, chunkType, chunkVersion, requestId);
 
-	// The test reads the part's data like a delete acts on it, so the maintenance fence gates it
-	// the same way: only the connection holding the fence may verify a copy.
+	// Only the connection holding the maintenance fence may verify a copy. A test decides nothing:
+	// it acts on the part only as any read does, and its answer counts only under the claim of the
+	// metadata server that asked. So unlike a delete it is judged at receipt only, and one queued
+	// before a newer fence still runs.
 	if (maintenanceFenceRefuses()) {
 		safs::log_info(
 		    "test of chunk {:016X} refused: another connection holds the maintenance fence",

@@ -220,7 +220,8 @@ public:
 
 	const std::shared_ptr<MaintenanceFence> &maintenanceFence() const { return maintenanceFence_; }
 
-	/// The operations the maintenance fence governs.
+	/// The operations the maintenance fence governs. A test decides nothing and is judged at
+	/// receipt only (MasterConn::testChunk), so a fence acknowledgment never waits for one.
 	static bool fencedOperation(uint32_t operation) {
 		return operation == ChunkOperation::Replicate || operation == ChunkOperation::Delete;
 	}
