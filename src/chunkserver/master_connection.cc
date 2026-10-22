@@ -1145,6 +1145,12 @@ void MasterConn::maintenanceFence(const std::vector<uint8_t> &data) {
 		return;
 	}
 
+	// A pending older epoch of this connection is superseded by this one and answered so now, as
+	// when another connection's fence supersedes it; nothing else would answer it.
+	if (pendingFenceEpoch_ && *pendingFenceEpoch_ != epoch) {
+		createAttachedPacket(
+		    cstoma::maintenanceFence::build(*pendingFenceEpoch_, SAUNAFS_ERROR_WRONGVERSION));
+	}
 	// The ack waits for the replicate and delete jobs of other connections still running, so
 	// it leaves from the loop (sendPendingMaintenanceFenceAck), never from this handler.
 	pendingFenceEpoch_ = epoch;

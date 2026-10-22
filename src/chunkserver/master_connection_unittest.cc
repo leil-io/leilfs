@@ -825,6 +825,16 @@ TEST(MasterConnectionTests, MaintenanceFenceAcksOnceOlderJobsEnd) {
 	holder.sendPendingMaintenanceFenceAck();
 	EXPECT_TRUE(holder.isOutputQueueEmpty());
 
+	// The same connection fences a newer epoch meanwhile: the pending one is answered at once as
+	// superseded, and only the newer one waits for the older job.
+	auto newerFencePacket = matocs::maintenanceFence::build(2);
+	removeHeaderInPlace(newerFencePacket);
+	holder.maintenanceFence(newerFencePacket);
+	EXPECT_FALSE(holder.isOutputQueueEmpty());
+	holder.resetPackets();
+	holder.sendPendingMaintenanceFenceAck();
+	EXPECT_TRUE(holder.isOutputQueueEmpty());
+
 	// A delete the older connection sends now is answered without a job; the ack leaves once
 	// the running job of the older connection ends.
 	auto deletePacket = matocs::deleteChunk::build(101, slice_traits::standard::ChunkPartType(), 0);
