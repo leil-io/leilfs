@@ -21,6 +21,7 @@ add_definitions(-D__USE_MISC)
 
 include_directories(${CMAKE_SOURCE_DIR}/external/${NFS_GANESHA_DIR_NAME}/src/include)
 include_directories(${CMAKE_SOURCE_DIR}/external/${NTIRPC_DIR_NAME}/ntirpc)
+include_directories(${CMAKE_SOURCE_DIR}/external/${NTIRPC_DIR_NAME}/src/monitoring/include)
 
 add_library(fsalsaunafs MODULE ${NFS_GANESHA_PLUGIN_MAIN} ${NFS_GANESHA_PLUGIN_SOURCES})
 
