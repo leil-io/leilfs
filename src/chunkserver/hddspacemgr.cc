@@ -99,8 +99,6 @@
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
-constexpr int kErrorLimit = 2;
-constexpr int kLastErrorTime = 60;
 constexpr size_t kIgnoreHeaderSize = 1;
 constexpr uint32_t startingOffsetOfBlock(uint32_t blocknum) { return blocknum * SFSBLOCKSIZE; }
 
@@ -416,9 +414,8 @@ void hddDiskScanThread(IDisk *disk);
 // Run every second
 void hddCheckDisks() {
 	TRACETHIS();
-	uint32_t i;
 	uint32_t now;
-	int changed, err;
+	int changed;
 	struct timeval tv;
 
 	gettimeofday(&tv, NULL);
@@ -532,19 +529,10 @@ void hddCheckDisks() {
 			changed = 1;
 			break;
 		case IDisk::ScanState::kWorking:
-			err = 0;
-			for (i = 0; i < disk::kLastErrorSize; ++i) {
-				if (disk->lastErrorTab()[i].timestamp + kLastErrorTime >= now
-				    && (disk->lastErrorTab()[i].errornumber == EIO
-				        || disk->lastErrorTab()[i].errornumber == EROFS)) {
-					err++;
-				}
-			}
-			if (err >= kErrorLimit &&
+			if (disk->damagingErrors().reachedLimit(disk::DamagingErrors::Clock::now()) &&
 			    !(disk->isMarkedForRemoval() && disk->isReadOnly())) {
-				safs_pretty_syslog(
-				    LOG_WARNING, "%u errors occurred in %u seconds on disk: %s",
-				    err, kLastErrorTime, disk->getPaths().c_str());
+				safs::log_warn("{} errors occurred in {} seconds on disk: {}", disk::kErrorLimit,
+				               disk::kLastErrorTime, disk->getPaths());
 				hddSendDataToMaster(disk.get(), SendDataToMasterMode::ForDamagedDisk);
 				disk->setIsDamaged(true);
 				changed = 1;
@@ -993,7 +981,8 @@ static void hddReadAheadAndBehind(IChunk *chunk, uint16_t block,
 */
 int hddCheckCrcForFullBlock(IChunk *chunk, uint16_t block, OutputBuffer *outputBuffer,
                             uint32_t offsetInBlockBuffer, bool forceCheck) {
-	if (!forceCheck && (!gCheckCrcWhenReading || block >= chunk->blocks())) {
+	// Past the part's end: zeros made in memory, with no stored CRC.
+	if (block >= chunk->blocks() || (!forceCheck && !gCheckCrcWhenReading)) {
 		return SAUNAFS_STATUS_OK;
 	}
 
@@ -1339,9 +1328,16 @@ static int hddInternalTestChunk(uint64_t chunkId, uint32_t version,
 
 	HddStats::gStatsOperationsTest++;
 
-	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
+	int findStatus = SAUNAFS_STATUS_OK;
+	auto *chunk = hddChunkFindAndLock(chunkId, chunkType, &findStatus);
 
 	if (chunk == ChunkNotFound) {
+		if (findStatus != SAUNAFS_STATUS_OK) {
+			// The part may be healthy; it is tested again on the next pass.
+			safs::log_warn("hddInternalTestChunk: couldn't read the attributes of chunkID {}",
+			               chunkId);
+			return SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
+		}
 		safs::log_err("hddInternalTestChunk: Couldn't find chunkID {}", chunkId);
 		return SAUNAFS_ERROR_NOCHUNK;
 	}
@@ -2389,8 +2385,10 @@ static void hddTestChunkThread() {
 		try {
 			ChunkWithVersionAndType chunk = gTestChunkQueue.get();
 			std::string name = chunk.toString();
-			if (hddInternalTestChunk(chunk.id, chunk.version, chunk.type) !=
-			    SAUNAFS_STATUS_OK) {
+			int status = hddInternalTestChunk(chunk.id, chunk.version, chunk.type);
+			if (status == SAUNAFS_ERROR_TEMP_NOTPOSSIBLE) {
+				safs::log_info("Chunk {} reported as corrupted, but could not be tested", name);
+			} else if (status != SAUNAFS_STATUS_OK) {
 				safs_pretty_syslog(LOG_NOTICE,
 				                   "Chunk %s corrupted (detected by a client)",
 				                   name.c_str());
@@ -2456,10 +2454,11 @@ void hddTesterThread() {
 		}
 
 		if (chunk != ChunkNotFound) {
-			if (hddInternalTestChunk(chunkId, version, chunkType) !=
-			    SAUNAFS_STATUS_OK) {
+			int status = hddInternalTestChunk(chunkId, version, chunkType);
+			// A part that could not be tested is not known to be damaged.
+			if (status != SAUNAFS_STATUS_OK && status != SAUNAFS_ERROR_TEMP_NOTPOSSIBLE) {
 				hddReportDamagedChunk(chunkId, chunkType);
-			} else {
+			} else if (status == SAUNAFS_STATUS_OK) {
 				safs_pretty_syslog(LOG_DEBUG,
 				                   "Tester: chunk: %lu, v: %u, type: %s, file: "
 				                   "%s: tested (OK)",
@@ -2497,8 +2496,9 @@ static inline void hddAddChunkFromDiskScan(IDisk *disk,
                                            ChunkPartType chunkType) {
 	TRACETHIS();
 
+	int findStatus = SAUNAFS_STATUS_OK;
 	auto *chunk = hddChunkFindOrCreatePlusLock(
-	    disk, chunkId, chunkType, disk::ChunkGetMode::kFindOrCreate);
+	    disk, chunkId, chunkType, disk::ChunkGetMode::kFindOrCreate, &findStatus);
 
 	if (chunk == ChunkNotFound) {
 		safs_pretty_syslog(LOG_ERR, "Can't use file %s as chunk",
@@ -2512,7 +2512,12 @@ static inline void hddAddChunkFromDiskScan(IDisk *disk,
 		// already have this chunk
 		if (version <= chunk->version()) {
 			// current chunk is older
-			if (!disk->isReadOnly()) {
+			if (findStatus != SAUNAFS_STATUS_OK) {
+				// The copy in use may be damaged, so keep this one.
+				safs::log_warn("hddAddChunkFromDiskScan: keeping {}, as the attributes of {} "
+				               "could not be read",
+				               fullname, chunk->fullMetaFilename());
+			} else if (!disk->isReadOnly()) {
 				unlink(fullname.c_str());
 			}
 			hddChunkRelease(chunk);
@@ -2872,10 +2877,11 @@ void hddReload(void) {
 	try {
 		gDiskManager->reloadConfiguration();
 		gDiskManager->reloadDisksFromCfg();
-		ChunkTrashManager::reloadConfig();
 	} catch (const Exception& ex) {
 		safs_pretty_syslog(LOG_ERR, "%s", ex.what());
 	}
+	// Outside the try, so that a bad disk list does not skip it.
+	ChunkTrashManager::reloadConfig();
 
 	// Request plugins to reload
 	pluginManager.reloadPlugins();
@@ -2990,10 +2996,11 @@ int hddInit() {
 	try {
 		gDiskManager->reloadConfiguration();
 		gDiskManager->reloadDisksFromCfg();
-		ChunkTrashManager::init();
 	} catch (const Exception& ex) {
 		safs_pretty_syslog(LOG_ERR, "%s", ex.what());
 	}
+	// Outside the try, so that a bad disk list does not skip it.
+	ChunkTrashManager::init();
 
 	{
 		std::lock_guard disksLockGuard(gDisksMutex);

@@ -85,6 +85,11 @@ public:
 	                    bool isForMetadata,
 	                    std::vector<std::unique_ptr<IDisk>> &allDisks);
 
+	/// True if the Disk lacks a lock it takes when writable
+	bool locksMissing() const;
+	/// Takes over the locks \a other took, and whether it lacks one
+	void takeLockFiles(FDDisk &other);
+
 	// IO
 
 	/// Writes the crcData in the correct offset of the Chunks' file descriptor
@@ -209,6 +214,9 @@ public:
 	/// Setter for lastErrorIndex_
 	void setLastErrorIndex(uint32_t newLastErrorIndex) override;
 
+	/// Returns the errors that can mark the Disk damaged
+	disk::DamagingErrors &damagingErrors() override;
+
 	/// Applies any disk-specific on-disk format to a brand-new chunk before its
 	/// header is sized and serialized. Called only from the new-chunk creation
 	/// path (not for duplicates). Default: no-op.
@@ -265,6 +273,8 @@ private:
 	/// Used to prevent the same Disk from being used by different chunkservers
 	std::unique_ptr<const disk::LockFile> dataLockFile_ = nullptr;
 
+	bool locksMissing_ = false;  ///< A lock file of the Disk is not locked
+
 	double carry_;  ///< Assists at selecting the Disk for a new Chunk
 
 	/// Holds the thread for scanning this Disk,
@@ -278,4 +288,6 @@ private:
 	/// The collection is guarded by `gTestsMutex`, which should be locked
 	/// when the collection is accessed for reading or modifying.
 	DiskChunks chunks_;
+
+	disk::DamagingErrors damagingErrors_;  ///< Errors that can damage this Disk
 };

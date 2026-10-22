@@ -458,7 +458,8 @@ public:
 		 * We need to remove file first and then
 		 * unlock file.
 		 */
-		if (lockstatus_ != LockStatus::kFail && thisProcessCreatedLockFile_) {
+		if (lockstatus_ != LockStatus::kFail && thisProcessCreatedLockFile_ && holdsLock_ &&
+		    namesLockedFile()) {
 			::unlink(name_.c_str());
 		}
 	}
@@ -474,11 +475,13 @@ private:
 	LockStatus wdlock(RunMode runmode, uint32_t timeout);
 	pid_t mylock();
 	bool createLockFile();
+	bool namesLockedFile() const;
 
 	FileDescriptor fd_;
 	std::string name_;
 	LockStatus lockstatus_;
 	bool thisProcessCreatedLockFile_;
+	bool holdsLock_ = false;
 };
 
 pid_t FileLock::mylock() {
@@ -505,7 +508,16 @@ pid_t FileLock::mylock() {
 			break;
 		}
 	}
+	holdsLock_ = (pid == 0);
 	return pid;
+}
+
+/// True if name_ still refers to the file this process opened.
+bool FileLock::namesLockedFile() const {
+	struct stat opened {};
+	struct stat named {};
+	return fstat(fd_.get(), &opened) == 0 && ::stat(name_.c_str(), &named) == 0 &&
+	       opened.st_dev == named.st_dev && opened.st_ino == named.st_ino;
 }
 
 bool FileLock::createLockFile() {
@@ -533,6 +545,8 @@ FileLock::LockStatus FileLock::wdlock(RunMode runmode, uint32_t timeout) {
 		safs_pretty_errlog(LOG_ERR, "fcntl error while creating lockfile %s", lockPath.c_str());
 		return LockStatus::kFail;
 	}
+	// Its creator may have removed it between our open and lock.
+	if (ownerpid == 0 && !namesLockedFile()) { return LockStatus::kAgain; }
 
 	if (ownerpid>0) {
 		if (runmode==RunMode::kIsAlive) {

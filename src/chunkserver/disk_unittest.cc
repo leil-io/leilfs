@@ -1,26 +1,63 @@
-#include <gtest/gtest.h>
+#include <csignal>
+#include <filesystem>
+#include <fstream>
+#include <future>
 
+#include <fcntl.h>
+#include <gtest/gtest.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include "chunkserver-common/cmr_chunk.h"
 #include "chunkserver-common/cmr_disk.h"
+#include "chunkserver-common/default_disk_manager.h"
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
+#include "common/exceptions.h"
+#include "common/slice_traits.h"
+#include "config/cfg.h"
 #include "errors/leil_error_codes.h"
+#include "unittests/TemporaryDirectory.h"
 
 namespace {
 
-// Fails with SAUNAFS_ERROR_IO on every call before succeedOnAttempt, then
-// succeeds; the chunk pointer is never dereferenced.
+// Fails with SAUNAFS_ERROR_IO and EIO on every call before succeedOnAttempt,
+// then succeeds; the chunk pointer is never dereferenced.
 class FlakyAttributesDisk : public CmrDisk {
 public:
 	using CmrDisk::CmrDisk;
 
 	int updateChunkAttributes(IChunk * /*chunk*/, bool /*isFromScan*/) override {
 		++callCount;
-		return callCount < succeedOnAttempt ? SAUNAFS_ERROR_IO : SAUNAFS_STATUS_OK;
+		if (callCount < succeedOnAttempt) {
+			errno = EIO;
+			return SAUNAFS_ERROR_IO;
+		}
+		return SAUNAFS_STATUS_OK;
+	}
+
+	int unlinkChunk(IChunk * /*chunk*/) override {
+		++unlinkCount;
+		return SAUNAFS_STATUS_OK;
 	}
 
 	int callCount = 0;
 	int succeedOnAttempt = 1;
+	int unlinkCount = 0;
 };
+
+// True if another process could lock the file at path.
+bool isLockFree(const std::string &path) {
+	const pid_t child = fork();
+	if (child == 0) {
+		const int fd = ::open(path.c_str(), O_RDWR);
+		_exit(fd >= 0 && ::lockf(fd, F_TEST, 0) == 0 ? 0 : 1);
+	}
+	int status = 0;
+	waitpid(child, &status, 0);
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
 
 }  // namespace
 
@@ -186,4 +223,347 @@ TEST(DiskTests, UpdateChunkAttributesRetryGivesUpAfterMaxAttempts) {
 	ASSERT_EQ(hddUpdateChunkAttributesWithRetry(&disk, nullptr, false),
 	          SAUNAFS_ERROR_IO);
 	ASSERT_EQ(disk.callCount, kOpenRetryCount);
+}
+
+TEST(DiskTests, ReloadKeepsDiskLock) {
+	TemporaryDirectory dir("/tmp", "disk-reload-lock");
+	const std::string line = dir.name() + "/";
+	std::vector<std::unique_ptr<IDisk>> disks;
+	disks.emplace_back(new CmrDisk(disk::Configuration(line)));
+	disks.front()->createLockFiles(true, disks);
+	ASSERT_FALSE(isLockFree(line + ".lock"));
+
+	// A reload checks the line with a throwaway Disk.
+	{
+		CmrDisk reloaded{disk::Configuration(line)};
+		reloaded.createLockFiles(false, disks);
+	}
+
+	EXPECT_FALSE(isLockFree(line + ".lock"));
+}
+
+TEST(DiskTests, ExecutedProgramHoldsNoDiskLock) {
+	TemporaryDirectory dir("/tmp", "disk-exec-lock");
+	const std::string line = dir.name() + "/";
+	std::vector<std::unique_ptr<IDisk>> disks;
+	disks.emplace_back(new CmrDisk(disk::Configuration(line)));
+	disks.front()->createLockFiles(true, disks);
+
+	// Runs a program as popen would; the pipe reads EOF once it is executed.
+	int executed[2];
+	ASSERT_EQ(pipe2(executed, O_CLOEXEC), 0);
+	const pid_t child = fork();
+	if (child == 0) {
+		execl("/bin/sleep", "sleep", "60", nullptr);
+		_exit(127);
+	}
+	close(executed[1]);
+	char byte = 0;
+	EXPECT_EQ(read(executed[0], &byte, 1), 0);
+	close(executed[0]);
+	ASSERT_EQ(waitpid(child, nullptr, WNOHANG), 0);
+
+	// The disk is released while the program still runs.
+	disks.clear();
+	EXPECT_TRUE(isLockFree(line + ".lock"));
+
+	kill(child, SIGKILL);
+	waitpid(child, nullptr, 0);
+}
+
+TEST(DiskTests, RejectedSharedLockFileKeepsDiskLock) {
+	TemporaryDirectory dir("/tmp", "disk-shared-lock");
+	std::filesystem::create_directory(dir.name() + "/disk");
+	std::filesystem::create_directory_symlink("disk", dir.name() + "/alias");
+	std::vector<std::unique_ptr<IDisk>> disks;
+	disks.emplace_back(new CmrDisk(disk::Configuration(dir.name() + "/disk/")));
+	disks.front()->createLockFiles(true, disks);
+
+	CmrDisk alias{disk::Configuration(dir.name() + "/alias/")};
+	EXPECT_THROW(alias.createLockFiles(true, disks), InitializeException);
+
+	EXPECT_FALSE(isLockFree(dir.name() + "/disk/.lock"));
+}
+
+// What locking the disk throws, or empty.
+std::string lockFailure(CmrDisk &disk, std::vector<std::unique_ptr<IDisk>> &disks) {
+	try {
+		disk.createLockFiles(true, disks);
+	} catch (const InitializeException &exception) { return exception.what(); }
+	return "";
+}
+
+TEST(DiskTests, LockFileSharedWithinTheProcessIsNamed) {
+	TemporaryDirectory dir("/tmp", "disk-own-lock");
+	for (const char *name : {"/a", "/b", "/c"}) {
+		std::filesystem::create_directory(dir.name() + name);
+	}
+	std::filesystem::create_directory_symlink("a", dir.name() + "/alias");
+	std::vector<std::unique_ptr<IDisk>> disks;
+
+	// One disk whose metadata and data paths are the same directory.
+	{
+		CmrDisk itself{disk::Configuration(dir.name() + "/a/ | " + dir.name() + "/alias/")};
+		EXPECT_NE(lockFailure(itself, disks).find("same lockfile"), std::string::npos);
+	}
+
+	// One disk's metadata lock file is another's data lock file.
+	disks.emplace_back(
+	    new CmrDisk(disk::Configuration(dir.name() + "/a/ | " + dir.name() + "/b/")));
+	disks.front()->createLockFiles(true, disks);
+	CmrDisk crossed{disk::Configuration(dir.name() + "/b/ | " + dir.name() + "/c/")};
+	EXPECT_NE(lockFailure(crossed, disks).find("same lockfile"), std::string::npos);
+}
+
+TEST(DiskTests, DiskLockedByAnotherProcessIsRefused) {
+	TemporaryDirectory dir("/tmp", "disk-foreign-lock");
+	const std::string line = dir.name() + "/";
+	int ready[2];
+	int release[2];
+	ASSERT_EQ(pipe(ready), 0);
+	ASSERT_EQ(pipe(release), 0);
+
+	const pid_t child = fork();
+	if (child == 0) {
+		const int fd = ::open((line + ".lock").c_str(), O_RDWR | O_CREAT, 0640);
+		char locked = fd >= 0 && ::lockf(fd, F_TLOCK, 0) == 0 ? 1 : 0;
+		(void)!write(ready[1], &locked, 1);
+		(void)!read(release[0], &locked, 1);
+		_exit(0);
+	}
+
+	char locked = 0;
+	ASSERT_EQ(read(ready[0], &locked, 1), 1);
+	ASSERT_EQ(locked, 1);
+
+	std::vector<std::unique_ptr<IDisk>> disks;
+	CmrDisk disk{disk::Configuration(line)};
+	EXPECT_THROW(disk.createLockFiles(true, disks), InitializeException);
+
+	(void)!write(release[1], &locked, 1);
+	waitpid(child, nullptr, 0);
+	for (const int fd : {ready[0], ready[1], release[0], release[1]}) { close(fd); }
+}
+
+TEST(DiskTests, AttributesReadErrorKeepsChunk) {
+	const disk::Configuration diskConfig("/mnt/hdd_22/");
+	FlakyAttributesDisk disk(diskConfig);
+	disk.succeedOnAttempt = kOpenRetryCount + 1;  // never succeeds in time
+	const ChunkPartType type = slice_traits::standard::ChunkPartType();
+
+	IChunk *chunk = hddChunkFindOrCreatePlusLock(&disk, 1, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(chunk, nullptr);
+	IChunk *next = hddChunkFindOrCreatePlusLock(&disk, 2, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(next, nullptr);
+	{
+		const std::lock_guard lock(gTestsMutex);
+		disk.chunks().insert(chunk);
+		disk.chunks().insert(next);
+		ASSERT_EQ(disk.chunks().chunkToTest(), chunk);
+	}
+	hddChunkRelease(chunk);
+	hddChunkRelease(next);
+
+	int status = SAUNAFS_STATUS_OK;
+	EXPECT_EQ(hddChunkFindAndLock(1, type, &status), nullptr);
+	EXPECT_EQ(status, SAUNAFS_ERROR_IO);  // not a part not found
+	EXPECT_EQ(disk.unlinkCount, 0);
+	// The error is recorded against the disk once, after the retries.
+	EXPECT_EQ(disk.lastErrorIndex(), 1U);
+	EXPECT_EQ(disk.lastErrorTab()[0].chunkid, 1U);
+	EXPECT_EQ(disk.lastErrorTab()[0].errornumber, EIO);
+	{
+		// The tester moves on rather than retrying the same part.
+		const std::lock_guard lock(gTestsMutex);
+		EXPECT_EQ(disk.chunks().chunkToTest(), next);
+	}
+
+	// Still registered, and released.
+	disk.succeedOnAttempt = 1;
+	disk.callCount = 0;
+	EXPECT_EQ(hddChunkFindAndLock(1, type), chunk);
+	EXPECT_EQ(disk.unlinkCount, 0);
+
+	const std::lock_guard lock(gChunksMapMutex);
+	hddRemoveChunkFromContainers(chunk);
+	hddRemoveChunkFromContainers(next);
+}
+
+TEST(DiskTests, AttributesReadErrorLeavesTheScanThePart) {
+	const disk::Configuration diskConfig("/mnt/hdd_23/");
+	FlakyAttributesDisk disk(diskConfig);
+	disk.succeedOnAttempt = kOpenRetryCount + 1;  // never succeeds in time
+	const ChunkPartType type = slice_traits::standard::ChunkPartType();
+
+	IChunk *chunk = hddChunkFindOrCreatePlusLock(&disk, 3, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(chunk, nullptr);
+	chunk->setVersion(5);
+	{
+		const std::lock_guard lock(gTestsMutex);
+		disk.chunks().insert(chunk);
+	}
+	hddChunkRelease(chunk);
+
+	// A disk scan gets the part locked, to compare it with the copy it found.
+	int status = SAUNAFS_STATUS_OK;
+	EXPECT_EQ(hddChunkFindOrCreatePlusLock(&disk, 3, type, disk::ChunkGetMode::kFindOrCreate,
+	                                       &status),
+	          chunk);
+	EXPECT_EQ(status, SAUNAFS_ERROR_IO);
+	EXPECT_EQ(chunk->version(), 5U);
+	EXPECT_EQ(disk.unlinkCount, 0);
+	// Not recorded: a caller creating a part may hold gDisksMutex.
+	EXPECT_EQ(disk.lastErrorIndex(), 0U);
+	hddChunkRelease(chunk);
+
+	const std::lock_guard lock(gChunksMapMutex);
+	hddRemoveChunkFromContainers(chunk);
+}
+
+TEST(DiskTests, OtherErrorsDoNotPushOutDamagingOnes) {
+	CmrDisk disk("/mnt/", "/mnt", false, false);
+	CmrChunk chunk(1, slice_traits::standard::ChunkPartType(), ChunkState::Locked);
+	chunk.setOwner(&disk);
+
+	errno = EIO;
+	hddAddErrorAndPreserveErrno(&chunk);
+	errno = EMFILE;
+	for (int i = 0; i < 2 * disk::kLastErrorSize; ++i) { hddAddErrorAndPreserveErrno(&chunk); }
+	EXPECT_FALSE(disk.damagingErrors().reachedLimit(disk::DamagingErrors::Clock::now()));
+	errno = EIO;
+	hddAddErrorAndPreserveErrno(&chunk);
+
+	EXPECT_TRUE(disk.damagingErrors().reachedLimit(disk::DamagingErrors::Clock::now()));
+}
+
+TEST(DiskTests, DamagingErrorsCountWithinTheirWindow) {
+	using std::chrono::seconds;
+	const auto start = disk::DamagingErrors::Clock::now();
+	disk::DamagingErrors errors;
+
+	errors.add(start);
+	errors.add(start + seconds(disk::kLastErrorTime + 1));
+	EXPECT_FALSE(errors.reachedLimit(start + seconds(disk::kLastErrorTime + 1)));
+
+	errors.add(start + seconds(disk::kLastErrorTime + 2));
+	EXPECT_TRUE(errors.reachedLimit(start + seconds(disk::kLastErrorTime + 2)));
+	EXPECT_FALSE(errors.reachedLimit(start + seconds(3 * disk::kLastErrorTime)));
+
+	errors.clear();
+	EXPECT_FALSE(errors.reachedLimit(start + seconds(disk::kLastErrorTime + 2)));
+}
+
+TEST(DiskTests, DiskListThatIsNotAFileIsRefused) {
+	TemporaryDirectory dir("/tmp", "disk-list-fifo");
+	const std::string list = dir.name() + "/hdd.cfg";
+	ASSERT_EQ(mkfifo(list.c_str(), 0600), 0);
+	struct CfgTermGuard {
+		~CfgTermGuard() { cfg_term(); }
+	} const guard;
+	std::ofstream(dir.name() + "/test.cfg") << "HDD_CONF_FILENAME = " << list << "\n";
+	ASSERT_EQ(cfg_load((dir.name() + "/test.cfg").c_str(), 0), 0);
+
+	DefaultDiskManager manager;
+	auto refused = std::async(std::launch::async, [&manager] {
+		try {
+			manager.reloadDisksFromCfg();
+		} catch (const InitializeException &) { return true; }
+		return false;
+	});
+	if (refused.wait_for(std::chrono::seconds(10)) == std::future_status::timeout) {
+		// Unblock the open with a writer.
+		::close(::open(list.c_str(), O_WRONLY));
+		ADD_FAILURE() << "reading the disk list blocked on a pipe";
+	}
+	EXPECT_TRUE(refused.get());
+}
+
+// Clears what a reload test configured.
+struct ReloadCleanup {
+	~ReloadCleanup() {
+		cfg_term();
+		const std::lock_guard lock(gDisksMutex);
+		gDisks.clear();
+	}
+};
+
+// Points HDD_CONF_FILENAME at a disk list holding only line.
+void configureDiskList(const std::string &dir, const std::string &line) {
+	std::ofstream(dir + "/hdd.cfg") << line << "\n";
+	std::ofstream(dir + "/test.cfg") << "HDD_CONF_FILENAME = " << dir << "/hdd.cfg\n";
+	ASSERT_EQ(cfg_load((dir + "/test.cfg").c_str(), 0), 0);
+}
+
+// Starts a disk as the chunkserver does, with its lock files.
+IDisk &startDisk(const std::string &line, bool isReadOnly = false) {
+	const std::lock_guard lock(gDisksMutex);
+	auto &disk = gDisks.emplace_back(new CmrDisk(disk::Configuration(line)));
+	disk->setIsReadOnly(isReadOnly);
+	disk->createLockFiles(true, gDisks);
+	return *disk;
+}
+
+TEST(DiskTests, ReloadLocksADiskOnlyOnceItCan) {
+	if (geteuid() == 0) { GTEST_SKIP() << "root ignores file modes"; }
+	TemporaryDirectory dir("/tmp", "disk-reload-unlocked");
+	const std::string line = dir.name() + "/";
+	const ReloadCleanup cleanup;
+	configureDiskList(dir.name(), line);
+
+	// Read-only and marked for removal at start, so without a lock.
+	IDisk &disk = startDisk("*" + line, true);
+	ASSERT_TRUE(isLockFree(line + ".lock"));
+
+	DefaultDiskManager manager;
+	ASSERT_EQ(chmod((line + ".lock").c_str(), 0400), 0);
+	manager.reloadDisksFromCfg();
+	EXPECT_TRUE(disk.isReadOnly());
+	EXPECT_TRUE(disk.isMarkedForRemoval());
+
+	ASSERT_EQ(chmod((line + ".lock").c_str(), 0600), 0);
+	manager.reloadDisksFromCfg();
+	EXPECT_FALSE(disk.isReadOnly());
+	EXPECT_FALSE(isLockFree(line + ".lock"));
+}
+
+TEST(DiskTests, ReloadTakesOnlyTheMissingLock) {
+	if (geteuid() == 0) { GTEST_SKIP() << "root ignores file modes"; }
+	TemporaryDirectory dir("/tmp", "disk-reload-missing-lock");
+	const std::string meta = dir.name() + "/meta/";
+	const std::string data = dir.name() + "/data/";
+	const ReloadCleanup cleanup;
+	configureDiskList(dir.name(), meta + " | " + data);
+	std::filesystem::create_directory(meta);
+	std::filesystem::create_directory(data);
+	std::ofstream(meta + ".lock").close();
+	ASSERT_EQ(chmod((meta + ".lock").c_str(), 0400), 0);
+
+	// Damaged at start by its metadata lock, but holding its data lock.
+	IDisk &disk = startDisk(meta + " | " + data);
+	ASSERT_TRUE(disk.isDamaged());
+	ASSERT_FALSE(isLockFree(data + ".lock"));
+
+	ASSERT_EQ(chmod((meta + ".lock").c_str(), 0600), 0);
+	DefaultDiskManager manager;
+	manager.reloadDisksFromCfg();
+	EXPECT_FALSE(disk.isDamaged());
+	EXPECT_FALSE(isLockFree(meta + ".lock"));
+	EXPECT_FALSE(isLockFree(data + ".lock"));
+}
+
+TEST(DiskTests, ReloadRefusesADiskListThatFailsToRead) {
+	TemporaryDirectory dir("/tmp", "disk-reload-read-error");
+	const std::string line = dir.name() + "/";
+	const ReloadCleanup cleanup;
+	configureDiskList(dir.name(), line);
+	IDisk &disk = startDisk(line);
+
+	// A regular file whose reads fail with EIO from its first byte.
+	std::ofstream(dir.name() + "/test.cfg") << "HDD_CONF_FILENAME = /proc/self/mem\n";
+	ASSERT_EQ(cfg_reload(), 0);
+
+	DefaultDiskManager manager;
+	EXPECT_THROW(manager.reloadDisksFromCfg(), InitializeException);
+	EXPECT_FALSE(disk.wasRemovedFromConfig());
+	EXPECT_EQ(gDiskActions, 1);
 }
