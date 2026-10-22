@@ -82,7 +82,7 @@ static void dsh_release(struct fsal_ds_handle *const dataServerHandle) {
 		releaseFileInfoCache(export->cache, dataServer->cacheHandle);
 	}
 
-	gsh_free(dataServer);
+	gsh_free(dataServer, MEM_COMP_FSAL);
 	clearFileInfoCache(export, 5);
 }
 
@@ -382,7 +382,7 @@ static nfsstat4 make_ds_handle(struct fsal_pnfs_ds *const pnfsDataServer,
 		return NFS4ERR_BADHANDLE;
 	}
 
-	dataServerHandle = gsh_calloc(1, sizeof(struct DataServerHandle));
+	dataServerHandle = gsh_calloc(1, sizeof(struct DataServerHandle), MEM_COMP_FSAL);
 	*handle = &dataServerHandle->handle;
 
 	if (flags & FH_FSAL_BIG_ENDIAN) {
