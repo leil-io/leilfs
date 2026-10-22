@@ -6,6 +6,7 @@ on:
     push:
         branches:
             - dev
+            - nfs-ganesha-v15.9
 
 jobs:
     Run-Unit-Tests-and-Ganesha:
