@@ -703,25 +703,73 @@ void matocsserv_got_createchunk_status(matocsserventry *eptr, const std::vector<
 }
 
 int matocsserv_send_deletechunk(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,
-		ChunkPartType chunkType) {
+                                ChunkPartType chunkType, uint64_t requestId) {
 	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		eptr->outputPackets.push_back(OutputPacket());
 		sassert(eptr->version >= kFirstECVersion);
-		matocs::deleteChunk::serialize(eptr->outputPackets.back().packet,
-				chunkId, chunkType, chunkVersion);
+		// requestId 0 sends today's version and bytes, so Master and Shadow are byte-identical.
+		if (requestId != 0) {
+			matocs::deleteChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
+			                               chunkVersion, requestId);
+		} else {
+			matocs::deleteChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
+			                               chunkVersion);
+		}
 		eptr->delcounter++;
 	}
 	return 0;
 }
 
-int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType) {
+int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
+                               uint64_t requestId) {
 	if (eptr->mode == ChunkserverConnectionMode::KILL ||
 	    eptr->version < kFirstVersionWithChunkserverIdentity) {
 		return SAUNAFS_ERROR_ENOTSUP;
 	}
 	eptr->outputPackets.emplace_back();
-	matocs::probeChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
+	if (requestId != 0) {
+		matocs::probeChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
+		                              requestId);
+	} else {
+		matocs::probeChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
+	}
 	return SAUNAFS_STATUS_OK;
+}
+
+int matocsserv_send_sau_testchunk(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,
+                                  ChunkPartType chunkType, uint64_t requestId) {
+	// A verified delete's test; only a chunkserver that runs the maintenance fence serves it.
+	if (eptr->mode == ChunkserverConnectionMode::KILL ||
+	    eptr->version < kFirstVersionWithMaintenanceFence) {
+		return SAUNAFS_ERROR_ENOTSUP;
+	}
+	eptr->outputPackets.emplace_back();
+	matocs::testChunk::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
+	                             chunkVersion, requestId);
+	return SAUNAFS_STATUS_OK;
+}
+
+int matocsserv_send_maintenance_fence(matocsserventry *eptr, uint64_t epoch) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL ||
+	    eptr->version < kFirstVersionWithMaintenanceFence) {
+		return SAUNAFS_ERROR_ENOTSUP;
+	}
+	eptr->outputPackets.emplace_back();
+	matocs::maintenanceFence::serialize(eptr->outputPackets.back().packet, epoch);
+	return SAUNAFS_STATUS_OK;
+}
+
+void matocsserv_got_maintenance_fence(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t epoch;
+	uint8_t status;
+
+	PacketVersion v;
+	deserializePacketVersionNoHeader(data, v);
+	if (v != cstoma::maintenanceFence::kDefault) {
+		throw IncorrectDeserializationException("unsupported maintenance fence packet version");
+	}
+	cstoma::maintenanceFence::deserialize(data, epoch, status);
+	gChunkOperations->maintenanceFenceAnswered(eptr, epoch, status);
 }
 
 void matocsserv_got_probechunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
@@ -730,13 +778,32 @@ void matocsserv_got_probechunk_status(matocsserventry *eptr, const std::vector<u
 	uint32_t chunkVersion;
 	uint8_t status;
 
+	uint64_t requestId = 0;
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, v);
-	if (v != cstoma::probeChunk::kDefault) {
+	if (v == cstoma::probeChunk::kWithRequestId) {
+		cstoma::probeChunk::deserialize(data, chunkId, chunkType, chunkVersion, status, requestId);
+	} else if (v == cstoma::probeChunk::kDefault) {
+		cstoma::probeChunk::deserialize(data, chunkId, chunkType, chunkVersion, status);
+	} else {
 		throw IncorrectDeserializationException("unsupported probe chunk packet version");
 	}
-	cstoma::probeChunk::deserialize(data, chunkId, chunkType, chunkVersion, status);
-	gChunkOperations->gotProbeStatus(eptr, chunkId, chunkType, chunkVersion, status);
+	gChunkOperations->gotProbeStatus(eptr, chunkId, chunkType, chunkVersion, status, requestId);
+}
+
+void matocsserv_got_testchunk_status(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t testedVersion;
+	uint8_t status;
+	uint64_t requestId = 0;
+	PacketVersion v;
+	deserializePacketVersionNoHeader(data, v);
+	if (v != cstoma::testChunk::kDefault) {
+		throw IncorrectDeserializationException("unsupported test chunk packet version");
+	}
+	cstoma::testChunk::deserialize(data, chunkId, chunkType, testedVersion, status, requestId);
+	gChunkOperations->gotTestStatus(eptr, chunkId, chunkType, testedVersion, status, requestId);
 }
 
 void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<uint8_t>& data) {
@@ -744,13 +811,18 @@ void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint8_t status;
 
+	uint64_t requestId = 0;
 	sassert(eptr->version >= kFirstECVersion);
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, v);
-	sassert(v == cstoma::deleteChunk::kECChunks);
-	cstoma::deleteChunk::deserialize(data, chunkId, chunkType, status);
+	if (v == cstoma::deleteChunk::kWithRequestId) {
+		cstoma::deleteChunk::deserialize(data, chunkId, chunkType, status, requestId);
+	} else {
+		sassert(v == cstoma::deleteChunk::kECChunks);
+		cstoma::deleteChunk::deserialize(data, chunkId, chunkType, status);
+	}
 
-	gChunkOperations->gotDeleteStatus(eptr, chunkId, chunkType, status);
+	gChunkOperations->gotDeleteStatus(eptr, chunkId, chunkType, status, requestId);
 	eptr->delcounter--;
 	if (status != 0) {
 		safs::log_info("({}:{}) chunk: {:016X} deletion status: {}", eptr->serviceStrIp,
@@ -758,8 +830,11 @@ void matocsserv_got_deletechunk_status(matocsserventry *eptr, const std::vector<
 	}
 }
 
-int matocsserv_send_sau_replicatechunk(matocsserventry *eptr, uint64_t chunkid, uint32_t version, ChunkPartType type,
-		const std::vector<matocsserventry*> &sourcePointers, const std::vector<ChunkPartType> &sourceTypes) {
+int matocsserv_send_sau_replicatechunk(matocsserventry *eptr, uint64_t chunkid, uint32_t version,
+                                       ChunkPartType type,
+                                       const std::vector<matocsserventry *> &sourcePointers,
+                                       const std::vector<ChunkPartType> &sourceTypes,
+                                       uint64_t requestId) {
 	if (matocsserv_replication_find(chunkid, version, type, eptr)) {
 		return -1;
 	}
@@ -785,8 +860,13 @@ int matocsserv_send_sau_replicatechunk(matocsserventry *eptr, uint64_t chunkid, 
 		                     src->version);
 	}
 	eptr->outputPackets.emplace_back();
-	matocs::replicateChunk::serialize(eptr->outputPackets.back().packet, chunkid, version, type,
-	                                  sources);
+	if (requestId != 0) {
+		matocs::replicateChunk::serialize(eptr->outputPackets.back().packet, chunkid, version, type,
+		                                  requestId, sources);
+	} else {
+		matocs::replicateChunk::serialize(eptr->outputPackets.back().packet, chunkid, version, type,
+		                                  sources);
+	}
 
 	matocsserv_replication_begin(chunkid, version, type,
 			eptr, sourcePointers.size(), sourcePointers.data());
@@ -800,13 +880,19 @@ void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vect
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint8_t status;
 
+	uint64_t requestId = 0;
 	PacketVersion v;
 	deserializePacketVersionNoHeader(data, v);
-	sassert(v == cstoma::replicateChunk::kECChunks);
-	cstoma::replicateChunk::deserialize(data, chunkId, chunkType, status, chunkVersion);
+	if (v == cstoma::replicateChunk::kWithRequestId) {
+		cstoma::replicateChunk::deserialize(data, chunkId, chunkType, status, chunkVersion,
+		                                    requestId);
+	} else {
+		sassert(v == cstoma::replicateChunk::kECChunks);
+		cstoma::replicateChunk::deserialize(data, chunkId, chunkType, status, chunkVersion);
+	}
 
 	matocsserv_replication_end(chunkId, chunkVersion, chunkType, eptr);
-	gChunkOperations->gotReplicateStatus(eptr, chunkId, chunkVersion, chunkType, status);
+	gChunkOperations->gotReplicateStatus(eptr, chunkId, chunkVersion, chunkType, status, requestId);
 	if (status != 0 && status != SAUNAFS_ERROR_WAITING) {
 		safs::log_info("({}:{}) chunk: {:016X} replication status: {}", eptr->serviceStrIp,
 		               eptr->servport, chunkId, saunafs_error_string(status));
@@ -1442,6 +1528,12 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 			break;
 		case SAU_CSTOMA_PROBE_CHUNK:
 			matocsserv_got_probechunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_TEST_CHUNK:
+			matocsserv_got_testchunk_status(eptr, data);
+			break;
+		case SAU_CSTOMA_MAINTENANCE_FENCE:
+			matocsserv_got_maintenance_fence(eptr, data);
 			break;
 		case SAU_CSTOMA_TRUNCATE:
 			matocsserv_got_sau_truncatechunk_status(eptr, data);

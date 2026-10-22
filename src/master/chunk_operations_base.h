@@ -122,9 +122,9 @@ public:
 	void serverLabelChanged(const MediaLabel &previousLabel, const MediaLabel &newLabel) override;
 
 	void gotDeleteStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
-	                     uint8_t status) override;
+	                     uint8_t status, uint64_t requestId) override;
 	void gotReplicateStatus(matocsserventry *ptr, uint64_t chunkId, uint32_t chunkVersion,
-	                        ChunkPartType chunkType, uint8_t status) override;
+	                        ChunkPartType chunkType, uint8_t status, uint64_t requestId) override;
 	void gotCreateStatus(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType,
 	                     uint8_t status) override;
 	void gotDuplicateStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
@@ -141,8 +141,12 @@ public:
 	                       uint8_t status) override;
 	/// Master never probes; the in-memory backend learns copies from registration.
 	void gotProbeStatus(matocsserventry * /*ptr*/, uint64_t /*chunkId*/,
-	                    ChunkPartType /*chunkType*/, uint32_t /*chunkVersion*/,
-	                    uint8_t /*status*/) override {}
+	                    ChunkPartType /*chunkType*/, uint32_t /*chunkVersion*/, uint8_t /*status*/,
+	                    uint64_t /*requestId*/) override {}
+	/// Master never sends a test, so it never has a reply to act on.
+	void gotTestStatus(matocsserventry * /*ptr*/, uint64_t /*chunkId*/, ChunkPartType /*chunkType*/,
+	                   uint32_t /*testedVersion*/, uint8_t /*status*/,
+	                   uint64_t /*requestId*/) override {}
 	/// The in-memory part set is already current when an operation settles.
 	void operationSettled(uint64_t /*chunkId*/) override {}
 	/// The in-memory registry is the only record; the increase goes ahead.

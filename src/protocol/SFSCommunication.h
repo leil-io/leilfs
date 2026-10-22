@@ -428,6 +428,32 @@ enum class SugidClearMode : uint8_t {
 /// version==0 chunkid:64 chunktype:16 chunkversion:32 status:8
 // Reply to SAU_MATOCS_PROBE_CHUNK; status NOCHUNK when the part is not stored.
 
+// 0x049C
+#define SAU_MATOCS_MAINTENANCE_FENCE (1000U + 180U)
+/// version==0 epoch:64
+// A metadata server that records copies by identity names the maintenance epoch it runs: from
+// now on the chunkserver runs replicate and delete commands of this connection only, and answers
+// once no such command of an earlier connection is still running.
+
+// 0x049D
+#define SAU_CSTOMA_MAINTENANCE_FENCE (1000U + 181U)
+/// version==0 epoch:64 status:8
+// Reply to SAU_MATOCS_MAINTENANCE_FENCE; status OK once no replicate or delete of an earlier
+// connection can still act, ENOTSUP without identity, WRONGVERSION for an epoch already passed.
+
+// 0x049E
+#define SAU_MATOCS_TEST_CHUNK (1000U + 182U)
+/// version==0 chunkid:64 chunktype:16 chunkversion:32 requestid:64
+// Asks the chunkserver to CRC-test one part and report the version it tested; the maintenance
+// fence gates it like a delete. A KV metadata server sends this to verify before deleting; Master
+// never does.
+
+// 0x049F
+#define SAU_CSTOMA_TEST_CHUNK (1000U + 183U)
+/// version==0 chunkid:64 chunktype:16 testedversion:32 status:8 requestid:64
+// Reply to SAU_MATOCS_TEST_CHUNK; status OK, NOCHUNK, WRONGVERSION, IO or CRC (SAUNAFS_ERROR_CRC),
+// with the version actually tested under the chunk lock.
+
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)
 /// version==0 chunks:(N * [chunkid:64 chunkversion:32 chunktype:8])

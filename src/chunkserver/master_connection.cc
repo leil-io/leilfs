@@ -709,6 +709,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_PROBE_CHUNK:
 		probeChunk(message);
 		break;
+	case SAU_MATOCS_TEST_CHUNK:
+		testChunk(message);
+		break;
 	case SAU_MATOCS_SET_VERSION:
 		setChunkVersion(message);
 		break;
@@ -729,6 +732,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 		break;
 	case SAU_MATOCS_REPLICATE_CHUNK:
 		replicateChunk(message);
+		break;
+	case SAU_MATOCS_MAINTENANCE_FENCE:
+		maintenanceFence(message);
 		break;
 	case SAU_MATOCS_TRUNCATE:
 		truncateChunk(message);
@@ -795,11 +801,32 @@ void MasterConn::createAndLockChunk(const std::vector<uint8_t> &data) {
 void MasterConn::deleteChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	uint32_t chunkVersion;
+	uint64_t requestId = 0;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 
-	matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
+	// A request that names an id is answered in the same family, echoing it; an old request gets
+	// the byte-identical old reply.
+	PacketVersion packetVersion = 0;
+	deserializePacketVersionNoHeader(data, packetVersion);
+	const bool withRequestId = packetVersion == matocs::deleteChunk::kWithRequestId;
+	if (withRequestId) {
+		matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion, requestId);
+	} else {
+		matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
+	}
 	auto *outputPacket = new OutputPacket;
-	cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
+	if (withRequestId) {
+		cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0, requestId);
+	} else {
+		cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
+	}
+	if (maintenanceFenceRefuses()) {
+		safs::log_info(
+		    "delete of chunk {:016X} refused: another connection holds the maintenance fence",
+		    chunkId);
+		sauJobFinished(SAUNAFS_ERROR_NOTDONE, outputPacket);
+		return;
+	}
 	if (jobPool_) {
 		job_delete(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType,
 		           listenerId_);
@@ -811,9 +838,17 @@ void MasterConn::deleteChunk(const std::vector<uint8_t> &data) {
 
 void MasterConn::probeChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
+	uint64_t requestId = 0;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 
-	matocs::probeChunk::deserialize(data, chunkId, chunkType);
+	PacketVersion packetVersion = 0;
+	deserializePacketVersionNoHeader(data, packetVersion);
+	const bool withRequestId = packetVersion == matocs::probeChunk::kWithRequestId;
+	if (withRequestId) {
+		matocs::probeChunk::deserialize(data, chunkId, chunkType, requestId);
+	} else {
+		matocs::probeChunk::deserialize(data, chunkId, chunkType);
+	}
 	if (!jobPool_) {
 		safs::log_err("MasterConn::probeChunk: jobPool is null.");
 		return;
@@ -821,13 +856,56 @@ void MasterConn::probeChunk(const std::vector<uint8_t> &data) {
 	// The reply is built after the job, so the version can travel with the status. A stale
 	// socket drops it like every other late completion.
 	auto version = std::make_shared<uint32_t>(0);
-	auto finished = [this, active = callbackActive_, chunkId, chunkType, version](
-	                    uint8_t status, void * /*extra*/) {
+	auto finished = [this, active = callbackActive_, chunkId, chunkType, version, withRequestId,
+	                 requestId](uint8_t status, void * /*extra*/) {
 		if (*active && mode_ == ConnectionMode::CONNECTED) {
-			createAttachedPacket(cstoma::probeChunk::build(chunkId, chunkType, *version, status));
+			if (withRequestId) {
+				createAttachedPacket(
+				    cstoma::probeChunk::build(chunkId, chunkType, *version, status, requestId));
+			} else {
+				createAttachedPacket(
+				    cstoma::probeChunk::build(chunkId, chunkType, *version, status));
+			}
 		}
 	};
 	job_probe(*jobPool_, std::move(finished), nullptr, chunkId, chunkType, version, listenerId_);
+}
+
+void MasterConn::testChunk(const std::vector<uint8_t> &data) {
+	uint64_t chunkId;
+	uint32_t chunkVersion;
+	uint64_t requestId = 0;
+	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	matocs::testChunk::deserialize(data, chunkId, chunkType, chunkVersion, requestId);
+
+	// Only the connection holding the maintenance fence may verify a copy. A test decides nothing:
+	// it acts on the part only as any read does, and its answer counts only under the claim of the
+	// metadata server that asked. So unlike a delete it is judged at receipt only, and one queued
+	// before a newer fence still runs.
+	if (maintenanceFenceRefuses()) {
+		safs::log_info(
+		    "test of chunk {:016X} refused: another connection holds the maintenance fence",
+		    chunkId);
+		createAttachedPacket(
+		    cstoma::testChunk::build(chunkId, chunkType, 0, SAUNAFS_ERROR_NOTDONE, requestId));
+		return;
+	}
+	if (!jobPool_) {
+		safs::log_err("MasterConn::testChunk: jobPool is null.");
+		return;
+	}
+	// The reply is built after the job so the tested version travels with the status; a stale
+	// socket drops it like any late completion.
+	auto testedVersion = std::make_shared<uint32_t>(0);
+	auto finished = [this, active = callbackActive_, chunkId, chunkType, testedVersion, requestId](
+	                    uint8_t status, void * /*extra*/) {
+		if (*active && mode_ == ConnectionMode::CONNECTED) {
+			createAttachedPacket(
+			    cstoma::testChunk::build(chunkId, chunkType, *testedVersion, status, requestId));
+		}
+	};
+	job_test(*jobPool_, std::move(finished), nullptr, chunkId, chunkVersion, chunkType,
+	         testedVersion, listenerId_);
 }
 
 void MasterConn::setChunkVersion(const std::vector<uint8_t> &data) {
@@ -1005,19 +1083,38 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
 	uint32_t chunkVersion;
+	uint64_t requestId = 0;
 	uint32_t sourcesBufferSize;
 	const uint8_t *sourcesBuffer;
 
-	matocs::replicateChunk::deserializePartial(data, chunkId, chunkVersion, chunkType,
-	                                           sourcesBuffer);
+	PacketVersion packetVersion = 0;
+	deserializePacketVersionNoHeader(data, packetVersion);
+	const bool withRequestId = packetVersion == matocs::replicateChunk::kWithRequestId;
+	if (withRequestId) {
+		matocs::replicateChunk::deserializePartial(data, chunkId, chunkVersion, chunkType,
+		                                           requestId, sourcesBuffer);
+	} else {
+		matocs::replicateChunk::deserializePartial(data, chunkId, chunkVersion, chunkType,
+		                                           sourcesBuffer);
+	}
 	sourcesBufferSize = data.size() - (sourcesBuffer - data.data());
 
 	auto *outputPacket = new OutputPacket;
-	cstoma::replicateChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK,
-	                                  chunkVersion);
+	if (withRequestId) {
+		cstoma::replicateChunk::serialize(outputPacket->packet, chunkId, chunkType,
+		                                  SAUNAFS_STATUS_OK, chunkVersion, requestId);
+	} else {
+		cstoma::replicateChunk::serialize(outputPacket->packet, chunkId, chunkType,
+		                                  SAUNAFS_STATUS_OK, chunkVersion);
+	}
 	safs::log_debug("cs.matocs.replicate {}", chunkId);
 
-	if (hddScansInProgress()) {
+	if (maintenanceFenceRefuses()) {
+		safs::log_info(
+		    "replication of chunk {:016X} refused: another connection holds the maintenance fence",
+		    chunkId);
+		sauJobFinished(SAUNAFS_ERROR_NOTDONE, outputPacket);
+	} else if (hddScansInProgress()) {
 		// Disk scan in progress - replication is not possible
 		sauJobFinished(SAUNAFS_ERROR_WAITING, outputPacket);
 	} else {
@@ -1030,6 +1127,58 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 			delete outputPacket;
 		}
 	}
+}
+
+void MasterConn::maintenanceFence(const std::vector<uint8_t> &data) {
+	uint64_t epoch = 0;
+	matocs::maintenanceFence::deserialize(data, epoch);
+
+	// Only a metadata server that records copies by identity maintains behind a fence; a pool
+	// without one is a released configuration.
+	const auto fence = jobPool_ ? jobPool_->maintenanceFence() : nullptr;
+	if (!identityProtocolSelected() || !fence) {
+		createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_ERROR_ENOTSUP));
+		return;
+	}
+	if (!fence->fence(epoch, fence->stamp(listenerId_))) {
+		createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_ERROR_WRONGVERSION));
+		return;
+	}
+
+	// A pending older epoch of this connection is superseded by this one and answered so now, as
+	// when another connection's fence supersedes it; nothing else would answer it.
+	if (pendingFenceEpoch_ && *pendingFenceEpoch_ != epoch) {
+		createAttachedPacket(
+		    cstoma::maintenanceFence::build(*pendingFenceEpoch_, SAUNAFS_ERROR_WRONGVERSION));
+	}
+	// The ack waits for the replicate and delete jobs of other connections still running, so
+	// it leaves from the loop (sendPendingMaintenanceFenceAck), never from this handler.
+	pendingFenceEpoch_ = epoch;
+}
+
+void MasterConn::sendPendingMaintenanceFenceAck() {
+	if (!pendingFenceEpoch_ || mode_ != ConnectionMode::CONNECTED) { return; }
+	const auto &fence = jobPool_->maintenanceFence();
+	const MaintenanceFence::Stamp stamp = fence->stamp(listenerId_);
+	const uint64_t epoch = *pendingFenceEpoch_;
+
+	// A newer fence took the pair meanwhile: this one is answered as superseded. The pair's
+	// stamp is this connection's current one only while this connection holds the pair.
+	const auto pair = fence->pair();
+	if (!pair || pair->fenceEpoch != epoch || *pair != stamp) {
+		createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_ERROR_WRONGVERSION));
+		pendingFenceEpoch_.reset();
+		return;
+	}
+
+	if (fence->othersRunning(stamp)) { return; }
+	createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_STATUS_OK));
+	pendingFenceEpoch_.reset();
+}
+
+bool MasterConn::maintenanceFenceRefuses() const {
+	const auto fence = jobPool_ ? jobPool_->maintenanceFence() : nullptr;
+	return fence && !fence->admits(fence->stamp(listenerId_));
 }
 
 // Callbacks

@@ -176,8 +176,13 @@ JobPool::ListenerInfo *JobPool::listenerForJob(uint32_t &listenerId, const char 
 }
 
 uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *extra,
-                         ProcessJobCallback processJob, uint32_t listenerId) {
+                         ProcessJobCallback processJob, uint32_t listenerId,
+                         std::optional<MaintenanceFence::Stamp> stamp) {
 	auto *listenerInfo = listenerForJob(listenerId, __func__);
+	if (!stamp) {
+		stamp = maintenanceFence_ ? maintenanceFence_->stamp(listenerId)
+		                          : MaintenanceFence::Stamp{listenerId, 0, 0};
+	}
 
 	std::unique_lock lock(listenerInfo->jobsMutex);
 	uint32_t jobId = listenerInfo->nextJobId++;
@@ -188,6 +193,7 @@ uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *e
 	job->extra = extra;
 	job->state = JobPool::State::Enabled;
 	job->listenerId = listenerId;
+	job->stamp = *stamp;
 	listenerInfo->jobHash[jobId] = std::move(job);
 
 	putToJobQueue(jobId, operation,
@@ -383,7 +389,14 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 		sassert(listenerInfo != nullptr);
 		std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex);
 		jobState = job->state;
-		if (job->state == State::Enabled) { job->state = State::InProgress; }
+		// The maintenance fence decides here, whichever path queued the job: a delete released
+		// by a chunk lock or queued by this server's own cleanup never passed a receipt check.
+		const MaintenanceFence::Stamp stamp = job->stamp;
+		const bool fenced = maintenanceFence_ != nullptr && fencedOperation(operation);
+		if (jobState == State::Enabled && fenced && !maintenanceFence_->start(stamp)) {
+			jobState = State::Disabled;
+		}
+		if (jobState == State::Enabled) { job->state = State::InProgress; }
 
 		if (jobState == State::Disabled) {
 			status = SAUNAFS_ERROR_NOTDONE;
@@ -401,8 +414,70 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 			status = SAUNAFS_ERROR_NOTDONE;
 		}
 
+		if (fenced) { maintenanceFence_->end(stamp); }
 		sendStatus(jobId, status, listenerId);
 	}
+}
+
+MaintenanceFence::Stamp MaintenanceFence::stamp(uint32_t listenerId) const {
+	std::lock_guard lock(mutex_);
+	return {listenerId, listenerId < kMaxMetadataConnections ? connectionEpochs_[listenerId] : 0,
+	        pair_ ? pair_->fenceEpoch : 0};
+}
+
+void MaintenanceFence::connectionClosed(uint32_t listenerId) {
+	if (listenerId >= kMaxMetadataConnections) { return; }
+	std::lock_guard lock(mutex_);
+	++connectionEpochs_[listenerId];
+}
+
+bool MaintenanceFence::fence(uint64_t epoch, Stamp stamp) {
+	std::lock_guard lock(mutex_);
+	const Stamp candidate{stamp.listenerId, stamp.connectionEpoch, epoch};
+	// Epoch 0 is the stamp of a job received with no fence: a pair at it would admit those jobs.
+	if (epoch == 0) { return false; }
+	if (pair_ && epoch < pair_->fenceEpoch) { return false; }
+	// At the current epoch only the paired connection again, or its successor on the listener
+	// after it closed: a second live connection at one epoch would revive the first's jobs.
+	if (pair_ && epoch == pair_->fenceEpoch && candidate != *pair_ &&
+	    (stamp.listenerId != pair_->listenerId ||
+	     stamp.connectionEpoch <= pair_->connectionEpoch)) {
+		return false;
+	}
+	pair_ = candidate;
+	return true;
+}
+
+std::optional<MaintenanceFence::Stamp> MaintenanceFence::pair() const {
+	std::lock_guard lock(mutex_);
+	return pair_;
+}
+
+bool MaintenanceFence::admits(Stamp stamp) const {
+	std::lock_guard lock(mutex_);
+	return !pair_ || *pair_ == stamp;
+}
+
+bool MaintenanceFence::start(Stamp stamp) {
+	std::lock_guard lock(mutex_);
+	if (pair_ && *pair_ != stamp) { return false; }
+	++running_[stamp];
+	return true;
+}
+
+void MaintenanceFence::end(Stamp stamp) {
+	std::lock_guard lock(mutex_);
+	const auto running = running_.find(stamp);
+	if (running == running_.end()) { return; }
+	if (--running->second == 0) { running_.erase(running); }
+}
+
+bool MaintenanceFence::othersRunning(Stamp stamp) const {
+	std::lock_guard lock(mutex_);
+	for (const auto &[running, count] : running_) {
+		if (running != stamp && count != 0) { return true; }
+	}
+	return false;
 }
 
 void JobPool::sendStatus(uint32_t jobId, uint8_t status, uint32_t listenerId) {
@@ -471,8 +546,15 @@ void JobPool::getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jo
 
 uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
                                           JobCallback callback, void *extra,
-                                          ProcessJobCallback processJob, uint32_t listenerId) {
+                                          ProcessJobCallback processJob, uint32_t listenerId,
+                                          std::optional<MaintenanceFence::Stamp> stamp) {
 	auto *listener = listenerForJob(listenerId, __func__);
+	// Stamped now, whether the job runs at once or waits behind a lock: it belongs to the
+	// connection and the fenced epoch that received it, not to whatever the listener has later.
+	if (!stamp) {
+		stamp = maintenanceFence_ ? maintenanceFence_->stamp(listenerId)
+		                          : MaintenanceFence::Stamp{listenerId, 0, 0};
+	}
 
 	std::unique_lock lockedChunkLock(chunkToJobReplyMapMutex_);
 	auto it = chunkToJobReplyMap_.find(chunkWithType);
@@ -483,10 +565,10 @@ uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOper
 		listener->deferredJobs.fetch_add(1);
 
 		lockedChunkData.pendingAddJobs.emplace_back(
-		    [this, operation, extra, listenerId, callback = std::move(callback),
+		    [this, operation, extra, listenerId, stamp, callback = std::move(callback),
 		     processJob = std::move(processJob)]() mutable -> uint32_t {
 			    const auto jobId = addJob(operation, std::move(callback), extra,
-			                              std::move(processJob), listenerId);
+			                              std::move(processJob), listenerId, stamp);
 			    auto *l = listenerInfos_[listenerId].load(std::memory_order_acquire);
 			    if (l != nullptr) { l->deferredJobs.fetch_sub(1); }
 			    return jobId;
@@ -497,7 +579,7 @@ uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOper
 	lockedChunkLock.unlock();  // Release the lock before adding the job to avoid deadlocks
 
 	// Chunk is not locked, add the job immediately
-	return addJob(operation, std::move(callback), extra, std::move(processJob), listenerId);
+	return addJob(operation, std::move(callback), extra, std::move(processJob), listenerId, stamp);
 }
 
 uint32_t MasterJobPool::addLockJob(JobCallback callback, void *extra, uint32_t listenerId) {
@@ -536,7 +618,8 @@ void MasterJobPool::changeLockJobsCallback(const LockJobCallbackMaker &lockJobCa
 		if (lockedChunkData.listenerId == listenerId) {
 			auto jobIterator = listenerInfo->jobHash.find(lockedChunkData.lockJobId);
 			if (jobIterator != listenerInfo->jobHash.end()) {
-				jobIterator->second->callback = lockJobCallbackMaker(chunkWithType, listenerId);
+				jobIterator->second->callback =
+				    lockJobCallbackMaker(chunkWithType, listenerId, lockedChunkData.origin);
 			}
 		}
 	}
@@ -568,7 +651,8 @@ void MasterJobPool::detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMa
 
 		auto jobIterator = listenerInfo->jobHash.find(lockedChunkData.lockJobId);
 		if (jobIterator == listenerInfo->jobHash.end()) { continue; }
-		auto callback = lockJobCallbackMaker(chunkWithType, callbackListenerId);
+		auto callback =
+		    lockJobCallbackMaker(chunkWithType, callbackListenerId, lockedChunkData.origin);
 		if (!callback) {
 			safs::log_err("{} job pool: {}: Refusing to detach lock job {} without a callback",
 			              name_, __func__, lockedChunkData.lockJobId);
@@ -647,6 +731,8 @@ MasterJobPool::LockStart MasterJobPool::startChunkLock(const JobPool::JobCallbac
 	LockedChunkData installed(addLockJob(callback, packet, listenerId), listenerId);
 	installed.identity = nextLockIdentity_++;
 	installed.ownerId = ownerId;
+	installed.origin = maintenanceFence_ ? maintenanceFence_->stamp(listenerId)
+	                                     : MaintenanceFence::Stamp{listenerId, 0, 0};
 	installed.version = chunkVersion;
 	chunkToJobReplyMap_[key] = std::move(installed);
 	lock.unlock();
@@ -1059,6 +1145,18 @@ uint32_t job_probe(MasterJobPool &jobPool, JobPool::JobCallback callback, void *
 	                      processJob, listenerId);
 }
 
+uint32_t job_test(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                  uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
+                  std::shared_ptr<uint32_t> testedVersion, uint32_t listenerId) {
+	// The worker and the callback share ownership of testedVersion: a connection close replaces the
+	// callback, so the version it reads must outlive a worker that is still writing it.
+	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
+		return hddChunkTest(chunkId, chunkVersion, chunkType, testedVersion.get());
+	};
+	return jobPool.addJob(JobPool::ChunkOperation::TestChunk, std::move(callback), extra,
+	                      processJob, listenerId);
+}
+
 uint32_t job_lock(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                   uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
                   std::function<uint8_t()> install, uint32_t listenerId) {
@@ -1110,13 +1208,13 @@ uint32_t job_invalid(MasterJobPool &jobPool, JobPool::JobCallback callback, void
 
 uint32_t job_delete(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                     uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
-                    uint32_t listenerId) {
+                    uint32_t listenerId, std::optional<MaintenanceFence::Stamp> stamp) {
 	JobPool::ProcessJobCallback processJob = [=]() -> uint8_t {
 		return hddInternalDelete(chunkId, chunkVersion, chunkType);
 	};
 	return jobPool.addJobIfNotLocked(ChunkWithType{chunkId, chunkType},
 	                                 JobPool::ChunkOperation::Delete, std::move(callback), extra,
-	                                 processJob, listenerId);
+	                                 processJob, listenerId, stamp);
 }
 
 uint32_t job_create(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,

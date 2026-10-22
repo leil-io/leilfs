@@ -95,6 +95,11 @@ int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
 /// answer to a metadata server's probe, which needs the version without a block count. This is
 /// the raw version: unlike the inventory, it carries no to-delete flag in the high bit.
 int hddChunkGetVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t *version);
+/// CRC-tests a whole part at @p version (0: whatever is stored) and reports the version it tested
+/// in @p testedVersion. Returns OK, NOCHUNK, WRONGVERSION, IO or CRC; a metadata server uses it to
+/// verify a copy before deleting it.
+int hddChunkTest(uint64_t chunkId, uint32_t version, ChunkPartType chunkType,
+                 uint32_t *testedVersion);
 /// Runs @p action on the part while it is held at @p version, so the version cannot change
 /// before the action is done: NOCHUNK when the part is not on this server, WRONGVERSION at
 /// another version, the action's status otherwise.

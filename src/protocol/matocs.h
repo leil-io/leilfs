@@ -74,6 +74,22 @@ inline MetadataClusterSnapshot readSnapshot(const std::vector<uint8_t> &data) {
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, probeChunk, kDefault, 0)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, probeChunk, SAU_MATOCS_PROBE_CHUNK, kDefault, uint64_t,
                                     chunkId, ChunkPartType, chunkType)
+// Carries a request id a reply echoes; a KV metadata server sends this version.
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, probeChunk, kWithRequestId, 1)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, probeChunk, SAU_MATOCS_PROBE_CHUNK, kWithRequestId,
+                                    uint64_t, chunkId, ChunkPartType, chunkType, uint64_t,
+                                    requestId)
+
+// Asks for a whole-part CRC test at @p chunkVersion (0: whatever is stored); the reply echoes the
+// request id and the version tested. A KV metadata server sends this to verify before deleting.
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, testChunk, kDefault, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, testChunk, SAU_MATOCS_TEST_CHUNK, kDefault, uint64_t,
+                                    chunkId, ChunkPartType, chunkType, uint32_t, chunkVersion,
+                                    uint64_t, requestId)
+
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, maintenanceFence, kDefault, 0)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, maintenanceFence, SAU_MATOCS_MAINTENANCE_FENCE,
+                                    kDefault, uint64_t, epoch)
 
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)
@@ -127,6 +143,10 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint64_t,  chunkId,
 		ChunkPartType, chunkType,
 		uint32_t,  chunkVersion)
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, deleteChunk, kWithRequestId, 2)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, deleteChunk, SAU_MATOCS_DELETE_CHUNK, kWithRequestId,
+                                    uint64_t, chunkId, ChunkPartType, chunkType, uint32_t,
+                                    chunkVersion, uint64_t, requestId)
 
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, createChunk, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, createChunk, kECChunks, 1)
@@ -224,6 +244,11 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		uint32_t,  chunkVersion,
 		ChunkPartType, chunkType,
 		std::vector<ChunkTypeWithAddress>, sources)
+SAUNAFS_DEFINE_PACKET_VERSION(matocs, replicateChunk, kWithRequestId, 2)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, replicateChunk, SAU_MATOCS_REPLICATE_CHUNK,
+                                    kWithRequestId, uint64_t, chunkId, uint32_t, chunkVersion,
+                                    ChunkPartType, chunkType, uint64_t, requestId,
+                                    std::vector<ChunkTypeWithAddress>, sources)
 
 namespace matocs {
 namespace replicateChunk {
@@ -238,6 +263,13 @@ inline void deserializePartial(const std::vector<uint8_t>& source,
 		uint64_t& chunkId, uint32_t& chunkVersion, ChunkPartType& chunkType, const uint8_t*& sources) {
 	verifyPacketVersionNoHeader(source, kECChunks);
 	deserializeAllPacketDataNoHeader(source, chunkId, chunkVersion, chunkType, sources);
+}
+
+inline void deserializePartial(const std::vector<uint8_t> &source, uint64_t &chunkId,
+                               uint32_t &chunkVersion, ChunkPartType &chunkType,
+                               uint64_t &requestId, const uint8_t *&sources) {
+	verifyPacketVersionNoHeader(source, kWithRequestId);
+	deserializeAllPacketDataNoHeader(source, chunkId, chunkVersion, chunkType, requestId, sources);
 }
 
 } // namespace replicate

@@ -196,9 +196,10 @@ public:
 
 	// --- Async operation results from chunkservers ---
 	virtual void gotDeleteStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
-	                             uint8_t status) = 0;
+	                             uint8_t status, uint64_t requestId) = 0;
 	virtual void gotReplicateStatus(matocsserventry *ptr, uint64_t chunkId, uint32_t chunkVersion,
-	                                ChunkPartType chunkType, uint8_t status) = 0;
+	                                ChunkPartType chunkType, uint8_t status,
+	                                uint64_t requestId) = 0;
 	virtual void gotCreateStatus(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunkType,
 	                             uint8_t status) = 0;
 	virtual void gotDuplicateStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
@@ -216,7 +217,16 @@ public:
 	/// Reply to a chunk probe: the version the chunkserver holds, or a NOCHUNK status. A backend
 	/// without a registration inventory asks instead of trusting what it last recorded.
 	virtual void gotProbeStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
-	                            uint32_t chunkVersion, uint8_t status) = 0;
+	                            uint32_t chunkVersion, uint8_t status, uint64_t requestId) = 0;
+	/// Reply to a whole-part CRC test: the status and the version the chunkserver tested under the
+	/// chunk lock. A backend that verifies a copy before deleting it decides on this; Master never
+	/// sends a test.
+	virtual void gotTestStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
+	                           uint32_t testedVersion, uint8_t status, uint64_t requestId) = 0;
+	/// A chunkserver answered the maintenance fence sent at @p epoch: with status OK no replicate
+	/// or delete of an earlier connection can still run there. Master never fences.
+	virtual void maintenanceFenceAnswered(matocsserventry * /*ptr*/, uint64_t /*epoch*/,
+	                                      uint8_t /*status*/) {}
 	/// Every part answered the chunk's pending operation and the chunk is idle again. A backend
 	/// that keeps the part set outside memory publishes it here.
 	virtual void operationSettled(uint64_t chunkId) = 0;

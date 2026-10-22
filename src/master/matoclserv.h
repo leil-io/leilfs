@@ -98,6 +98,10 @@ struct MatoclBatchStats {
 /// with FDB_OP_PROFILING). When off, the hot-path counters are a single bool check.
 void matoclserv_set_batch_stats_enabled(bool enabled);
 
+/// Whether this process accepts client sessions (default yes). A metadata server of a KV backend
+/// may run without them, for maintenance only; administration and chunkservers are unaffected.
+void matoclserv_set_serving_clients(bool serving);
+
 /// Returns the current group-commit batch-stats counters (process-wide, since process start).
 MatoclBatchStats matoclserv_get_batch_stats();
 

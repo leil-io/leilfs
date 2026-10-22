@@ -717,6 +717,11 @@ static MatoclBatchStats gBatchStats;
 
 void matoclserv_set_batch_stats_enabled(bool enabled) { gBatchStatsEnabled = enabled; }
 
+/// Cleared only by a backend that runs a process without client sessions.
+static bool gServingClients = true;
+
+void matoclserv_set_serving_clients(bool serving) { gServingClients = serving; }
+
 MatoclBatchStats matoclserv_get_batch_stats() { return gBatchStats; }
 
 void matoclserv_request_commit_pipeline_maintenance() { gBatchMaintenanceRequested = true; }
@@ -2499,7 +2504,9 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			if (pathLength == 0) {
 				path = (const uint8_t*)"";
 			}
-			if (pathLength != bytesAfterInfo) {
+			if (!gServingClients) {
+				status = SAUNAFS_ERROR_EPERM;
+			} else if (pathLength != bytesAfterInfo) {
 				status =
 				    exports_check(eptr->peerIpAddress, eptr->version, 0, path, eptr->randomPassword,
 				                  rptr, &sessionFlags, &rootUid, &rootGid, &mapAllUid, &mapAllGid,
@@ -2612,7 +2619,9 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 			info = reinterpret_cast<const char*>(rptr);
 			rptr += infoLength;
 
-			if (infoLength != bytesAfterInfo) {
+			if (!gServingClients) {
+				status = SAUNAFS_ERROR_EPERM;
+			} else if (infoLength != bytesAfterInfo) {
 				status = exports_check(eptr->peerIpAddress, eptr->version, 1, nullptr,
 				                       eptr->randomPassword, rptr, &sessionFlags, &rootUid,
 				                       &rootGid, &mapAllUid, &mapAllGid, &minGoal, &maxGoal,
@@ -2698,8 +2707,10 @@ void matoclserv_fuse_register(matoclserventry *eptr, const uint8_t *data, uint32
 				return;
 			}
 
-			eptr->sessionData = matoclserv_find_session(sessionId);
-			if (eptr->sessionData == nullptr || eptr->sessionData->peerIpAddress == 0) {
+			eptr->sessionData = gServingClients ? matoclserv_find_session(sessionId) : nullptr;
+			if (!gServingClients) {
+				status = SAUNAFS_ERROR_EPERM;
+			} else if (eptr->sessionData == nullptr || eptr->sessionData->peerIpAddress == 0) {
 				status = SAUNAFS_ERROR_BADSESSIONID;
 			} else {
 				if ((eptr->sessionData->flags & SESFLAG_DYNAMICIP) == 0 &&

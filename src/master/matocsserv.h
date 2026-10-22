@@ -139,16 +139,27 @@ int matocsserv_getlocation(matocsserventry* eptr, uint32_t* servip, uint16_t* se
 uint16_t matocsserv_replication_read_counter(matocsserventry* eptr);
 uint16_t matocsserv_replication_write_counter(matocsserventry* eptr);
 uint16_t matocsserv_deletion_counter(matocsserventry* eptr);
-int matocsserv_send_sau_replicatechunk(matocsserventry* eptr,
-		uint64_t chunkid, uint32_t version, ChunkPartType type,
-		const std::vector<matocsserventry*> &sourcePointers,
-		const std::vector<ChunkPartType> &sourceTypes);
+int matocsserv_send_sau_replicatechunk(matocsserventry *eptr, uint64_t chunkid, uint32_t version,
+                                       ChunkPartType type,
+                                       const std::vector<matocsserventry *> &sourcePointers,
+                                       const std::vector<ChunkPartType> &sourceTypes,
+                                       uint64_t requestId = 0);
 
-int matocsserv_send_deletechunk(matocsserventry* eptr,
-		uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType);
+int matocsserv_send_deletechunk(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,
+                                ChunkPartType chunkType, uint64_t requestId = 0);
 /// Asks which version of a chunk part the chunkserver holds; ENOTSUP for peers that predate the
 /// probe packet, so a backend can fall back instead of waiting for a reply that never comes.
-int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType);
+int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
+                               uint64_t requestId = 0);
+/// CRC-tests one part at @p chunkVersion (0: whatever is stored) on a fenced chunkserver; the reply
+/// echoes @p requestId with the version tested and the status. A KV metadata server verifies a copy
+/// before deleting it; ENOTSUP for a chunkserver too old for the maintenance fence.
+int matocsserv_send_sau_testchunk(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,
+                                  ChunkPartType chunkType, uint64_t requestId = 0);
+/// Fences the chunkserver's replicate and delete commands to this connection at @p epoch; the
+/// answer arrives as IChunkOperations::maintenanceFenceAnswered. ENOTSUP for peers that predate
+/// the packet. Master never calls it.
+int matocsserv_send_maintenance_fence(matocsserventry *eptr, uint64_t epoch);
 int matocsserv_send_createchunk(matocsserventry *eptr, uint64_t chunkid, ChunkPartType chunkType,
                                 uint32_t version, bool needsLock, bool &sentChunkLock);
 int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,

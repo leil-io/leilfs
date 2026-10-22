@@ -132,6 +132,11 @@ inline constexpr std::string_view kFreeKeyPrefix = "FREE_";  // Section FREE 1.0
 /// Write locks live elsewhere (a future CHNK_LOCK_ prefix), so they are not part of this record.
 inline constexpr std::string_view kChunkKeyPrefix = "CHNK_";  // Section CHNK 1.0
 
+/// Freshness token: CHGN_<u64 id> -> u64 little-endian, bumped by atomicAdd on every
+/// commit that writes the chunk's CHNK, CHMB or any CHDL row. Never removed (a tombstone),
+/// so a value never repeats for a chunk id.
+inline constexpr std::string_view kChunkTokenKeyPrefix = "CHGN_";  // Section CHGN 1.0
+
 /// Chunk membership: CHMB_<u64 id> -> <u8 format><u32 version><u16 count>[<UUID16><u16 type>].
 /// Integers are big-endian. Format 1 allows 1..255 sorted unique pairs (at most 4597 bytes).
 /// Absence means unpublished; endpoints and connection state are never stored here.
