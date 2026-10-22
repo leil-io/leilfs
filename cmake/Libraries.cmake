@@ -221,7 +221,7 @@ if(ENABLE_NFS_GANESHA)
   string(REGEX REPLACE "^GANESHA_VERSION=" "" GANESHA_GIT_TAG "${_ganesha_version_line}")
   file(STRINGS "${GANESHA_ENV}" _ganesha_url_line REGEX "^GANESHA_GIT_URL=")
   string(REGEX REPLACE "^GANESHA_GIT_URL=" "" GANESHA_GIT_URL "${_ganesha_url_line}")
-  # Local directory name keeps the numeric form (V9.15 -> nfs-ganesha-9.15).
+  # Local directory name keeps the numeric form (V<X.Y> -> nfs-ganesha-<X.Y>).
   string(REGEX REPLACE "^[Vv]" "" NFS_GANESHA_VERSION "${GANESHA_GIT_TAG}")
 
   # Clone at the pinned tag WITH submodules so src/libntirpc is checked out at the
