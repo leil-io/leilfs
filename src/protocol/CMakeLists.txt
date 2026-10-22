@@ -20,6 +20,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 collect_sources(PROTOCOL)
 
 add_library(safsprotocol ${PROTOCOL_SOURCES})
+target_link_libraries(safsprotocol PUBLIC slogger)
 
 create_unittest(safsprotocol ${PROTOCOL_TESTS})
 link_unittest(safsprotocol leil-common)
