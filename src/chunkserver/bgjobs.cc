@@ -434,6 +434,8 @@ void MaintenanceFence::connectionClosed(uint32_t listenerId) {
 bool MaintenanceFence::fence(uint64_t epoch, Stamp stamp) {
 	std::lock_guard lock(mutex_);
 	const Stamp candidate{stamp.listenerId, stamp.connectionEpoch, epoch};
+	// Epoch 0 is the stamp of a job received with no fence: a pair at it would admit those jobs.
+	if (epoch == 0) { return false; }
 	if (pair_ && epoch < pair_->fenceEpoch) { return false; }
 	// At the current epoch only the paired connection again, or its successor on the listener
 	// after it closed: a second live connection at one epoch would revive the first's jobs.

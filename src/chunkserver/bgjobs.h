@@ -77,7 +77,8 @@ public:
 
 	/// Sets the pair for a higher epoch from any connection, or for the current epoch from the
 	/// pair's own connection (a repeat) or from its successor on the same listener once it closed
-	/// (a reconnect); refused for a lower epoch and for another live connection at the same one.
+	/// (a reconnect); refused for epoch 0 (no fence), a lower epoch, and another live connection
+	/// at the same one.
 	/// @return false when refused
 	bool fence(uint64_t epoch, Stamp stamp);
 

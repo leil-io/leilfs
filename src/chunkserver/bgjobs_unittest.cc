@@ -846,6 +846,9 @@ TEST(MaintenanceFenceTest, AParkedDeleteStaysRefusedAcrossClaimsOnTheSameSocket)
 
 TEST(MaintenanceFenceTest, OneEpochAdmitsOneLiveConnection) {
 	MaintenanceFence fence;
+	// Epoch 0 is no fence: the jobs received before any fence carry it.
+	EXPECT_FALSE(fence.fence(0, fence.stamp(0)));
+	EXPECT_FALSE(fence.pair().has_value());
 	ASSERT_TRUE(fence.fence(1, fence.stamp(0)));
 	// The paired connection again: a repeat. Another live connection at the same epoch: refused,
 	// or its jobs would come back after the paired one's ack.
