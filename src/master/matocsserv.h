@@ -22,6 +22,7 @@
 
 #include "common/platform.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -93,6 +94,9 @@ std::vector<ServerWithUsage> matocsserv_getservers_sorted();
 
 /*! \brief Check if chunkserver is killed. */
 bool matocsserv_is_killed(matocsserventry* eptr);
+
+/// New allocation may use capacity early; background replication needs a completed pull inventory.
+bool matocsserv_can_receive_replication(const matocsserventry *eptr);
 
 /*! \brief Mark a chunkserver connection for disconnection by the event loop. */
 void matocsserv_request_disconnect(matocsserventry *eptr);
@@ -176,3 +180,72 @@ csdbentry *matocsserv_get_csdb(matocsserventry* eptr);
 matocsserventry *matocsserv_test_connection(csdbentry *entry, uint32_t ip, uint16_t port,
                                             uint32_t version);
 void matocsserv_test_connection_free(matocsserventry *eptr);
+
+/// Coalesces location queries and broadcasts to all eligible chunkservers, even
+/// after registration: disk scans may still reveal unreported chunks.
+/// @param chunkId Chunk whose locations should be discovered.
+/// @return True to defer the client reply until matoclserv_chunk_locations_resolved()
+/// runs after all answers or timeout; false if no query can start.
+bool matocsserv_query_chunk_location(uint64_t chunkId);
+
+/// Reconciles a stale report's conflicting disk flag without changing the known version.
+/// Queries only this connection; parts temporarily locked by workers are retried.
+void matocsserv_refresh_chunk_disk_state(matocsserventry *server, uint64_t chunkId,
+                                         ChunkPartType partType);
+
+/// Maximum peer visits, pending-key visits and part checks combined per invocation.
+constexpr std::size_t kDiskStateRefreshWorkLimit = 256;
+
+/// Maximum chunk IDs awaiting disk-state refresh replies per connection.
+constexpr std::size_t kDiskStateRefreshOutstandingLimit = 128;
+
+/// Pause new refresh queries when a connection has this many queued output packets.
+constexpr std::size_t kDiskStateRefreshOutputLimit = 8;
+
+/// Processes a bounded refresh slice and returns the number of work units consumed.
+std::size_t matocsserv_process_disk_state_refreshes(std::chrono::microseconds timeBudget,
+                                                    SteadyTimePoint now);
+
+/// Applies query replies and schedules missing refresh parts for retry relative to now.
+void matocsserv_sau_query_chunks_response(matocsserventry *server, const std::vector<uint8_t> &data,
+                                          SteadyTimePoint now = SteadyClock::now());
+
+// Socket-free fixture support; connection internals remain private to matocsserv.cc.
+namespace matocsserv_test {
+matocsserventry *create_connection(csdbentry &entry, uint32_t version);
+void destroy_connection(matocsserventry *server);
+std::vector<std::vector<uint8_t>> take_output_packets(matocsserventry *server);
+void rehash_disk_state_refreshes(matocsserventry *server);
+void fill_output_packets(matocsserventry *server);
+void expire_disk_state_refresh(matocsserventry *server, uint64_t chunkId, SteadyTimePoint now);
+std::size_t pending_disk_state_refreshes(const matocsserventry *server);
+}  // namespace matocsserv_test
+
+/*! \brief Maximum number of deferred client waits. */
+uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit();
+
+/// Maximum number of chunk records one pull-registration window may admit per
+/// chunkserver. This bounds the per-connection queue independently of the
+/// operator-selected bulk size and window.
+constexpr uint32_t kMaxChunkRegistrationInFlightChunks = 100000;
+
+/// Limits a requested pull-registration window so it never admits more than
+/// kMaxChunkRegistrationInFlightChunks records for the given bulk size.
+/// Exposed to pin the configuration safety limit in unit tests.
+uint32_t matocsserv_limit_chunk_registration_window(uint32_t bulkSize, uint32_t requestedWindow);
+
+/*!
+ * \brief Groups chunk ids for SAU_MATOCS_QUERY_CHUNKS packets.
+ *
+ * A chunkserver drops the connection on any packet above
+ * kMaxMasterToChunkserverPacketSize, and the number of chunks waiting on a
+ * location is bounded only by ON_DEMAND_CHUNK_QUERY_LIMIT, so the ids cannot
+ * all go out together. Each returned group is small enough that the packet
+ * built from it fits; every id appears exactly once, in the order given.
+ *
+ * Exposed for testing: the volume needed to overflow a packet is a cluster's
+ * worth of clients blocking at the same instant, which a system test cannot
+ * reproduce.
+ */
+std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
+    const std::vector<uint64_t> &chunkIds);

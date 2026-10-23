@@ -119,6 +119,11 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 		if (disk->metaPath() ==
 		    currentDisk->metaPath()) {  // Disk already in memory
 			if (disk->isDamaged()) {
+				if (!currentDisk->isDamaged() &&
+				    disk->scanState() != IDisk::ScanState::kInProgress &&
+				    disk->scanState() != IDisk::ScanState::kTerminate) {
+					gScansInProgress.fetch_add(1, std::memory_order_relaxed);
+				}
 				disk->setScanState(IDisk::ScanState::kNeeded);
 				disk->setScanProgress(0);
 				disk->setIsDamaged(currentDisk->isDamaged());
@@ -141,8 +146,10 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 				if (disk->isMarkedForRemoval() !=
 				        currentDisk->isMarkedForRemoval() ||
 				    disk->isReadOnly() != currentDisk->isReadOnly()) {
-					// important change - chunks need to be send to master again
-					disk->setScanState(IDisk::ScanState::kSendNeeded);
+					// A pending scan is already counted and will report the new flags.
+					if (disk->scanState() != IDisk::ScanState::kNeeded) {
+						disk->setScanState(IDisk::ScanState::kSendNeeded);
+					}
 				}
 			}
 
@@ -157,6 +164,7 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 	}
 
 	gDisks.emplace_back(currentDisk);
+	if (!currentDisk->isDamaged()) { gScansInProgress.fetch_add(1, std::memory_order_relaxed); }
 	gResetTester = true;
 
 	return 2;

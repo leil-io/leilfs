@@ -126,6 +126,10 @@ enum class SendDataToMasterMode : uint8_t {
 	ForNewChunk
 };
 
+// Suppress redundant announcements while the pull sweep reports the registry.
+// Atomic because hddQueueChunkReport() may run with gChunksMapMutex already held.
+static std::atomic_bool gPullRegistrationSweepActive = false;
+
 void hddGetDamagedChunks(std::vector<ChunkWithType>& chunks,
                          std::size_t limit) {
 	TRACETHIS();
@@ -152,8 +156,23 @@ void hddGetLostChunks(std::vector<ChunkWithType> &chunks, std::size_t limit) {
 static void hddQueueChunkReport(uint64_t id, uint32_t version, bool todel, ChunkPartType type,
                                 bool fromDiskScan) {
 	TRACETHIS();
-	uint32_t versionWithTodelFlag = common::combineVersionWithTodelFlag(version, todel);
-	hddEnqueueChunkReport(ChunkWithVersionAndType(id, versionWithTodelFlag, type), fromDiskScan);
+	// The active pull sweep reports these chunks; avoid redundant announcements.
+	if (gPullRegistrationSweepActive.load(std::memory_order_acquire)) { return; }
+
+	const uint32_t versionWithTodelFlag = common::combineVersionWithTodelFlag(version, todel);
+	std::lock_guard lockGuard(gMasterReportsLock);
+
+	// Recheck under the queue lock to synchronize with registration start.
+	if (gPullRegistrationSweepActive.load(std::memory_order_acquire)) { return; }
+
+	// Keep reports and their origin runs consistent under the same lock.
+	gNewChunks.emplace_back(id, versionWithTodelFlag, type);
+	if (gNewChunkReportOriginRuns.empty() ||
+	    gNewChunkReportOriginRuns.back().fromDiskScan != fromDiskScan) {
+		gNewChunkReportOriginRuns.push_back({1, fromDiskScan});
+	} else {
+		++gNewChunkReportOriginRuns.back().count;
+	}
 }
 
 void hddReportNewChunkToMaster(uint64_t id, uint32_t version, bool todel, ChunkPartType type) {
@@ -165,31 +184,41 @@ static void hddReportScannedChunkToMaster(uint64_t id, uint32_t version, bool to
 	hddQueueChunkReport(id, version, todel, type, true);
 }
 
+/// Drops reports already sent in the current registration session.
+static void hddRegistrationSweepDropReported(std::vector<ChunkWithVersionAndType> &chunks);
+
 void hddGetNewChunks(std::vector<ChunkWithVersionAndType> &chunks, std::size_t limit,
                      bool *fromScan) {
 	TRACETHIS();
-	std::lock_guard lockGuard(gMasterReportsLock);
-	std::size_t size = std::min(gNewChunks.size(), limit);
-	auto batchEnd = gNewChunks.begin() + size;
-	chunks.assign(gNewChunks.begin(), batchEnd);
+	{
+		std::lock_guard lockGuard(gMasterReportsLock);
+		std::size_t size = std::min(gNewChunks.size(), limit);
+		auto batchEnd = gNewChunks.begin() + size;
+		chunks.assign(gNewChunks.begin(), batchEnd);
 
-	bool batchContainsScannedChunk = false;
-	std::size_t remaining = size;
-	while (remaining > 0) {
-		sassert(!gNewChunkReportOriginRuns.empty());
-		auto &run = gNewChunkReportOriginRuns.front();
-		const auto consumed = std::min(remaining, run.count);
-		if (run.fromDiskScan) { batchContainsScannedChunk = true; }
-		run.count -= consumed;
-		remaining -= consumed;
-		if (run.count == 0) { gNewChunkReportOriginRuns.pop_front(); }
+		bool batchContainsScannedChunk = false;
+		std::size_t remaining = size;
+		while (remaining > 0) {
+			sassert(!gNewChunkReportOriginRuns.empty());
+			auto &run = gNewChunkReportOriginRuns.front();
+			const auto consumed = std::min(remaining, run.count);
+			if (run.fromDiskScan) { batchContainsScannedChunk = true; }
+			run.count -= consumed;
+			remaining -= consumed;
+			if (run.count == 0) { gNewChunkReportOriginRuns.pop_front(); }
+		}
+		gNewChunks.erase(gNewChunks.begin(), batchEnd);
+
+		// A mixed batch can safely be reported as registration: both packet types
+		// update the same inventory, while registration also keeps metadata dumps
+		// deferred until the disk-scan backlog has drained.
+		if (fromScan != nullptr) { *fromScan = batchContainsScannedChunk; }
 	}
-	gNewChunks.erase(gNewChunks.begin(), batchEnd);
 
-	// A mixed batch can safely be reported as registration: both packet types
-	// update the same inventory, while registration also keeps metadata dumps
-	// deferred until the disk-scan backlog has drained.
-	if (fromScan != nullptr) { *fromScan = batchContainsScannedChunk; }
+	// Drop already-reported entries whose queued versions may now be stale.
+	// Call without gMasterReportsLock: hddSendDataToMaster takes gChunksMapMutex
+	// before queueing reports, so holding both here would invert the lock order.
+	hddRegistrationSweepDropReported(chunks);
 }
 
 void hddDiscardNewChunks() {
@@ -379,6 +408,13 @@ void hddSendDataToMaster(IDisk *disk, SendDataToMasterMode mode) {
 			if (mode != SendDataToMasterMode::ForNewChunk) {
 				chunksToRemove.push_back(chunk);
 			} else {
+				// A disk state reload changes the to-delete flag carried by this
+				// report. If a pull sweep emitted the old state already, make it
+				// revisit this entry. While the sweep is active its report remains
+				// suppressed and the next pass sends the new state; afterwards the
+				// queued report is retained instead of being dropped as a duplicate.
+				chunk->setRegistrationEpoch(0);
+				hddNoteChunkForRegistration(chunkToKey(*chunk));
 				hddReportNewChunkToMaster(chunk->id(), chunk->version(),
 				                          markedForDeletion, chunk->type());
 			}
@@ -392,6 +428,7 @@ void hddSendDataToMaster(IDisk *disk, SendDataToMasterMode mode) {
 		if (chunk->state() == ChunkState::Available) {
 			gOpenChunks.purge(chunk->metaFD());
 			chunk->owner()->chunks().remove(chunk);
+			hddForgetPresentChunkType(chunk->type());
 			gChunksMap.erase(chunkToKey(*chunk));
 		} else if (chunk->state() == ChunkState::Locked) {
 			// Some hdd worker is doing something with this chunk,
@@ -443,6 +480,7 @@ void hddCheckDisks() {
 
 	for (auto &disk : gDisks) {
 		if (disk->wasRemovedFromConfig()) {
+			const bool scanWasPending = disk->scanState() == IDisk::ScanState::kNeeded;
 			switch (disk->scanState()) {
 			case IDisk::ScanState::kInProgress:
 				disk->setScanState(IDisk::ScanState::kTerminate);
@@ -464,6 +502,9 @@ void hddCheckDisks() {
 			}
 			// At this point, this is only true if it was already sent to master
 			if (!disk->wasRemovedFromConfig()) {
+				if (scanWasPending && !disk->isDamaged()) {
+					gScansInProgress.fetch_sub(1, std::memory_order_relaxed);
+				}
 				// Delay the deletion after the loop
 				safs_pretty_syslog(LOG_NOTICE, "Disk %s successfully removed",
 				                   disk->getPaths().c_str());
@@ -626,6 +667,153 @@ void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize) {
 		}
 	}
 	handleBulkIfReady(BulkReadyWhen::NONEMPTY);
+}
+
+/// Master-driven (pull) chunk registration sweep.
+/// All sweep state is guarded by gChunksMapMutex, like the registry itself.
+/// Walk buckets once, then retry only skipped or subsequently changed keys.
+/// Session epochs prevent duplicate reports when a rehash restarts the walk.
+
+static uint32_t gRegistrationSweepEpoch = 0;
+
+void hddRegistrationSweepBegin(RegistrationSweepMode mode) {
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+
+	++gRegistrationSweepEpoch;
+	if (gRegistrationSweepEpoch == 0) {
+		// The epoch wrapped: clear every stale mark, or a chunk still
+		// carrying this epoch value from 2^32 sessions ago would be skipped.
+		for (const auto &chunkEntry : gChunksMap) { chunkEntry.second->setRegistrationEpoch(0); }
+		gRegistrationSweepEpoch = 1;
+	}
+
+	gRegistrationSweepState = {};
+	gRegistrationSweepState.active = mode == RegistrationSweepMode::kPull;
+	gRegistrationSweepState.bucketCount = gChunksMap.bucket_count();
+
+	// A full registration sends every current registry entry, so retaining
+	// reports from before it started only duplicates the whole disk scan. Keep
+	// gChunksMapMutex while publishing the pull state: a concurrent scanner can
+	// then either be part of this sweep or enqueue an announcement afterwards.
+	gPullRegistrationSweepActive.store(mode == RegistrationSweepMode::kPull,
+	                                   std::memory_order_release);
+
+	hddDiscardNewChunks();
+}
+
+RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
+                                                 std::size_t bulkSize) {
+	bulk.clear();
+	bulk.reserve(bulkSize);
+
+	auto addChunkToBulk = [&bulk](IChunk *chunk, uint32_t epoch) {
+		chunk->setRegistrationEpoch(epoch);
+		bulk.emplace_back(chunk->id(),
+		                  common::combineVersionWithTodelFlag(
+		                      chunk->version(), chunk->owner()->isMarkedForDeletion()),
+		                  chunk->type());
+	};
+
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+	auto &sweep = gRegistrationSweepState;
+
+	// Phase 1: advance the bucket cursor. A bucket may hold several EC
+	// parts for one chunk id, so leave it selected when the bulk fills and
+	// revisit its remaining unmarked entries on the next credit.
+	const std::size_t bucketCount = gChunksMap.bucket_count();
+
+	// Rehash invalidates an unfinished cursor. Once the walk is complete,
+	// outstanding keys and mutation notifications cover every remaining entry.
+	if (!sweep.cursorDone && bucketCount != sweep.bucketCount) {
+		sweep.bucketCount = bucketCount;
+		sweep.bucket = 0;
+	}
+
+	while (!sweep.cursorDone && bulk.size() < bulkSize) {
+		if (sweep.bucket >= bucketCount) {
+			sweep.cursorDone = true;
+			break;
+		}
+		for (auto bucketIter = gChunksMap.begin(sweep.bucket);
+		     bucketIter != gChunksMap.end(sweep.bucket); ++bucketIter) {
+			IChunk *chunk = bucketIter->second.get();
+			if (chunk->registrationEpoch() == gRegistrationSweepEpoch) { continue; }
+			if (chunk->state() != ChunkState::Available) {
+				if (chunk->state() == ChunkState::Locked) { sweep.enqueue(bucketIter->first); }
+				continue;
+			}
+			addChunkToBulk(chunk, gRegistrationSweepEpoch);
+			if (bulk.size() == bulkSize) { break; }
+		}
+		if (bulk.size() == bulkSize) { break; }
+		++sweep.bucket;
+	}
+
+	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
+
+	// Revisit each pending key at most once per call, rotating locked entries.
+	// Bound examined keys as well as output: a large locked backlog must yield.
+	const auto retryLimit =
+	    std::min(sweep.pending.size(), std::max(bulkSize, std::size_t{kDefaultChunkBulkSize}));
+	for (std::size_t visited = 0; visited < retryLimit && bulk.size() < bulkSize; ++visited) {
+		const auto key = sweep.pending.front();
+		sweep.pending.pop_front();
+		sweep.pendingKeys.erase(key);
+		const auto chunkIter = gChunksMap.find(key);
+		if (chunkIter == gChunksMap.end()) { continue; }
+		IChunk *chunk = chunkIter->second.get();
+		if (chunk->registrationEpoch() == gRegistrationSweepEpoch ||
+		    chunk->state() == ChunkState::Deleted || chunk->state() == ChunkState::ToBeDeleted) {
+			continue;
+		}
+		if (chunk->state() == ChunkState::Available) {
+			addChunkToBulk(chunk, gRegistrationSweepEpoch);
+		} else if (chunk->state() == ChunkState::Locked) {
+			sweep.enqueue(key);
+		}
+	}
+
+	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
+	if (!sweep.pending.empty()) { return RegistrationSweepResult::kRetry; }
+
+	// The counter includes scans that are scheduled but have not started, so a
+	// registration cannot complete between accepting a disk and its scanner
+	// publishing the first chunk. Keep the credit while waiting; the caller
+	// retries from its normal event-loop tick.
+	if (hddScansInProgress()) { return RegistrationSweepResult::kRetry; }
+
+	// Registry mutation and completion share this lock, so a new chunk either
+	// belongs to this sweep or queues its normal announcement after completion.
+	sweep.active = false;
+	gPullRegistrationSweepActive.store(false, std::memory_order_release);
+	return RegistrationSweepResult::kComplete;
+}
+
+uint64_t hddGetChunkRegistryBucketCount() {
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+	return gChunksMap.bucket_count();
+}
+
+static void hddRegistrationSweepDropReported(std::vector<ChunkWithVersionAndType> &chunks) {
+	if (chunks.empty()) { return; }
+
+	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+
+	// Epoch 0 means unmarked; skip filtering until a registration session exists.
+	if (gRegistrationSweepEpoch == 0) { return; }
+
+	// gChunksMapMutex protects registrationEpoch; no per-chunk lock is needed.
+	auto alreadyReported = [](const ChunkWithVersionAndType &entry) {
+		auto chunkIter = gChunksMap.find(makeChunkKey(entry.id, entry.type));
+		if (chunkIter == gChunksMap.end()) {
+			// Removed since queueing. Lost reports are sent first, so reannouncing it
+			// would restore a nonexistent copy in the master's inventory.
+			return true;
+		}
+		return chunkIter->second->registrationEpoch() == gRegistrationSweepEpoch;
+	};
+
+	std::erase_if(chunks, alreadyReported);
 }
 
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
@@ -2554,6 +2742,81 @@ static inline void hddAddChunkFromDiskScan(IDisk *disk,
 	hddChunkRelease(chunk);
 }
 
+/// Registers the chunks of disks which synthesize their chunk list instead
+/// of scanning directories (e.g. mock disks used for tests). All registry
+/// mutation happens here, so such disks never touch the registry directly.
+/// Returns true if the disk handled the scan itself.
+static bool hddScanSyntheticChunks(IDisk *disk) {
+	IDisk::SyntheticChunkSink sink;
+
+	sink.reserve = [](uint64_t expectedChunkCount) {
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		gChunksMap.reserve(gChunksMap.size() + expectedChunkCount);
+	};
+
+	auto totalInserted = std::make_shared<uint64_t>(0);
+	auto totalSkipped = std::make_shared<uint64_t>(0);
+
+	sink.emitBulk = [disk, totalInserted,
+	                 totalSkipped](std::vector<ChunkWithVersionAndType> &&bulk) {
+		// Values rather than pointers: a chunk becomes reachable the moment it
+		// turns Available, so once the locks are dropped a delete ordered by the
+		// master, which an on-demand location query can prompt as soon as the
+		// chunk is in the registry, may destroy it. Reporting from the entries
+		// keeps the loop below off freed memory.
+		std::vector<ChunkWithVersionAndType> insertedChunks;
+		insertedChunks.reserve(bulk.size());
+
+		{
+			// Both containers are populated before anything is published, in the
+			// order hddSendDataToMaster established. Nested guards rather than a
+			// scoped_lock, matching the disk-test loop above: helgrind complains
+			// about the latter.
+			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+			std::lock_guard testsLockGuard(gTestsMutex);
+			for (const auto &entry : bulk) {
+				const auto key = makeChunkKey(entry.id, entry.type);
+				if (gChunksMap.find(key) != gChunksMap.end()) {
+					// Already known, e.g. from a rescan after reload
+					++(*totalSkipped);
+					continue;
+				}
+				auto *chunk = disk->instantiateNewConcreteChunk(entry.id, entry.type);
+				passert(chunk);
+				gChunksMap.insert({key, std::unique_ptr<IChunk>(chunk)});
+				hddNotePresentChunkType(entry.type);
+				hddNoteChunkForRegistration(key);
+				chunk->setVersion(entry.version);
+				disk->updateChunkAttributes(chunk, true);
+				disk->chunks().insert(chunk);
+				chunk->setState(ChunkState::Available);
+				insertedChunks.push_back(entry);
+			}
+		}
+
+		for (const auto &entry : insertedChunks) {
+			hddReportNewChunkToMaster(entry.id, entry.version, disk->isMarkedForDeletion(),
+			                          entry.type);
+		}
+
+		*totalInserted += insertedChunks.size();
+	};
+
+	sink.isTerminating = [disk]() {
+		std::lock_guard disksLockGuard(gDisksMutex);
+		return disk->scanState() == IDisk::ScanState::kTerminate;
+	};
+
+	const bool handled = disk->scanSyntheticChunks(sink);
+
+	if (handled) {
+		safs::log_info("synthetic scan of disk {}: {} chunks registered, {} already known",
+		               disk->getPaths().c_str(), *totalInserted, *totalSkipped);
+	}
+
+	return handled;
+}
+
 /// Scans the Disk for new Chunks in bulks of 1000 Chunks
 void hddDiskScan(IDisk *disk, uint32_t beginTime) {
 	std::unique_lock uniqueLock(gDisksMutex);
@@ -2561,6 +2824,14 @@ void hddDiskScan(IDisk *disk, uint32_t beginTime) {
 	uniqueLock.unlock();
 
 	if (scanState == IDisk::ScanState::kTerminate) {
+		return;
+	}
+
+	if (hddScanSyntheticChunks(disk)) {
+		gHddSpaceChanged = true;  // report chunk count to master
+		safs::log_info("scanning disk {}: synthetic scan complete ({}s)", disk->getPaths().c_str(),
+		               static_cast<uint32_t>(time(nullptr)) - beginTime);
+		hddVerifyPresentChunkTypes();
 		return;
 	}
 
@@ -2668,8 +2939,6 @@ void hddDiskScanThread(IDisk *disk) {
 	TRACETHIS();
 	uint32_t beginTime = static_cast<uint32_t>(time(nullptr));
 
-	gScansInProgress++;
-
 	{
 		std::lock_guard disksLockGuard(gDisksMutex);
 		disk->refreshDataDiskUsage();
@@ -2682,7 +2951,11 @@ void hddDiskScanThread(IDisk *disk) {
 	}
 	hddDiskScan(disk, beginTime);
 	hddDiskRandomizeChunksForTests(disk);
-	gScansInProgress--;
+	gScansInProgress.fetch_sub(1, std::memory_order_release);
+
+	// Before taking gDisksMutex: this acquires gChunksMapMutex, and no other
+	// path holds the disks lock while waiting for the chunk map one.
+	hddVerifyPresentChunkTypes();
 
 	std::lock_guard disksLockGuard(gDisksMutex);
 
@@ -2817,6 +3090,11 @@ void hddTerminate(void) {
 	// other chunkserver modules' (that use chunk objects) cleanup functions
 	// were executed.
 	gChunksMap.clear();
+	gPresentChunkTypes.clear();
+	gRegistrationSweepState = {};
+	gScansInProgress.store(0, std::memory_order_relaxed);
+	gPullRegistrationSweepActive.store(false, std::memory_order_release);
+	hddDiscardNewChunks();
 	gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex);
 	gDisks.clear();
 	// Destroy the disks-to-be-deleted related structures

@@ -20,8 +20,12 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
+#include <mutex>
 #include <vector>
 
+#include "chunkserver-common/cmr_chunk.h"
+#include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/hddspacemgr.h"
 
@@ -29,11 +33,29 @@ namespace {
 
 class NewChunkReportQueueTests : public testing::Test {
 protected:
-	void SetUp() override { hddDiscardNewChunks(); }
-	void TearDown() override { hddDiscardNewChunks(); }
+	void SetUp() override {
+		hddDiscardNewChunks();
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		ASSERT_TRUE(gChunksMap.empty());
+		ASSERT_TRUE(gPresentChunkTypes.empty());
+	}
+	void TearDown() override {
+		hddDiscardNewChunks();
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		gChunksMap.clear();
+		gPresentChunkTypes.clear();
+	}
 
 	void enqueue(uint64_t id, bool fromDiskScan) {
 		const auto type = ChunkPartType();
+		{
+			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+			if (!gChunksMap.contains(makeChunkKey(id, type))) {
+				gChunksMap.emplace(makeChunkKey(id, type),
+				                   std::make_unique<CmrChunk>(id, type, ChunkState::Available));
+				hddNotePresentChunkType(type);
+			}
+		}
 		hddEnqueueChunkReport(ChunkWithVersionAndType(id, 1, type), fromDiskScan);
 	}
 };

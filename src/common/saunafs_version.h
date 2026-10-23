@@ -60,3 +60,5 @@ constexpr uint32_t kFirstVersionWithFusedCreate = saunafsVersion(5, 11, 0);
 constexpr uint32_t kFirstVersionWithMdsRegistry = saunafsVersion(5, 12, 0);
 /// Gates the identity exchange at registration, metadata server discovery and chunk probes.
 constexpr uint32_t kFirstVersionWithChunkserverIdentity = saunafsVersion(5, 13, 0);
+constexpr uint32_t kFirstVersionWithChunkLocationQuery = saunafsVersion(5, 13, 0);
+constexpr uint32_t kFirstVersionWithPullChunkRegistration = saunafsVersion(5, 13, 0);

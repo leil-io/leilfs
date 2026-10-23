@@ -24,9 +24,9 @@
 
 #include <sys/poll.h>
 #include <cstdint>
-#include <list>
 #include <memory>
 #include <optional>
+#include <queue>
 #include <string>
 #include <utility>
 
@@ -38,8 +38,9 @@
 #include "common/saunafs_version.h"
 #include "common/time_utils.h"
 #include "common/tls_session.h"
+#include "protocol/matocs.h"
 
-static constexpr uint32_t kMaxPacketSize = 10000;
+static constexpr uint32_t kMaxPacketSize = kMaxMasterToChunkserverPacketSize;
 static constexpr uint32_t kMaxBackgroundJobsCount = 1000;
 
 // Common variables from config
@@ -47,8 +48,18 @@ inline std::string gBindHostStr;
 inline std::string gLabel;
 inline uint32_t gTimeout_ms;
 
+/// CHUNK_REGISTRATION_START_TIMEOUT (seconds): how long a pull-capable
+/// chunkserver waits for SAU_MATOCS_REGISTER_CHUNKS_START before falling
+/// back to push registration on a fresh connection.
+inline uint32_t gPullRegistrationStartTimeout_s;
+
+/// CHUNK_REGISTRATION_FORCE_PUSH: skip the pull protocol entirely and always
+/// push the full chunk list (testability / emergency escape hatch).
+inline bool gForcePushRegistration;
+
 // Forward declaration
 class MasterJobPool;
+class MasterConnOutputQueueTests;
 
 /// @brief Enum representing the connection mode to the Metadata Server (MDS).
 enum class ConnectionMode : std::uint8_t {
@@ -64,6 +75,8 @@ enum class RegistrationStatus : std::uint8_t {
 	kUnregistered,           ///< Initial state, not registered yet.
 	kRegistrationRequested,  ///< Registration has been requested but not yet confirmed.
 	kHostRegistered,         ///< Registration has been confirmed.
+	kAwaitingPullStart,      ///< Waiting for the master to start pull registration.
+	kChunksRegistering,      ///< Master-driven (pull) chunk registration in progress.
 	kChunksRegistered,       ///< Chunks have been registered with the MDS.
 };
 
@@ -101,6 +114,11 @@ public:
 
 	void createAttachedPacket(MessageBuffer serializedPacket);
 
+	/// Enqueues a reply in the FIFO priority lane. The write loop finishes an
+	/// already partially transmitted packet first, then sends priority packets
+	/// ahead of the ordinary backlog (e.g. registration bulks).
+	void createAttachedPriorityPacket(MessageBuffer serializedPacket);
+
 	template <class... Data>
 	void createAttachedNoVersionPacket(PacketHeader::Type type, const Data &...data) {
 		std::vector<uint8_t> buffer;
@@ -135,6 +153,18 @@ public:
 	std::optional<MetadataClusterSnapshot> takeClusterSnapshot() {
 		return std::exchange(clusterSnapshot_, std::nullopt);
 	}
+
+	// Master-driven (pull) chunk registration
+
+	/// Handles SAU_MATOCS_REGISTER_CHUNKS_START: begins the pull sweep.
+	void onRegisterChunksStart(const std::vector<uint8_t> &data);
+
+	/// Handles SAU_MATOCS_REGISTER_CHUNKS_CREDIT: releases more bulks.
+	void onRegisterChunksCredit(const std::vector<uint8_t> &data);
+
+	/// Handles the pull-start timeout and retries sweeps deferred by locked chunks.
+	/// Called periodically from the event loop.
+	void checkPullRegistration();
 
 	int initConnect();
 
@@ -188,6 +218,11 @@ public:
 
 	void replicateChunk(const std::vector<uint8_t> &data);
 
+	/// Handles SAU_MATOCS_QUERY_CHUNKS: replies immediately (from the event
+	/// loop, in-memory lookup only) which of the queried chunks this
+	/// chunkserver hosts. See cstoma::queryChunksResponse.
+	void queryChunks(const std::vector<uint8_t> &data);
+
 	// Callbacks
 
 	static std::function<void(uint8_t status, void *packet)> sauJobFinished(MasterConn *masterConn);
@@ -233,6 +268,14 @@ public:
 	bool isRegistered() const {
 		return mode_ == ConnectionMode::CONNECTED &&
 		       registrationStatus_ == RegistrationStatus::kChunksRegistered;
+	}
+
+	/// These states have queued REGISTER_SPACE; ordinary updates may follow it.
+	bool canSendSpaceUpdates() const {
+		return mode_ == ConnectionMode::CONNECTED &&
+		       (registrationStatus_ == RegistrationStatus::kAwaitingPullStart ||
+		        registrationStatus_ == RegistrationStatus::kChunksRegistering ||
+		        registrationStatus_ == RegistrationStatus::kChunksRegistered);
 	}
 
 	void setMode(ConnectionMode newMode) {
@@ -287,9 +330,13 @@ public:
 
 	bool isTlsEnabled() const { return !tlsCertFile_.empty() && !tlsKeyFile_.empty(); }
 
-	bool isOutputQueueEmpty() const { return outputPackets_.empty(); }
+	bool isOutputQueueEmpty() const {
+		return outputPackets_.empty() && priorityOutputPackets_.empty();
+	}
 
 private:
+	std::queue<OutputPacket> &nextOutputPacketQueue();
+
 	std::string masterHostStr_;                  ///< Hostname of the master server.
 	std::string masterPortStr_;                  ///< Port of the master server.
 	uint32_t version_{saunafsVersion(0, 0, 0)};  ///< Version of the master server.
@@ -310,6 +357,28 @@ private:
 	uint32_t registrationAttempts_{0};  ///< Number of registration attempts.
 	bool isVersionLessThan5_{false};    ///< Indicates if the master server is an old version.
 
+	// Master-driven (pull) chunk registration
+
+	/// Sends the space/label/config registration tail.
+	void sendRegistrationTail();
+
+	/// Runs the old push registration (full sweep in one go).
+	void pushRegisterChunks();
+
+	/// Sends sweep bulks while pull credits remain; sends
+	/// SAU_CSTOMA_REGISTER_CHUNKS_END when the sweep completes.
+	void pumpPullRegistration();
+
+	uint32_t pullBulkSize_{0};    ///< Chunks per bulk, dictated by the master.
+	uint32_t pullCredits_{0};     ///< Bulks the master is ready to accept.
+	uint64_t pullChunksSent_{0};  ///< Chunks reported in this pull session.
+	/// Retry a timed-out START with one push registration, after closing the pull socket.
+	bool pushRegistrationOnReconnect_{false};
+	/// Expires while waiting for SAU_MATOCS_REGISTER_CHUNKS_START.
+	Timeout pullStartTimeout_{std::chrono::seconds(0)};
+	/// Limits rescans while waiting for locked chunks to become available.
+	Timeout pullSweepRetryTimeout_{std::chrono::seconds(0)};
+
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
 	/// Registration status to this MDS.
 	RegistrationStatus registrationStatus_{RegistrationStatus::kUnregistered};
@@ -322,7 +391,11 @@ private:
 	Timer lastRead_;                           ///< Time since the last read operation.
 	Timer lastWrite_;                          ///< Time since the last write operation.
 	InputPacket inputPacket_{kMaxPacketSize};  ///< Input buffer for reading data from the socket.
-	std::list<OutputPacket> outputPackets_;    ///< Output packets to be sent to the master.
+	std::queue<OutputPacket> outputPackets_;   ///< Output packets to be sent to the master.
+	std::queue<OutputPacket>
+	    priorityOutputPackets_;  ///< Priority replies to be sent to the master.
+	/// SSL_write retries must keep the same buffer even before bytesSent advances.
+	std::queue<OutputPacket> *tlsWriteRetryQueue_{nullptr};
 
 	NetworkAddress address_;            ///< Address of this master server (IP and port).
 	NetworkAddress bindHostAddress_;    ///< Address to bind the socket to (IP and port).
@@ -338,4 +411,6 @@ private:
 	std::string tlsKeyFile_;     ///< Path to the TLS private key file.
 	std::string tlsCaCertFile_;  ///< Path to the TLS CA certificate file.
 	int lastHandshakeError_{0};  ///< Last error code from TLS handshake.
+	friend class MasterConnOutputQueueTests;
+	friend class MasterConnSpaceReportTests;
 };

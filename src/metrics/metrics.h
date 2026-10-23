@@ -21,10 +21,12 @@
 #ifdef HAVE_PROMETHEUS
 #include <prometheus/counter.h>
 #include <prometheus/exposer.h>
-#include <prometheus/registry.h>
 #include <prometheus/family.h>
+#include <prometheus/gauge.h>
+#include <prometheus/registry.h>
 
 using CounterFamily = prometheus::Family<prometheus::Counter>;
+using GaugeFamily = prometheus::Family<prometheus::Gauge>;
 
 #endif
 
@@ -36,6 +38,11 @@ enum class Master : unsigned int {
 	KEY_START = 0,      // Used internally, has no effect
 	CHUNK_DELETE,       // Chunk deletion operations
 	CHUNK_REPLICATE,    // Chunk replication operations
+	CHUNK_REGISTRATION_PACED_START,    // Pull registration starts with pacing
+	CHUNK_REGISTRATION_UNPACED_START,  // Pull registration starts without pacing
+	CHUNK_LOCATION_QUERY_TIMEOUT,      // On-demand chunk-location queries timed out
+	CHUNK_LOCATION_QUERY_LIMIT_REJECTED,  // On-demand queries rejected by the cap
+	CHUNK_LOCATION_WAITER_LIMIT_REJECTED, // Deferred requests rejected by the cap
 	FS_STATFS,          // Filesystem STATFS operations
 	FS_GETATTR,         // Filesystem GETATTR operations
 	FS_SETATTR,         // Filesystem SETATTR operations
@@ -76,6 +83,37 @@ private:
 
 	template <typename T>
 	static void increment(T /*unused*/, double  /*unused*/= 1) {
+	}
+#endif
+};
+
+class Gauge {
+public:
+	enum class Master : unsigned int {
+		KEY_START = 0,                          // Used internally, has no effect
+		CHUNK_LOCATION_QUERY_PENDING,           // Pending on-demand chunk queries
+		CHUNK_LOCATION_QUERY_WAITERS,           // Deferred client operations
+		CHUNK_REGISTRATION_ACTIVE,              // Pull registrations in progress
+		CHUNK_REGISTRATION_BUDGET_UTILIZATION,  // Current budget-window fraction
+		KEY_END,                                // Used internally, has no effect
+	};
+
+#ifdef HAVE_PROMETHEUS
+	Gauge() : gauge_(nullptr) {};
+	Gauge(const prometheus::Labels &labels, GaugeFamily *family) :
+		gauge_(&family->Add(labels)) {};
+
+	template <typename T>
+	static void set(T key, double value);
+
+private:
+	prometheus::Gauge* gauge_;
+#else
+	// Dummy methods for packages without prometheus
+	explicit Gauge() = default;
+
+	template <typename T>
+	static void set(T /*unused*/, double /*unused*/) {
 	}
 #endif
 };
