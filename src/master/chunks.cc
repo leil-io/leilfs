@@ -1430,6 +1430,20 @@ void chunk_increase_version_operation(Chunk *chunk, bool needsLocking,
 	chunk_invalidate_stale_parts(chunk);
 }
 
+bool chunk_get_part_state(matocsserventry *server, uint64_t chunkId, ChunkPartType type,
+                          ChunkPartState &state) {
+	auto *chunk = chunk_find(chunkId);
+	if (chunk == nullptr) { return false; }
+	for (const auto &part : chunk->parts) {
+		if (part.server() == server && part.type == type) {
+			state = {chunk->version, part.version, part.is_valid(), part.is_busy(),
+			         part.is_todel()};
+			return true;
+		}
+	}
+	return false;
+}
+
 /// Share the rule for locking a part on its chunkserver so reply prediction and the lock
 /// operation cannot drift.
 static bool chunk_part_needs_side_lock(const ChunkPart &part) {
@@ -2423,6 +2437,11 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 			// therefore makes an older report out-of-order news rather than a
 			// correction.
 			if (new_version < c->version && part.version == c->version && part.is_valid()) {
+				// The version is stale, but a disk reload may have changed its flag.
+				// Ask for current state instead of trusting either stale field.
+				if (part.is_todel() != todel) {
+					matocsserv_refresh_chunk_disk_state(ptr, chunkid, chunkType);
+				}
 				return;
 			}
 
@@ -3722,6 +3741,16 @@ bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server) {
 	if (c == nullptr || server == nullptr) { return false; }
 	return std::any_of(c->parts.begin(), c->parts.end(), [&](const ChunkPart &part) {
 		return part.server() == server && part.is_valid() && part.version == c->version;
+	});
+}
+
+bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server,
+                                   ChunkPartType partType) {
+	Chunk *c = chunk_find(chunkid);
+	if (c == nullptr || server == nullptr) { return false; }
+	return std::any_of(c->parts.begin(), c->parts.end(), [&](const ChunkPart &part) {
+		return part.server() == server && part.type == partType && part.is_valid() &&
+		       part.version == c->version;
 	});
 }
 

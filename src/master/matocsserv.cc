@@ -36,6 +36,7 @@
 #include <ctime>
 #include <iterator>
 #include <list>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -121,8 +122,38 @@ constexpr uint32_t kSpacePktUsedTotal = 16;           // usedspace(8) + totalspa
 constexpr uint32_t kSpacePktWithToDelSpace = 32;      // + todelusedspace(8) + todeltotalspace(8)
 constexpr uint32_t kSpacePktWithCountsAndToDel = 40;  // + chunkscount(4) + todelchunkscount(4)
 
+// Record visits and part checks allowed per peer in one scheduler invocation.
+constexpr std::size_t kDiskStateRefreshPeerQuantum = 64;
+// Cooperative time budget shared by all peers in one refresh-processing invocation.
+constexpr auto kDiskStateRefreshTimeBudget = std::chrono::milliseconds(2);
+// Cooldown before querying again for pending parts omitted from a reply.
+constexpr auto kDiskStateRefreshRetryDelay = std::chrono::seconds(1);
+
+struct PendingDiskStateRefresh {
+	// Part types still needing a fresh disk-state report.
+	std::vector<ChunkPartType> parts;
+	// In-flight query generation; zero when no query is outstanding.
+	uint64_t generation{0};
+	// Reply timeout for the current in-flight query.
+	SteadyTimePoint deadline{};
+	// Earliest next query time after a reply omitted pending parts.
+	SteadyTimePoint notBefore{};
+	// Next part to validate when resuming a work-limited scheduler slice.
+	std::size_t nextPart{0};
+	// Previous/next IDs in this connection's circular pending queue.
+	// ID-based links remain valid when the owning map rehashes.
+	uint64_t previousPendingId{0};
+	uint64_t nextPendingId{0};
+};
+
+// Only the small active-peer list needs separately allocated stable positions.
+static std::list<matocsserventry *> gDiskStateRefreshServers;
+
 struct matocsserventry {
 	matocsserventry() : inputPacket(kMaxPacketSize) {}
+	~matocsserventry() {
+		if (diskStateRefreshPosition) { gDiskStateRefreshServers.erase(*diskStateRefreshPosition); }
+	}
 
 	ChunkserverConnectionMode mode;
 	int sock;
@@ -190,6 +221,20 @@ struct matocsserventry {
 	/// rather than everything the connection has ever carried.
 	bool registrationChunksSeen{false};
 
+	// Separate from client location queries and discarded with this connection.
+	std::unordered_map<uint64_t, PendingDiskStateRefresh> diskStateRefreshes;
+
+	// The map owns the circular queue; its emptiness determines whether head is valid.
+	uint64_t diskStateRefreshHead{0};
+
+	// Sent in deadline order, so timeouts never wait behind a large unsent backlog.
+	// At most 128 entries: ordered linear removal avoids per-record iterator storage.
+	std::vector<uint64_t> diskStateRefreshOutstanding;
+
+	// Tracks active-peer membership and enables O(1) removal on deactivation
+	// or disconnect. One handle per connection, not per pending chunk.
+	std::optional<std::list<matocsserventry *>::iterator> diskStateRefreshPosition;
+
 	static bool lessUsedAndLoaded(matocsserventry *first, matocsserventry *second) {
 		double first_load_penalty = gLoadFactorPenalty * (double)first->load_factor / 100.;
 		double second_load_penalty = gLoadFactorPenalty * (double)second->load_factor / 100.;
@@ -200,6 +245,58 @@ struct matocsserventry {
 		return first_usage < second_usage;
 	}
 };
+
+namespace matocsserv_test {
+
+matocsserventry *create_connection(csdbentry &entry, uint32_t version) {
+	auto server = std::make_unique<matocsserventry>();
+	server->mode = ChunkserverConnectionMode::CONNECTED;
+	server->sock = -1;
+	server->pdescpos = -1;
+	server->version = version;
+	server->timeout = kDefaultChunkserverTimeoutMs;
+	server->csdb = &entry;
+	server->registrationState.begin(false, version);
+	entry.eptr = server.release();
+	return entry.eptr;
+}
+
+void destroy_connection(matocsserventry *server) {
+	server->csdb->eptr = nullptr;
+	delete server;
+}
+
+std::vector<std::vector<uint8_t>> take_output_packets(matocsserventry *server) {
+	std::vector<std::vector<uint8_t>> packets;
+	for (auto &packet : server->outputPackets) { packets.push_back(std::move(packet.packet)); }
+	server->outputPackets.clear();
+	return packets;
+}
+
+void rehash_disk_state_refreshes(matocsserventry *server) {
+	server->diskStateRefreshes.rehash(server->diskStateRefreshes.bucket_count() * 2 + 1);
+}
+
+void fill_output_packets(matocsserventry *server) {
+	for (std::size_t count = 0; count < kDiskStateRefreshOutputLimit; ++count) {
+		server->outputPackets.emplace_back(PacketHeader{ANTOAN_NOP, 0});
+	}
+}
+
+void expire_disk_state_refresh(matocsserventry *server, uint64_t chunkId, SteadyTimePoint now) {
+	auto &refresh = server->diskStateRefreshes.at(chunkId);
+	refresh.deadline = now;
+	auto &outstanding = server->diskStateRefreshOutstanding;
+	const auto position = std::find(outstanding.begin(), outstanding.end(), chunkId);
+	sassert(position != outstanding.end());
+	std::rotate(outstanding.begin(), position, std::next(position));
+}
+
+std::size_t pending_disk_state_refreshes(const matocsserventry *server) {
+	return server->diskStateRefreshes.size();
+}
+
+}  // namespace matocsserv_test
 
 static std::list<std::unique_ptr<matocsserventry>> matocsservList;
 static int lsock;
@@ -1363,6 +1460,178 @@ static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr) {
 	       eptr->version >= kFirstVersionWithChunkLocationQuery;
 }
 
+void matocsserv_refresh_chunk_disk_state(matocsserventry *server, uint64_t chunkId,
+                                         ChunkPartType partType) {
+	if (!matocsserv_can_answer_chunk_queries(server)) {
+		// Old peers cannot refresh in place; their next inventory restores disk state.
+		if (server->mode == ChunkserverConnectionMode::CONNECTED) {
+			matocsserv_request_disconnect(server);
+		}
+		return;
+	}
+
+	auto [iter, inserted] = server->diskStateRefreshes.try_emplace(chunkId);
+	auto &refresh = iter->second;
+
+	if (inserted) {
+		if (server->diskStateRefreshes.size() == 1) {
+			server->diskStateRefreshHead = chunkId;
+			refresh.previousPendingId = refresh.nextPendingId = chunkId;
+		} else {
+			auto &head = server->diskStateRefreshes.at(server->diskStateRefreshHead);
+			auto &tail = server->diskStateRefreshes.at(head.previousPendingId);
+			refresh.previousPendingId = head.previousPendingId;
+			refresh.nextPendingId = server->diskStateRefreshHead;
+			tail.nextPendingId = chunkId;
+			head.previousPendingId = chunkId;
+		}
+		if (!server->diskStateRefreshPosition) {
+			server->diskStateRefreshPosition =
+			    gDiskStateRefreshServers.insert(gDiskStateRefreshServers.end(), server);
+		}
+	}
+
+	if (std::find(refresh.parts.begin(), refresh.parts.end(), partType) == refresh.parts.end()) {
+		refresh.parts.push_back(partType);
+	}
+}
+
+static void matocsserv_deactivate_disk_state_refreshes(matocsserventry *server) {
+	if (server->diskStateRefreshPosition) {
+		gDiskStateRefreshServers.erase(*server->diskStateRefreshPosition);
+		server->diskStateRefreshPosition.reset();
+	}
+}
+
+static void matocsserv_erase_disk_state_refresh(matocsserventry *server, uint64_t chunkId) {
+	auto iter = server->diskStateRefreshes.find(chunkId);
+	sassert(iter != server->diskStateRefreshes.end());
+	auto &refresh = iter->second;
+
+	// Unlink while the record and its neighbors are still in the map.
+	if (server->diskStateRefreshes.size() == 1) {
+		server->diskStateRefreshHead = 0;
+	} else {
+		auto &previous = server->diskStateRefreshes.at(refresh.previousPendingId);
+		auto &next = server->diskStateRefreshes.at(refresh.nextPendingId);
+		previous.nextPendingId = refresh.nextPendingId;
+		next.previousPendingId = refresh.previousPendingId;
+
+		if (server->diskStateRefreshHead == chunkId) {
+			server->diskStateRefreshHead = refresh.nextPendingId;
+		}
+	}
+
+	if (refresh.generation != 0) { std::erase(server->diskStateRefreshOutstanding, chunkId); }
+	server->diskStateRefreshes.erase(iter);
+
+	// An empty backlog no longer needs a turn in the active-peer scheduler.
+	if (server->diskStateRefreshes.empty()) { matocsserv_deactivate_disk_state_refreshes(server); }
+}
+
+// The clock budget is cooperative: a single registry lookup cannot be preempted.
+// The independent work budget makes the backlog bound deterministic and testable.
+std::size_t matocsserv_process_disk_state_refreshes(std::chrono::microseconds timeBudget,
+                                                    SteadyTimePoint now) {
+	ActiveLoopWatchdog watchdog(timeBudget);
+	watchdog.start();
+
+	std::size_t work = 0;
+	const auto exhausted = [&] {
+		return timeBudget <= std::chrono::microseconds::zero() ||
+		       work >= kDiskStateRefreshWorkLimit || watchdog.expired();
+	};
+
+	std::size_t serversLeft = gDiskStateRefreshServers.size();
+	while (serversLeft-- > 0 && !gDiskStateRefreshServers.empty() && !exhausted()) {
+		// Rotate first so a budget-limited invocation leaves the next peer at the front.
+		auto *server = gDiskStateRefreshServers.front();
+		gDiskStateRefreshServers.splice(gDiskStateRefreshServers.end(), gDiskStateRefreshServers,
+		                                *server->diskStateRefreshPosition);
+		++work;
+
+		if (!matocsserv_can_answer_chunk_queries(server)) {
+			matocsserv_deactivate_disk_state_refreshes(server);
+			continue;
+		}
+
+		// Check the earliest reply deadline before visiting a potentially large unsent backlog.
+		if (!server->diskStateRefreshOutstanding.empty()) {
+			const auto oldestId = server->diskStateRefreshOutstanding.front();
+			const auto &oldest = server->diskStateRefreshes.at(oldestId);
+			if (oldest.deadline <= now) {
+				matocsserv_request_disconnect(server);
+				matocsserv_deactivate_disk_state_refreshes(server);
+				continue;
+			}
+		}
+
+		std::vector<uint64_t> chunkIds;
+		uint64_t generation = 0;
+
+		const auto peerStart = work;
+		std::size_t recordsLeft = server->diskStateRefreshes.size();
+		const auto peerExhausted = [&] {
+			return exhausted() || work - peerStart >= kDiskStateRefreshPeerQuantum;
+		};
+
+		while (recordsLeft-- > 0 && !server->diskStateRefreshes.empty() && !peerExhausted()) {
+			// Advance before validation: the current record may be removed below.
+			const auto chunkId = server->diskStateRefreshHead;
+			auto &refresh = server->diskStateRefreshes.at(chunkId);
+			server->diskStateRefreshHead = refresh.nextPendingId;
+			++work;
+
+			// Resume part validation too: one ID can contain multiple EC part types.
+			while (refresh.nextPart < refresh.parts.size() && !peerExhausted()) {
+				++work;
+				if (chunk_server_holds_valid_part(chunkId, server,
+				                                  refresh.parts[refresh.nextPart])) {
+					++refresh.nextPart;
+				} else {
+					// Validate the replacement at the same index on the next iteration.
+					refresh.parts[refresh.nextPart] = refresh.parts.back();
+					refresh.parts.pop_back();
+				}
+			}
+
+			if (refresh.parts.empty()) {
+				matocsserv_erase_disk_state_refresh(server, chunkId);
+				continue;
+			}
+
+			if (refresh.nextPart != refresh.parts.size()) { continue; }
+			refresh.nextPart = 0;
+
+			// Keep waiting/retry records queued, and send only when the peer has capacity.
+			if (refresh.generation != 0 || refresh.notBefore > now) { continue; }
+			if (server->diskStateRefreshOutstanding.size() >= kDiskStateRefreshOutstandingLimit ||
+			    server->outputPackets.size() >= kDiskStateRefreshOutputLimit) {
+				continue;
+			}
+
+			if (generation == 0) { generation = matocsserv_new_chunk_query_generation(); }
+			refresh.generation = generation;
+			refresh.deadline = now + std::chrono::milliseconds(server->timeout);
+			server->diskStateRefreshOutstanding.push_back(chunkId);
+			chunkIds.push_back(chunkId);
+		}
+
+		// Serialize the selected IDs as this peer's query batch.
+		for (const auto &group : matocsserv_split_chunk_query_ids(chunkIds)) {
+			OutputPacket packet;
+			matocs::queryChunks::serialize(packet.packet, generation, group);
+			server->outputPackets.push_back(std::move(packet));
+		}
+	}
+
+	return work;
+}
+
+static void matocsserv_disk_state_refreshes_check() {
+	matocsserv_process_disk_state_refreshes(kDiskStateRefreshTimeBudget, SteadyClock::now());
+}
+
 std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
     const std::vector<uint64_t> &chunkIds) {
 	if (chunkIds.empty()) { return {}; }
@@ -1512,7 +1781,8 @@ void matocsserv_pending_chunk_queries_check() {
 	}
 }
 
-void matocsserv_sau_query_chunks_response(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+void matocsserv_sau_query_chunks_response(matocsserventry *eptr, const std::vector<uint8_t> &data,
+                                          SteadyTimePoint now) {
 	if (eptr->csdb == nullptr) {
 		safs::log_info(
 		    "SAU_CSTOMA_QUERY_CHUNKS_RESPONSE - possible for registered "
@@ -1527,11 +1797,39 @@ void matocsserv_sau_query_chunks_response(matocsserventry *eptr, const std::vect
 	std::vector<ChunkWithVersionAndType> foundChunks;
 	cstoma::queryChunksResponse::deserialize(data, generation, queriedChunkIds, foundChunks);
 
+	// Acknowledge only found parts; outstanding-ID removal scans at most 128 entries.
+	for (const auto &chunk : foundChunks) {
+		auto refreshIter = eptr->diskStateRefreshes.find(chunk.id);
+		if (refreshIter == eptr->diskStateRefreshes.end() || generation == 0 ||
+		    refreshIter->second.generation != generation) {
+			continue;
+		}
+		std::erase(refreshIter->second.parts, chunk.type);
+		refreshIter->second.nextPart = 0;
+		if (refreshIter->second.parts.empty()) {
+			matocsserv_erase_disk_state_refresh(eptr, chunk.id);
+		}
+	}
+
+	for (const auto chunkId : queriedChunkIds) {
+		auto refreshIter = eptr->diskStateRefreshes.find(chunkId);
+		if (refreshIter != eptr->diskStateRefreshes.end() && generation != 0 &&
+		    refreshIter->second.generation == generation) {
+			// Missing types may be locked, even if other parts of this chunk were found.
+			auto &refresh = refreshIter->second;
+			refresh.generation = 0;
+			refresh.nextPart = 0;
+			std::erase(eptr->diskStateRefreshOutstanding, chunkId);
+			refresh.notBefore = now + kDiskStateRefreshRetryDelay;
+		}
+	}
+
 	// generation identifies the query attempt used to account for replies, not
 	// the lifetime of the location fact. A late positive answer still describes
 	// a copy the chunkserver has and must be retained for the next attempt.
 	if (!foundChunks.empty()) {
 		// Register the found copies exactly like a registration bulk would.
+		// Clear matching refreshes first: an older, conflicting reply can enqueue another.
 		gChunkOperations->serverHasChunks(eptr, foundChunks);
 	}
 
@@ -2472,5 +2770,7 @@ int matocsserv_init() {
 	// maximum. The check returns immediately when nothing is pending.
 	eventloop_timeregister_ms(kPendingChunkQueriesCheckPeriod_ms,
 	                          matocsserv_pending_chunk_queries_check);
+	// Short continuations drain large backlogs without monopolizing an event-loop turn.
+	eventloop_timeregister_ms(10, matocsserv_disk_state_refreshes_check);
 	return 0;
 }
