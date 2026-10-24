@@ -1314,6 +1314,14 @@ saunafs_rebalancing_status() {
 		list-chunkservers | sort | awk '$2 == "'$SAUNAFS_VERSION'" {print $1":"$10,$3}'
 }
 
+# Prints the master's cluster-wide reconstructible-copy count, not EC part count.
+# An EC chunk with too few registered parts counts as zero, as if none were known.
+# Inspect per-file parts when testing partial registration.
+count_chunk_copies() {
+	get_value_from_dirinfo_and_admin_info \
+		"$(saunafs-admin info localhost "${saunafs_info_[matocl]}" 2>/dev/null)" "Chunk copies"
+}
+
 # Tells if the hdd configuration line is for a zoned disk
 function is_zoned_device() {
 	if [[ "${1}" = *zonefs* ]]; then
