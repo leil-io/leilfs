@@ -27,6 +27,7 @@
 #include "chunkserver-common/iostat.h"
 #include "chunkserver-common/open_chunk.h"
 #include "chunkserver-common/plugin_manager.h"
+#include "slogger/slogger.h"
 
 inline IndexedResourcePool<OpenChunk> gOpenChunks;
 
@@ -47,6 +48,52 @@ inline ChunkMap gChunksMap;
 /// Only guards access to gChunksMap.
 /// Chunk objects stored in the registry have their own separate locks.
 inline std::mutex gChunksMapMutex;
+
+/// Number of chunks per ChunkPartType currently present in gChunksMap.
+/// Maintained at every gChunksMap insert/erase, under gChunksMapMutex.
+/// Lets id-only lookups (e.g. the master's on-demand chunk-location query)
+/// probe one (id, type) key per hosted type instead of scanning the whole
+/// type space. In practice it holds a handful of entries.
+inline std::map<ChunkPartType, uint64_t> gPresentChunkTypes;
+
+/// Registers one more chunk of \p type. Call under gChunksMapMutex, next to
+/// the gChunksMap insert.
+inline void hddNotePresentChunkType(ChunkPartType type) { ++gPresentChunkTypes[type]; }
+
+/// Unregisters one chunk of \p type. Call under gChunksMapMutex, next to the
+/// gChunksMap erase.
+inline void hddForgetPresentChunkType(ChunkPartType type) {
+	auto typeIterator = gPresentChunkTypes.find(type);
+	if (typeIterator != gPresentChunkTypes.end() && --(typeIterator->second) == 0) {
+		gPresentChunkTypes.erase(typeIterator);
+	}
+}
+
+/// Logs and asserts if gPresentChunkTypes totals differ from gChunksMap.size().
+/// Detects missing type-count updates that can hide chunks from id-only queries.
+/// Acquires gChunksMapMutex; callers must not already hold it.
+inline void hddVerifyPresentChunkTypes() {
+	uint64_t countedChunks = 0;
+	uint64_t registrySize = 0;
+	// Captured in the same locked snapshot as the totals: reading it afterwards
+	// would race with the scan and worker threads mutating the index.
+	std::size_t typeCount = 0;
+	{
+		const std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		for (const auto &[type, count] : gPresentChunkTypes) { countedChunks += count; }
+		registrySize = gChunksMap.size();
+		typeCount = gPresentChunkTypes.size();
+	}
+
+	if (countedChunks != registrySize) {
+		safs::log_err(
+		    "gPresentChunkTypes out of sync with the chunk registry: {} chunks counted across {} "
+		    "types, {} chunks in the registry -- an insert or erase path is missing its "
+		    "hddNotePresentChunkType/hddForgetPresentChunkType call",
+		    countedChunks, typeCount, registrySize);
+		assert(false && "gPresentChunkTypes out of sync with gChunksMap");
+	}
+}
 
 inline const int kOpenRetryCount = 4;
 inline const int kOpenRetry_ms = 5;
