@@ -62,3 +62,4 @@ constexpr uint32_t kFirstVersionWithMdsRegistry = saunafsVersion(5, 12, 0);
 constexpr uint32_t kFirstVersionWithChunkserverIdentity = saunafsVersion(5, 13, 0);
 /// Gates the chunk lock that names the chunk version the part must hold.
 constexpr uint32_t kFirstVersionWithVersionedChunkLock = saunafsVersion(5, 13, 0);
+constexpr uint32_t kFirstVersionWithChunkLocationQuery = saunafsVersion(5, 13, 0);

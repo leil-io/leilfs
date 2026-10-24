@@ -401,6 +401,7 @@ void hddSendDataToMaster(IDisk *disk, SendDataToMasterMode mode) {
 		if (chunk->state() == ChunkState::Available) {
 			gOpenChunks.purge(chunk->metaFD());
 			chunk->owner()->chunks().remove(chunk);
+			hddForgetPresentChunkType(chunk->type());
 			gChunksMap.erase(chunkToKey(*chunk));
 		} else if (chunk->state() == ChunkState::Locked) {
 			// Some hdd worker is doing something with this chunk,
@@ -2625,6 +2626,7 @@ static bool hddScanSyntheticChunks(IDisk *disk) {
 				auto *chunk = disk->instantiateNewConcreteChunk(entry.id, entry.type);
 				passert(chunk);
 				gChunksMap.insert({key, std::unique_ptr<IChunk>(chunk)});
+				hddNotePresentChunkType(entry.type);
 				chunk->setVersion(entry.version);
 				disk->updateChunkAttributes(chunk, true);
 				disk->chunks().insert(chunk);
@@ -2670,6 +2672,7 @@ void hddDiskScan(IDisk *disk, uint32_t beginTime) {
 		gHddSpaceChanged = true;  // report chunk count to master
 		safs::log_info("scanning disk {}: synthetic scan complete ({}s)", disk->getPaths().c_str(),
 		               static_cast<uint32_t>(time(nullptr)) - beginTime);
+		hddVerifyPresentChunkTypes();
 		return;
 	}
 
@@ -2792,6 +2795,10 @@ void hddDiskScanThread(IDisk *disk) {
 	hddDiskScan(disk, beginTime);
 	hddDiskRandomizeChunksForTests(disk);
 	gScansInProgress--;
+
+	// Before taking gDisksMutex: this acquires gChunksMapMutex, and no other
+	// path holds the disks lock while waiting for the chunk map one.
+	hddVerifyPresentChunkTypes();
 
 	std::lock_guard disksLockGuard(gDisksMutex);
 
@@ -2926,6 +2933,7 @@ void hddTerminate(void) {
 	// other chunkserver modules' (that use chunk objects) cleanup functions
 	// were executed.
 	gChunksMap.clear();
+	gPresentChunkTypes.clear();
 	gOpenChunks.freeUnused(eventloop_time(), gChunksMapMutex);
 	gDisks.clear();
 	// Destroy the disks-to-be-deleted related structures
