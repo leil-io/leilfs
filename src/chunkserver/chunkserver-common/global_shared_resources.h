@@ -20,6 +20,9 @@
 
 #include "common/platform.h"
 
+#include <deque>
+#include <unordered_set>
+
 #include "chunkserver-common/chunk_map.h"
 #include "chunkserver-common/disk_interface.h"
 #include "chunkserver-common/disk_manager_interface.h"
@@ -48,6 +51,35 @@ inline ChunkMap gChunksMap;
 /// Only guards access to gChunksMap.
 /// Chunk objects stored in the registry have their own separate locks.
 inline std::mutex gChunksMapMutex;
+
+/// Pull-sweep cursor and outstanding keys. Guard every access with gChunksMapMutex.
+struct RegistrationSweepState {
+	bool active{false};
+	std::size_t bucket{0};
+	std::size_t bucketCount{0};
+	bool cursorDone{false};
+	std::deque<ChunkWithType> pending;
+	std::unordered_set<ChunkWithType, KeyOperations, KeyOperations> pendingKeys;
+
+	void enqueue(ChunkWithType key) {
+		if (pendingKeys.insert(key).second) { pending.push_back(key); }
+	}
+};
+
+inline RegistrationSweepState gRegistrationSweepState;
+
+/// Call after inserting or invalidating a registry entry, under gChunksMapMutex.
+inline void hddNoteChunkForRegistration(ChunkWithType key) {
+	auto &sweep = gRegistrationSweepState;
+	if (!sweep.active) { return; }
+	// Notice rehashes immediately, even if another resize precedes the next credit.
+	if (!sweep.cursorDone && sweep.bucketCount != gChunksMap.bucket_count()) {
+		sweep.bucketCount = gChunksMap.bucket_count();
+		sweep.bucket = 0;
+	}
+	// Only changes behind the cursor need extra tracking; do not copy the inventory.
+	if (sweep.cursorDone || gChunksMap.bucket(key) < sweep.bucket) { sweep.enqueue(key); }
+}
 
 /// Number of chunks per ChunkPartType currently present in gChunksMap.
 /// Maintained at every gChunksMap insert/erase, under gChunksMapMutex.
@@ -118,9 +150,10 @@ inline std::unique_ptr<IDiskManager> gDiskManager;
 /// Container to reuse free condition variables (guarded by `gChunksMapMutex`)
 inline std::vector<std::unique_ptr<CondVarWithWaitCount>> gFreeCondVars;
 
-/// Active Disks scans in progress.
-/// Note: theoretically it would return a false positive if scans haven't
-/// started yet, but it's a _very_ unlikely situation.
+/// Disk scans that have been scheduled and have not completed yet.
+///
+/// Count a scan before its worker starts so an empty registry cannot be
+/// mistaken for a completed startup scan.
 inline std::atomic_int gScansInProgress(0);
 
 inline std::atomic_bool gStatChunksAtDiskScan{true};
