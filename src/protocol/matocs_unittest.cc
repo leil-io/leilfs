@@ -159,6 +159,20 @@ TEST(MatocsCommunicationTests, ProbeChunk) {
 	SAUNAFS_VERIFY_INOUT_PAIR(chunkType);
 }
 
+TEST(MatocsCommunicationTests, MaintenanceFence) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, epoch, 0x1122334455667788, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(matocs::maintenanceFence::serialize(buffer, epochIn));
+
+	verifyHeader(buffer, SAU_MATOCS_MAINTENANCE_FENCE);
+	removeHeaderInPlace(buffer);
+	verifyVersion(buffer, matocs::maintenanceFence::kDefault);
+	ASSERT_NO_THROW(matocs::maintenanceFence::deserialize(buffer, epochOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(epoch);
+}
+
 TEST(MatocsCommunicationTests, SetVersionAndLock) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 87, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(uint32_t, chunkVersion, 52, 0);

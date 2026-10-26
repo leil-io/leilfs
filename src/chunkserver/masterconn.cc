@@ -210,9 +210,10 @@ std::function<void(uint8_t, void *)> masterconn_unwantedLockJobFinished(ChunkWit
 		// If there was an error while writing, which is passed to the callback as status, we want
 		// to remove the chunk itself and avoid registering it again with the master server, as it
 		// might contain broken data. To do that, we add a delete job to the job pool, which will be
-		// processed and will remove the chunk from the chunk server.
+		// processed and will remove the chunk from the chunk server. It is this server's own
+		// work, so a metadata server's maintenance fence never refuses it.
 		job_delete(*gJobPool, masterconn_jobDeleteAfterErrorFinished(chunkWithType), nullptr,
-		           chunkWithType.id, 0, chunkWithType.type, listenerId);
+		           chunkWithType.id, 0, chunkWithType.type, listenerId, MaintenanceFence::kOwnWork);
 	};
 }
 
@@ -299,6 +300,9 @@ void masterconn_close_connection(MasterJobPool &jobPool, MasterJobPool &replicat
 	jobPool.disableAndChangeCallbackAll(masterconn_unwantedjobfinished, listenerId);
 	jobPool.changeLockJobsCallback(masterconn_unwantedLockJobFinished, listenerId);
 	replicationJobPool.disableAndChangeCallbackAll(masterconn_unwantedjobfinished, listenerId);
+	// The jobs this socket leaves behind keep its stamp; its next socket fences anew.
+	if (const auto &fence = jobPool.maintenanceFence()) { fence->connectionClosed(listenerId); }
+	connection.forgetMaintenanceFence();
 	connection.closeSocketQuietly();
 	if (!connection.sendsInventory()) { connection.requeueUnsentReports(); }
 	connection.resetPackets();
@@ -340,6 +344,7 @@ void masterconn_serve_connection(MasterJobPool &jobPool, MasterJobPool &replicat
 		}
 	}
 
+	connection.sendPendingMaintenanceFenceAck();
 	connection.servePoll(descriptors);
 	if (connection.mode() == ConnectionMode::KILL) {
 		masterconn_close_connection(jobPool, replicationJobPool, connection, listenerId);
@@ -590,6 +595,11 @@ int masterconn_init_threads(void) {
 
 	safs::log_info("master connection: {} replication background workers created",
 	               gReplicationNumberOfWorkers);
+
+	// One fence for both pools: a replicate lives in one, a delete in the other.
+	auto maintenanceFence = std::make_shared<MaintenanceFence>();
+	gJobPool->setMaintenanceFence(maintenanceFence);
+	gReplicationJobPool->setMaintenanceFence(maintenanceFence);
 
 	return 0;
 }
