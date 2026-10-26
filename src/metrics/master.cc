@@ -39,6 +39,21 @@ Master::Master(std::shared_ptr<prometheus::Registry> &registry) {
 	chunkCounter= &setupFamily(
 		"metadata_chunk_operations_total",
 		"Number of chunk operations", registry);
+	chunkLocationQueryCounter = &setupFamily(
+		"metadata_chunk_location_query_total",
+		"Number of on-demand chunk-location queries by outcome", registry);
+	chunkRegistrationCounter = &setupFamily(
+		"metadata_chunk_registration_total",
+		"Number of master-driven chunk registrations by pacing mode", registry);
+	chunkLocationQueryGauge = &setupGaugeFamily(
+		"metadata_chunk_location_query_pending",
+		"On-demand chunk-location query work in progress", registry);
+	chunkRegistrationGauge = &setupGaugeFamily(
+		"metadata_chunk_registration_active",
+		"Pull chunk registrations in progress", registry);
+	chunkRegistrationBudgetGauge = &setupGaugeFamily(
+		"metadata_chunk_registration_budget_utilization_ratio",
+		"Current global chunk-registration budget utilisation ratio", registry);
 	// NOLINTEND(cppcoreguidelines-prefer-member-initializer)
 
 	// A very hacky way to allow compile time checking if metrics have been
@@ -59,6 +74,36 @@ Master::Master(std::shared_ptr<prometheus::Registry> &registry) {
 				Counter(
 					{{"chunk", "operations"}, {"operation", "replicate"}},
 					chunkCounter);
+			[[fallthrough]];
+		case Master::CHUNK_REGISTRATION_PACED_START:
+			masterCounters[static_cast<unsigned int>(Master::CHUNK_REGISTRATION_PACED_START)] =
+				Counter(
+					{{"registration", "pull"}, {"pacing", "paced"}},
+					chunkRegistrationCounter);
+			[[fallthrough]];
+		case Master::CHUNK_REGISTRATION_UNPACED_START:
+			masterCounters[static_cast<unsigned int>(Master::CHUNK_REGISTRATION_UNPACED_START)] =
+				Counter(
+					{{"registration", "pull"}, {"pacing", "unpaced"}},
+					chunkRegistrationCounter);
+			[[fallthrough]];
+		case Master::CHUNK_LOCATION_QUERY_TIMEOUT:
+			masterCounters[static_cast<unsigned int>(Master::CHUNK_LOCATION_QUERY_TIMEOUT)] =
+				Counter(
+					{{"query", "chunk_location"}, {"outcome", "timeout"}},
+					chunkLocationQueryCounter);
+			[[fallthrough]];
+		case Master::CHUNK_LOCATION_QUERY_LIMIT_REJECTED:
+			masterCounters[static_cast<unsigned int>(Master::CHUNK_LOCATION_QUERY_LIMIT_REJECTED)] =
+				Counter(
+					{{"query", "chunk_location"}, {"outcome", "limit"}},
+					chunkLocationQueryCounter);
+			[[fallthrough]];
+		case Master::CHUNK_LOCATION_WAITER_LIMIT_REJECTED:
+			masterCounters[static_cast<unsigned int>(Master::CHUNK_LOCATION_WAITER_LIMIT_REJECTED)] =
+				Counter(
+					{{"query", "chunk_location"}, {"outcome", "waiter_limit"}},
+					chunkLocationQueryCounter);
 			[[fallthrough]];
 		case Master::FS_STATFS:
 			masterCounters[static_cast<unsigned int>(Master::FS_STATFS)] =
@@ -180,6 +225,31 @@ Master::Master(std::shared_ptr<prometheus::Registry> &registry) {
 					byteClientCounter);
 			[[fallthrough]];
 		case Master::KEY_END:
+			break;
+	}
+
+	using MasterGauge = Gauge::Master;
+	MasterGauge gaugeStart = MasterGauge::KEY_START;
+	switch (gaugeStart) {
+		case MasterGauge::KEY_START:
+			[[fallthrough]];
+		case MasterGauge::CHUNK_LOCATION_QUERY_PENDING:
+			masterGauges[static_cast<unsigned int>(MasterGauge::CHUNK_LOCATION_QUERY_PENDING)] =
+				Gauge({{"state", "queries"}}, chunkLocationQueryGauge);
+			[[fallthrough]];
+		case MasterGauge::CHUNK_LOCATION_QUERY_WAITERS:
+			masterGauges[static_cast<unsigned int>(MasterGauge::CHUNK_LOCATION_QUERY_WAITERS)] =
+				Gauge({{"state", "waiters"}}, chunkLocationQueryGauge);
+			[[fallthrough]];
+		case MasterGauge::CHUNK_REGISTRATION_ACTIVE:
+			masterGauges[static_cast<unsigned int>(MasterGauge::CHUNK_REGISTRATION_ACTIVE)] =
+				Gauge(prometheus::Labels{}, chunkRegistrationGauge);
+			[[fallthrough]];
+		case MasterGauge::CHUNK_REGISTRATION_BUDGET_UTILIZATION:
+			masterGauges[static_cast<unsigned int>(MasterGauge::CHUNK_REGISTRATION_BUDGET_UTILIZATION)] =
+				Gauge(prometheus::Labels{}, chunkRegistrationBudgetGauge);
+			[[fallthrough]];
+		case MasterGauge::KEY_END:
 			break;
 	}
 	// clang-format on
