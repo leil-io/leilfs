@@ -105,3 +105,20 @@ function wait_for_chunk_health_measurement() {
 		'test "$(chunk_health_measurement_generation_ "${port}")" -ge "$((generation + 2))"' \
 		"${timeout}"
 }
+
+# count_registered_parts <path>
+# Prints registered copies or XOR/EC parts across all chunks in a file, or 0
+# if none. Safe to poll during registration because fileinfo uses the
+# non-deferring chunks-info path.
+function count_registered_parts() {
+	local path="${1}"
+	saunafs fileinfo "${path}" 2>/dev/null | awk '$1 == "copy" { parts++ } END { print parts + 0 }'
+}
+
+# Wait for the current process's pull inventory, not just advertised capacity.
+function wait_for_chunkserver_pull_registration() {
+	local id="$1" pid
+	pid=$(saunafs_chunkserver_daemon "$id" test | awk '/pid:/ { print $NF }')
+	assert_success test -n "$pid"
+	assert_eventually 'grep -Eq "chunkserver_${id}\[${pid}\].*master-driven chunk registration complete" "$ERROR_DIR/syslog.log"' '2 minutes'
+}

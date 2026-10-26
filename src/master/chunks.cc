@@ -1730,14 +1730,22 @@ uint8_t chunk_plan_change(uint64_t currentChunkId, uint32_t lockId, bool quotaEx
 		return SAUNAFS_ERROR_LOCKED;
 	}
 
-	// Check if the chunk is writable
-	if (!currentChunk->isWritable()) { return SAUNAFS_ERROR_CHUNKLOST; }
+	// Check if the chunk is writable. Report the chunk id along with the failure:
+	// the caller defers the request on the on-demand chunk-location query, which
+	// needs to know which chunk to ask the registering chunkservers about.
+	if (!currentChunk->isWritable()) {
+		plan.targetChunkId = currentChunkId;
+		return SAUNAFS_ERROR_CHUNKLOST;
+	}
 
 	// Check if the chunk would be safe to write with the desired redundancy level
 	ChunkCopiesCalculator calculator(currentChunk->getGoal());
 	for (auto &part : currentChunk->parts) { calculator.addPart(part.type, MediaLabel::kWildcard); }
 	calculator.evalRedundancyLevel();
-	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) { return SAUNAFS_ERROR_NOCHUNKSERVERS; }
+	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
+		plan.targetChunkId = currentChunkId;
+		return SAUNAFS_ERROR_NOCHUNKSERVERS;
+	}
 
 	return chunk_plan_file_change(
 	    currentChunk, quotaExceeded,
@@ -2421,6 +2429,25 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 			default:
 				break;
 			}
+
+			// A report can be older than reality. SAU_CSTOMA_CHUNK_NEW announcements
+			// carry the version captured when the disk scan first saw the chunk, and
+			// that queue is only drained once registration has completed, so a version
+			// change applied in between leaves the queued announcement stale by up to
+			// a whole registration window.
+			//
+			// A registration packet can also be overtaken by an on-demand query reply.
+			// The reply can start a version operation before the old packet arrives,
+			// leaving the part BUSY at the current version. The operation's terminal
+			// status is authoritative in that case: processing the old report would
+			// replace the operation-owned version and invalidate the part before that
+			// status is handled. A current-version valid part, including a BUSY one,
+			// therefore makes an older report out-of-order news rather than a
+			// correction.
+			if (new_version < c->version && part.version == c->version && part.is_valid()) {
+				return;
+			}
+
 			if (part.version != new_version) {
 				safs_pretty_syslog(LOG_WARNING, "chunk %016" PRIX64 ": master data indicated "
 						"version %08" PRIX32 ", chunkserver reports %08"
@@ -2472,7 +2499,7 @@ void chunk_damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunk_t
 			return;
 		}
 	}
-	c->parts.push_back(ChunkPart(server_csid, ChunkPart::INVALID, 0, slice_traits::standard::ChunkPartType()));
+	c->parts.push_back(ChunkPart(server_csid, ChunkPart::INVALID, 0, chunk_type));
 	c->updateStats();
 	c->needVersionIncrease = 1;
 }
@@ -2931,6 +2958,9 @@ uint32_t ChunkWorker::getMinChunkserverVersion(Chunk */*c*/, ChunkPartType /*typ
 
 bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 				matocsserventry *destination_server) {
+	// Rebalancing uses cached candidates too; recheck every background destination here.
+	if (!matocsserv_can_receive_replication(destination_server)) { return false; }
+
 	// TODO(msulikowski) Prefer VALID over TDVALID copies.
 	std::vector<matocsserventry *> standard_servers;
 	std::vector<matocsserventry *> all_servers;

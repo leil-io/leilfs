@@ -113,40 +113,50 @@ void masterconn_stats(uint64_t *bin, uint64_t *bout, uint32_t *maxjobscnt) {
 	stats_maxjobscnt = 0;
 }
 
-void masterconn_check_hdd_reports() {
-	const bool hasRegisteredConnection =
-	    std::any_of(gConnectionState.connections.begin(), gConnectionState.connections.end(),
-	                [](const auto &slot) {
-		                return slot.connection && !slot.retiring && slot.connection->isRegistered();
-	                });
-	if (!hasRegisteredConnection) { return; }
+void masterconn_report_space(MasterConnReconciliationState &state) {
+	const bool hasSpaceRecipient =
+	    std::any_of(state.connections.begin(), state.connections.end(), [](const auto &slot) {
+		    return slot.connection && !slot.retiring && slot.connection->canSendSpaceUpdates();
+	    });
+	if (!hasSpaceRecipient) { return; }
 
-	// Gather shared counters once, then send them to every registered peer.
+	// Keep changes pending until a peer can receive them, including during pull registration.
 	if (hddGetAndResetSpaceChanged()) {
 		uint64_t usedSpace, totalSpace, deletedUsedSpace, deletedTotalSpace;
 		uint32_t chunkCount, deletedChunkCount;
 		hddGetTotalSpace(&usedSpace, &totalSpace, &chunkCount, &deletedUsedSpace,
 		                 &deletedTotalSpace, &deletedChunkCount);
-		for (auto &slot : gConnectionState.connections) {
-			if (slot.connection && !slot.retiring && slot.connection->isRegistered()) {
+		for (auto &slot : state.connections) {
+			if (slot.connection && !slot.retiring && slot.connection->canSendSpaceUpdates()) {
 				slot.connection->createAttachedNoVersionPacket(
 				    CSTOMA_SPACE, usedSpace, totalSpace, chunkCount, deletedUsedSpace,
 				    deletedTotalSpace, deletedChunkCount);
 			}
 		}
 	}
+}
+
+void masterconn_check_hdd_reports(MasterConnReconciliationState &state) {
+	for (auto &slot : state.connections) {
+		if (slot.connection && !slot.retiring &&
+		    slot.connection->mode() == ConnectionMode::CONNECTED) {
+			slot.connection->checkPullRegistration();
+		}
+	}
+
+	masterconn_report_space(state);
 
 	// Only the configured connection consumes physical loss and damage reports.
-	MasterConn *eptr = configuredConnection();
+	MasterConn *eptr = state.connections.front().connection.get();
+	const auto chunkBulkSize = gChunkBulkSize.load(std::memory_order_relaxed);
 	uint32_t errorcounter;
-	if (eptr->isRegistered()) {
+	// REGISTER_SPACE is queued in these states, so negative reports may safely follow it.
+	if (eptr != nullptr && eptr->canSendSpaceUpdates()) {
 		errorcounter = hddGetAndResetErrorCounter();
 		while (errorcounter) {
 			eptr->createAttachedNoVersionPacket(CSTOMA_ERROR_OCCURRED);
 			errorcounter--;
 		}
-
-		const auto chunkBulkSize = gChunkBulkSize.load(std::memory_order_relaxed);
 
 		std::vector<ChunkWithType> chunks_with_type;
 		hddGetDamagedChunks(chunks_with_type, chunkBulkSize);
@@ -158,7 +168,9 @@ void masterconn_check_hdd_reports() {
 		if (!chunks_with_type.empty()) {
 			eptr->createAttachedPacket(cstoma::chunkLost::build(chunks_with_type));
 		}
+	}
 
+	if (eptr != nullptr && eptr->isRegistered()) {
 		if (eptr->sendsInventory()) {
 			std::vector<ChunkWithVersionAndType> chunks_with_version;
 			bool chunksFromScan = false;
@@ -179,6 +191,10 @@ void masterconn_check_hdd_reports() {
 			hddDiscardNewChunks();
 		}
 	}
+}
+
+void masterconn_check_hdd_reports() {
+	masterconn_check_hdd_reports(gConnectionState);
 }
 
 void masterconn_unwantedjobfinished(uint8_t status, void *packet) {
@@ -465,6 +481,13 @@ static uint32_t get_cfg_timeout() {
 	return 1000 * cfg_get_minmaxvalue<double>("MASTER_TIMEOUT", 60, 0.01, 1000 * 1000);
 }
 
+/// Reads the master-driven (pull) chunk registration configuration
+static void masterconn_load_pull_registration_cfg() {
+	gPullRegistrationStartTimeout_s =
+	    cfg_get_minvalue<uint32_t>("CHUNK_REGISTRATION_START_TIMEOUT", 10, 1);
+	gForcePushRegistration = cfg_getuint32("CHUNK_REGISTRATION_FORCE_PUSH", 0) != 0;
+}
+
 bool masterconn_load_label() {
 	std::string label = cfg_getstring("LABEL", MediaLabelManager::kWildcard);
 	if (!MediaLabelManager::isLabelValid(label)) {
@@ -484,6 +507,7 @@ void masterconn_reload(void) {
 	uint32_t bindIp = 0;
 	if (tcpresolve(gBindHostStr.c_str(), nullptr, &bindIp, nullptr, 1) < 0) { bindIp = 0; }
 	gTimeout_ms = get_cfg_timeout();
+	masterconn_load_pull_registration_cfg();
 	const bool labelChanged = masterconn_load_label();
 
 	// For each connection, reload the configuration and reconnect if needed.
@@ -519,6 +543,7 @@ int masterconn_init(void) {
 	gBindHostStr = cfg_getstring("BIND_HOST", "*");
 	gTimeout_ms = get_cfg_timeout();
 	gEnableLoadFactor = static_cast<bool>(cfg_getuint32("ENABLE_LOAD_FACTOR", 0));
+	masterconn_load_pull_registration_cfg();
 
 	if (!masterconn_load_label()) { return -1; }
 
