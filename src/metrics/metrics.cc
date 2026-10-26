@@ -102,6 +102,16 @@ void Counter::increment(T key, double n) {
 	if (counter.counter_ != nullptr) { counter.counter_->Increment(n); }
 }
 
+template <typename T>
+void Gauge::set(T key, double value) {
+	// Safe as all values are constructed at specific keys, however a check
+	// needs to be made whether the actual gauge initialized or not (for
+	// whatever reason)
+	auto gaugeKey = static_cast<unsigned int>(key);
+	auto gauge = gPrometheusMetrics.master.masterGauges[gaugeKey]; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+	if (gauge.gauge_ != nullptr) { gauge.gauge_->Set(value); }
+}
+
 void prometheusLoop(const std::stop_token& stop, const char* host) {
 	try {
 		// create an http server
@@ -126,3 +136,5 @@ void init(const char* host) {
 #endif
 template void metrics::Counter::increment<metrics::Counter::Master>
 	(metrics::Counter::Master key, double n);
+template void metrics::Gauge::set<metrics::Gauge::Master>
+	(metrics::Gauge::Master key, double value);

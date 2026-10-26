@@ -64,6 +64,9 @@ constexpr uint32_t kFirstVersionWithChunkserverIdentity = saunafsVersion(5, 13, 
 constexpr uint32_t kFirstVersionWithVersionedChunkLock = saunafsVersion(5, 13, 0);
 /// Gates the maintenance fence a metadata server sets on a chunkserver before it maintains.
 constexpr uint32_t kFirstVersionWithMaintenanceFence = saunafsVersion(5, 13, 0);
+/// Gates on-demand queries for chunk locations on chunkservers.
 constexpr uint32_t kFirstVersionWithChunkLocationQuery = saunafsVersion(5, 13, 0);
 /// Gates the list of metadata servers a mount may move its session to.
 constexpr uint32_t kFirstVersionWithClientFailover = saunafsVersion(5, 13, 0);
+/// Gates chunk registration driven by the master using START, CREDIT and END packets.
+constexpr uint32_t kFirstVersionWithPullChunkRegistration = saunafsVersion(5, 13, 0);

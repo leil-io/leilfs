@@ -245,6 +245,66 @@ chunkserver disk usage to determine most fitting chunkserver. Heavy loaded
 chunkservers will be picked for operations less frequently. (default is 0,
 correct values are in range from 0 to 0.5)
 
+*ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS*:: While chunkservers are still registering
+their chunks (e.g. right after this server became the active master), client
+operations on chunks without a known location are held back and the
+registering chunkservers are asked about those chunks on demand. This is the
+maximum time (in milliseconds) such an operation waits for the answers before
+it is completed with whatever is known at that point (default is 2000,
+minimum is 100)
+
+*ON_DEMAND_CHUNK_QUERY_LIMIT*:: Maximum number of chunk ids being resolved by
+on-demand chunk-location queries at the same time. When the limit is reached,
+further operations are answered immediately with the currently known
+locations, as if this mechanism was disabled. The master logs once per
+saturation episode and counts these rejections in
+metadata_chunk_location_query_total. Setting it to 0 disables on-demand
+queries entirely (default is 10000)
++
+For memory safety, at most 100000 client operations may be deferred across
+all on-demand queries. When this fixed cap is reached, new operations receive
+currently known locations; the master logs once per saturation episode and
+counts the rejections in metadata_chunk_location_query_total.
+
+*CHUNK_REGISTRATION_BULK_SIZE*:: Number of chunks per bulk this master
+dictates to chunkservers registering through the master-driven (pull)
+protocol (default is 1000, range 1..100000). Together with
+*CHUNK_REGISTRATION_WINDOW*, it can admit no more than 100000 chunks per
+chunkserver at a time.
+
+*CHUNK_REGISTRATION_WINDOW*:: Number of registration bulks a chunkserver may
+have in flight before waiting for this master's credit grants (default is 4,
+minimum is 1). Its effective value is capped so that
+CHUNK_REGISTRATION_WINDOW x CHUNK_REGISTRATION_BULK_SIZE never exceeds 100000;
+the master logs a warning when it clamps a configured value.
+
+*CHUNK_REGISTRATION_CHUNKS_PER_SECOND*:: Global chunk-registration ingest
+budget, in chunks per second, shared by all chunkservers registering through
+the pull protocol. Protects the master from a registration flood when many
+chunkservers reconnect at once (e.g. right after a failover). The default is a
+conservative starting point of 500000 chunks per second, not a throughput
+promise or a hardware-independent optimum. Setting it to 0 disables pacing.
+With that setting, the master logs a warning at startup and reload, and each
+unpaced registration is counted by the metadata_chunk_registration_total metric.
++
+The budget is a shared pool, not a per-server quota, and normally limits the
+rate at which registration work is admitted across all chunkservers. However,
+the opening window is handled differently: when the budget is unlimited, it
+is granted immediately rather than paced.
+With the default values, this allows 4000 chunks per chunkserver to be
+enqueued immediately, so N chunkservers reconnecting at once can enqueue
+N x 4000 chunks. A chunkserver sends each bulk only when it holds a credit;
+after the opening window the master grants one more each time it finishes
+processing a bulk. This bounds the work in flight to
+CHUNK_REGISTRATION_WINDOW x CHUNK_REGISTRATION_BULK_SIZE per chunkserver,
+capped at 100000 chunks.
+When a non-zero budget is configured, the opening window is also subject to
+the budget and is released at the configured rate, removing the initial burst.
+The default is shared across the whole cluster, not per chunkserver. Override
+it only after measuring registration throughput and client-operation latency in
+a representative environment. Avoid setting it too low, as registration after
+a failover can then take substantially longer.
+
 *PRIORITIZE_DATA_PARTS*:: When set, master server will prioritize data parts in
 EC goals to land in the chunkservers with higher percentage of available space.
 Could cause parities landing always in the same chunkservers if the cluster is
@@ -258,6 +318,11 @@ events loop. Smaller values could reduce latency at the cost of CPU usage
 *ENABLE_PROMETHEUS (EXPERIMENTAL)*:: Whether to enable Prometheus support and
 metric collection. Note that this requires compiling with Prometheus support.
 Set to either 1 to enable, or 0 to disable (default is 0)
++
+During chunk registration, the exported metrics include pending query ids and
+deferred client operations, active pull registrations, and the current
+registration-budget utilisation ratio. Query timeout and limit rejections are
+counted by metadata_chunk_location_query_total.
 
 *PROMETHEUS_HOST (EXPERIMENTAL)*:: Host address where Prometheus metric data
 can be collected, must be in the format of HOST:PORT (default 0.0.0.0:9499)
