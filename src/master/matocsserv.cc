@@ -813,14 +813,20 @@ void matocsserv_got_replicatechunk_status(matocsserventry *eptr, const std::vect
 	}
 }
 
-int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType,
-                              bool needsLock, bool &sentChunkLock) {
+int matocsserv_send_chunklock(matocsserventry *eptr, uint64_t chunkId, uint32_t chunkVersion,
+                              ChunkPartType chunkType, bool needsLock, bool &sentChunkLock) {
 	sentChunkLock = false;
 	if (eptr->mode != ChunkserverConnectionMode::KILL) {
 		sassert(eptr->version >= kFirstECVersion);
 		if (eptr->version >= kFirstVersionWithChunkserverSideChunkLock && needsLock) {
 			eptr->outputPackets.emplace_back();
-			matocs::chunkLock::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
+			if (gChunkOperations && gChunkOperations->sendsVersionedChunkLocks() &&
+			    eptr->version >= kFirstVersionWithVersionedChunkLock) {
+				matocs::chunkLock::serialize(eptr->outputPackets.back().packet, chunkId, chunkType,
+				                             chunkVersion);
+			} else {
+				matocs::chunkLock::serialize(eptr->outputPackets.back().packet, chunkId, chunkType);
+			}
 			sentChunkLock = true;
 		}
 		// For older chunkservers or if lock is not needed, we don't send chunk lock packet, as they

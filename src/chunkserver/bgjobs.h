@@ -29,6 +29,7 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <thread>
 #include <unordered_map>
@@ -82,6 +83,7 @@ public:
 		Create,             ///< Create a chunk. Master only.
 		Replicate,          ///< Replicate a chunk. Master only.
 		ProbeVersion,       ///< Read the stored version of a chunk. Master only.
+		Lock,               ///< Lock a chunk part held at a given version. Master only.
 		Open,               ///< Open a chunk for reading or writing. Client only.
 		Close,              ///< Close a chunk. Client only.
 		GetBlocks,          ///< Get the blocks of a chunk. Client (actually other CS) only.
@@ -324,6 +326,21 @@ public:
 		startWorkers();
 	}
 
+	/// What startChunkLock did with a lock request.
+	enum class LockStart : uint8_t {
+		kInstalled,  ///< A new lock, in place of an older lock of another metadata server if any.
+		kExisting,   ///< The requester's lock was there already: a retransmission.
+		kRefused,    ///< Another metadata server holds the lock at the same or a newer version.
+	};
+
+	/// Switches on the lock rules of metadata servers that share their chunks, once a connection
+	/// selected the identity protocol. There is no way back; until then every lock behaves as
+	/// under Master.
+	void enableIdentityMode() { identityMode_.store(true, std::memory_order_relaxed); }
+
+	/// @see enableIdentityMode
+	bool identityMode() const { return identityMode_.load(std::memory_order_relaxed); }
+
 	/// @brief Adds a job to the JobPool if the chunk is not locked.
 	/// If the chunk is locked, the job will be stored and added once the lock is released.
 	/// @param chunkWithType The chunk and its type associated with the job.
@@ -349,52 +366,99 @@ public:
 	/// listener. The chunk locks and their deferred jobs remain active, but their completions no
 	/// longer keep the retiring listener busy or reach a future connection in the same slot; they
 	/// are delivered through the stable listener like any other completion.
+	/// A lock requested on the listener before is refused (lockConnectionEpoch), so a lock job
+	/// that was still waiting for its part cannot leave a lock behind on it.
 	/// @param lockJobCallbackMaker Creates the connection-independent completion callback.
 	/// @param listenerId The listener whose lock jobs are moved.
 	/// @param callbackListenerId The stable listener that receives the lock jobs.
 	void detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMaker, uint32_t listenerId,
 	                    uint32_t callbackListenerId = 0);
 
+	/// @brief The epoch of a listener's connection, which changes whenever the connection closes
+	/// or retires (changeLockJobsCallback, detachLockJobs).
+	/// @param listenerId The listener whose epoch is read.
+	/// @return The epoch to pass to startChunkLock for a lock requested now.
+	uint32_t lockConnectionEpoch(uint32_t listenerId);
+
 	/// @brief Starts a chunk lock job for a specific chunk and type.
 	/// This function is triggered when the master server sends a chunk lock request for a chunk
 	/// that is not currently locked. It adds a lock job to the JobPool and associates it with the
-	/// locked chunk. If the chunk is already locked, it returns false and does not add a new job,
-	/// as the existing lock job will be responsible for handling the lock.
+	/// locked chunk. If the chunk is already locked, it adds no job, as the existing lock job will
+	/// be responsible for handling the lock.
+	/// In identity mode a lock keeps the metadata server that installed it and the version it was
+	/// taken at, and only a request of that server is a retransmission: a lock of another server
+	/// at a newer version replaces the existing one, which sends no notice and releases its
+	/// deferred jobs, and one at the same or an older version is refused.
 	/// @param callback The callback function to be called when the lock is released.
 	/// @param packet The packet to be sent to the master server with the write end status.
 	/// @param chunkId The ID of the chunk to be locked.
 	/// @param chunkType The type of the chunk to be locked.
+	/// @param ownerId The metadata server that asks for the lock.
+	/// @param chunkVersion The chunk version the lock is taken at.
 	/// @param listenerId The ID of the listener associated with the job.
-	/// @return true if the lock job was successfully added, false if the chunk is already locked.
-	bool startChunkLock(const JobPool::JobCallback &callback, void *packet, uint64_t chunkId,
-	                    ChunkPartType chunkType, uint32_t listenerId = 0);
+	/// @param connectionEpoch The listener's epoch when the lock was requested; a lock whose
+	/// connection closed since is refused, as one whose request was lost with the connection.
+	/// @return kInstalled when the lock job was added (the packet now belongs to it).
+	LockStart startChunkLock(const JobPool::JobCallback &callback, void *packet, uint64_t chunkId,
+	                         ChunkPartType chunkType, uint32_t ownerId, uint32_t chunkVersion,
+	                         uint32_t listenerId = 0,
+	                         std::optional<uint32_t> connectionEpoch = std::nullopt);
 
 	/// @brief Enforces a chunk lock for a specific chunk and type.
 	/// This function is called when the client sends a write initialization for a chunk that is
 	/// already locked, to ensure that the lock is properly enforced. From now on, the master
 	/// requests on the locked chunk will wait for the lock to be released before being processed.
+	/// In identity mode the session joins only a lock taken at its own chunk version.
 	/// @param chunkId The ID of the chunk to enforce the lock on.
 	/// @param chunkType The type of the chunk to enforce the lock on.
-	/// @return true if the lock was successfully enforced, false if no lock job was found for the
-	/// chunk.
-	bool enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType);
+	/// @param chunkVersion The chunk version of the write session.
+	/// @return The identity of the lock the session joined, 0 if it joined none.
+	uint64_t enforceChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion);
+
+	/// @brief Reserves the lock taken at a write session's chunk version, at its write init.
+	/// In identity mode the session joins a lock only once its open found the part at the
+	/// session's version; until then the reservation makes requests wait behind the lock.
+	/// @param chunkId The ID of the locked chunk.
+	/// @param chunkType The type of the locked chunk.
+	/// @param chunkVersion The chunk version of the write session.
+	/// @return The identity of the reserved lock, 0 if no lock was taken at that version.
+	uint64_t reserveChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion);
+
+	/// @brief Releases a reservation once the session's open checked the part's version.
+	/// Requests the reservation alone held back go ahead; a lock ended or replaced meanwhile
+	/// keeps nothing of it.
+	/// @param chunkId The ID of the locked chunk.
+	/// @param chunkType The type of the locked chunk.
+	/// @param lockIdentity The reserved lock (reserveChunkLock).
+	void releaseChunkLockReservation(uint64_t chunkId, ChunkPartType chunkType,
+	                                 uint64_t lockIdentity);
 
 	/// @brief Ends a chunk lock for a specific chunk and type.
 	/// This function is called when cleaning up the write operation on the locked chunk, to end the
 	/// lock and allow any pending jobs to be added and processed. It sends the write end status to
 	/// the master server and removes the lock job from the JobPool.
+	/// In identity mode only the lock the session joined is ended.
 	/// @param chunkId The ID of the chunk to end the lock on.
 	/// @param chunkType The type of the chunk to end the lock on.
 	/// @param status The status to be sent to the master server for the write end.
-	void endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint8_t status);
+	/// @param lockIdentity The lock the session joined (enforceChunkLock).
+	void endChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint8_t status,
+	                  uint64_t lockIdentity);
 
 	/// @brief Erases a chunk lock for a specific chunk and type.
 	/// This function is called when the master server sends a chunk unlock request for a chunk that
 	/// is currently locked. It removes the lock job from the JobPool and allows any pending jobs
 	/// that were waiting for the lock to be released to be added and processed.
+	/// In identity mode only a request of the metadata server that installed the lock erases it.
 	/// @param chunkId The ID of the chunk to erase the lock on.
 	/// @param chunkType The type of the chunk to erase the lock on.
-	void eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType);
+	/// @param ownerId The metadata server that asks for the unlock.
+	void eraseChunkLock(uint64_t chunkId, ChunkPartType chunkType, uint32_t ownerId);
+
+	/// In identity mode, moves the lock's version to @p newVersion when the metadata server that
+	/// installed it changed the part's version, so its next write session finds its lock.
+	void followChunkLockVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t ownerId,
+	                            uint32_t newVersion);
 
 private:
 	/// @brief Structure to hold information about a locked chunk.
@@ -405,6 +469,16 @@ private:
 		std::vector<AddJobFunc> pendingAddJobs;
 		/// Flag to indicate if the write initialization has been received for the locked chunk.
 		bool writeInitReceived = false;
+		/// Write sessions whose open has not checked the part's version yet; requests wait
+		/// behind them as behind a received write init.
+		uint32_t reservedOpens = 0;
+		/// The lock's own identity: lock job ids are per listener and change when the job is
+		/// detached, so they cannot tell two locks of a chunk apart.
+		uint64_t identity = 0;
+		/// The metadata server that installed the lock; kept when the lock job is detached.
+		uint32_t ownerId = 0;
+		/// The chunk version the lock was taken at.
+		uint32_t version = 0;
 
 		LockedChunkData(uint32_t lockJobId, uint32_t listenerId)
 		    : lockJobId(lockJobId), listenerId(listenerId) {}
@@ -430,15 +504,27 @@ private:
 	/// @param listenerId The ID of the listener associated with the lock job.
 	/// @param pendingAddJobs The list of pending jobs associated with the locked chunk.
 	/// @return true if the lock entry was found and released, false otherwise.
+	/// In identity mode, a lock another metadata server than @p ownerId installed, or another
+	/// lock than @p identity, is left in place.
 	bool releaseChunkLockEntry(uint64_t chunkId, ChunkPartType chunkType, const char *callerName,
+	                           std::optional<uint32_t> ownerId, std::optional<uint64_t> identity,
 	                           uint32_t &lockJobId, uint32_t &listenerId,
 	                           std::vector<AddJobFunc> &pendingAddJobs);
+
+	/// Removes a lock job and its unsent notice packet, without calling its callback.
+	void dropLockJob(uint32_t lockJobId, uint32_t listenerId);
 
 	/// Mutex to protect access to the chunkToJobReplyMap_.
 	std::mutex chunkToJobReplyMapMutex_;
 	/// Map to associate locked chunks with their corresponding lock job and pending jobs.
 	std::unordered_map<ChunkWithType, LockedChunkData, KeyOperations, KeyOperations>
 	    chunkToJobReplyMap_;
+	/// @see enableIdentityMode
+	std::atomic<bool> identityMode_{false};
+	/// The connection epoch of each listener; guarded by chunkToJobReplyMapMutex_.
+	std::array<uint32_t, kMaxMetadataConnections> lockConnectionEpochs_{};
+	/// The identity of the next installed lock; guarded by chunkToJobReplyMapMutex_.
+	uint64_t nextLockIdentity_{1};
 };
 
 /**
@@ -521,10 +607,13 @@ private:
 /// @param callback The callback function to be called upon job completion.
 /// @param chunkId The ID of the chunk.
 /// @param chunkType The type of the chunk.
+/// @param chunkVersion When set, the part opens only at this version (WRONGVERSION otherwise).
+/// @param atVersion Runs once the version matched, while the part is still held.
 /// @param listenerId The ID of the listener associated with the job.
 /// @return The ID of the added job.
 uint32_t job_open(ClientJobPool &jobPool, JobPool::JobCallback callback, uint64_t chunkId,
-                  ChunkPartType chunkType, uint32_t listenerId = 0);
+                  ChunkPartType chunkType, std::optional<uint32_t> chunkVersion,
+                  std::function<void()> atVersion, uint32_t listenerId = 0);
 
 /// @brief Adds a close job to the JobPool.
 ///
@@ -682,6 +771,15 @@ uint32_t job_version(MasterJobPool &jobPool, const JobPool::JobCallback &callbac
 uint32_t job_probe(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                    uint64_t chunkId, ChunkPartType chunkType, std::shared_ptr<uint32_t> version,
                    uint32_t listenerId = 0);
+
+/// @brief Adds a job that runs @p install while the chunk part is held at @p chunkVersion, so a
+/// lock is installed only on a part at the version it names. A part that is missing or at
+/// another version fails the job (NOCHUNK, WRONGVERSION) without running @p install.
+/// @param install Installs the lock and returns the status the lock request is answered with.
+/// @return The ID of the added job.
+uint32_t job_lock(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
+                  uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion,
+                  std::function<uint8_t()> install, uint32_t listenerId = 0);
 
 /// @brief Adds a truncate job to the JobPool.
 ///

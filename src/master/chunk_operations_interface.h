@@ -173,6 +173,10 @@ public:
 	/// A backend that records chunk locations by chunkserver identity needs it; the in-memory
 	/// registry keys copies by connection and does not.
 	virtual bool requestsChunkserverIdentity() const = 0;
+	/// Whether a chunk lock names the chunk version the part must hold, for chunkservers that
+	/// support it. A backend shared by several metadata servers needs it, so that a server's lock
+	/// on a part another server moved on is refused; the in-memory registry does not.
+	virtual bool sendsVersionedChunkLocks() const = 0;
 	/// Whether the backend feeds the maintenance loop bounded snapshots of its own records
 	/// instead of letting it walk the cached chunk table; the loop then drives maintenanceTick
 	/// and maintenanceStep.
@@ -216,6 +220,10 @@ public:
 	/// Every part answered the chunk's pending operation and the chunk is idle again. A backend
 	/// that keeps the part set outside memory publishes it here.
 	virtual void operationSettled(uint64_t chunkId) = 0;
+	/// Before an emergency version increase tells any part: a backend shared by several metadata
+	/// servers records @p newVersion as the chunk's version. False when this process no longer
+	/// holds the chunk; nothing may be sent, and the backend reset the cached chunk to its record.
+	virtual bool recordVersionIncrease(uint64_t chunkId, uint32_t newVersion) = 0;
 	/// A part of @p chunkId held by the disconnected chunkserver @p csid left memory. A backend
 	/// without a registration inventory restores it from its own records when the server returns.
 	virtual void copyDropped(uint64_t chunkId, uint16_t csid) = 0;

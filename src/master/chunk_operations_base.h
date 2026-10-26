@@ -101,6 +101,9 @@ public:
 	/// The in-memory registry keys copies by connection, so registration needs no identity.
 	/// @see IChunkOperations::requestsChunkserverIdentity
 	bool requestsChunkserverIdentity() const override { return false; }
+	/// Master is the only server of its chunks, so today's lock is enough.
+	/// @see IChunkOperations::sendsVersionedChunkLocks
+	bool sendsVersionedChunkLocks() const override { return false; }
 	/// The in-memory registry walks its own chunk table, so it needs no external maintenance.
 	/// @see IChunkOperations::usesExternalMaintenance
 	bool usesExternalMaintenance() const override { return false; }
@@ -142,6 +145,10 @@ public:
 	                    uint8_t /*status*/) override {}
 	/// The in-memory part set is already current when an operation settles.
 	void operationSettled(uint64_t /*chunkId*/) override {}
+	/// The in-memory registry is the only record; the increase goes ahead.
+	bool recordVersionIncrease(uint64_t /*chunkId*/, uint32_t /*newVersion*/) override {
+		return true;
+	}
 	/// Master learns returning copies from the chunkserver's registration inventory.
 	void copyDropped(uint64_t /*chunkId*/, uint16_t /*csid*/) override {}
 

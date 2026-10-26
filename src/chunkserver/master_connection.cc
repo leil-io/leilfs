@@ -54,6 +54,24 @@
 
 static constexpr uint32_t kMaxBackgroundJobsThreshold = (kMaxBackgroundJobsCount * 9) / 10;
 
+/// Locks a part for metadata server @p ownerId at @p chunkVersion, the notice of the write under
+/// the lock going through @p notice, and returns the status the lock request is answered with.
+static uint8_t installChunkLock(MasterJobPool &jobPool, const JobPool::JobCallback &notice,
+                                uint64_t chunkId, ChunkPartType chunkType, uint32_t ownerId,
+                                uint32_t chunkVersion, uint32_t listenerId,
+                                std::optional<uint32_t> connectionEpoch) {
+	auto *writeEndStatusOutputPacket = new OutputPacket;
+	cstoma::writeEndStatus::serialize(writeEndStatusOutputPacket->packet, chunkId, chunkType, 0);
+	const auto start =
+	    jobPool.startChunkLock(notice, writeEndStatusOutputPacket, chunkId, chunkType, ownerId,
+	                           chunkVersion, listenerId, connectionEpoch);
+	if (start == MasterJobPool::LockStart::kInstalled) { return SAUNAFS_STATUS_OK; }
+	// A lock job for this chunk and type is already in progress, or the request was refused, so
+	// the packet recently allocated for the job callback won't be used.
+	delete writeEndStatusOutputPacket;
+	return start == MasterJobPool::LockStart::kRefused ? SAUNAFS_ERROR_LOCKED : SAUNAFS_STATUS_OK;
+}
+
 MasterConn::~MasterConn() {
 	*callbackActive_ = false;
 	if (socketFD_ >= 0) { tcpclose(socketFD_); }
@@ -167,6 +185,7 @@ void MasterConn::sendChunkserverId(const std::vector<uint8_t> &data) {
 
 	createAttachedPacket(cstoma::chunkserverId::build(chunkserver::chunkserverId()));
 	setSendInventory(false);
+	if (jobPool_) { jobPool_->enableIdentityMode(); }
 }
 
 void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
@@ -258,6 +277,7 @@ void MasterConn::receiveClusterSnapshot(const std::vector<uint8_t> &data) {
 		}
 	}
 
+	seedId_ = snapshot.seedId;
 	clusterSnapshot_ = std::move(snapshot);
 }
 
@@ -764,8 +784,8 @@ void MasterConn::createAndLockChunk(const std::vector<uint8_t> &data) {
 	auto *outputPacket = new OutputPacket;
 	cstoma::createChunk::serialize(outputPacket->packet, chunkId, chunkType, SAUNAFS_STATUS_OK);
 	if (jobPool_) {
-		job_create(*jobPool_, sauJobFinishedAndLock(this, chunkId, chunkType), outputPacket,
-		           chunkId, chunkVersion, chunkType, listenerId_);
+		job_create(*jobPool_, sauJobFinishedAndLock(this, chunkId, chunkType, chunkVersion),
+		           outputPacket, chunkId, chunkVersion, chunkType, listenerId_);
 	} else {
 		safs::log_err("MasterConn::{}: jobPool is null.", __func__);
 		delete outputPacket;
@@ -820,8 +840,8 @@ void MasterConn::setChunkVersion(const std::vector<uint8_t> &data) {
 	auto *outputPacket = new OutputPacket;
 	cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
 	if (jobPool_) {
-		job_version(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType,
-		            newVersion, listenerId_);
+		job_version(*jobPool_, sauJobFinishedAndFollowLock(this, chunkId, chunkType, newVersion),
+		            outputPacket, chunkId, chunkVersion, chunkType, newVersion, listenerId_);
 	} else {
 		safs::log_err("MasterConn::setChunkVersion: jobPool is null.");
 		delete outputPacket;
@@ -838,8 +858,8 @@ void MasterConn::setChunkVersionAndLock(const std::vector<uint8_t> &data) {
 	auto *outputPacket = new OutputPacket;
 	cstoma::setVersion::serialize(outputPacket->packet, chunkId, chunkType, 0);
 	if (jobPool_) {
-		job_version(*jobPool_, sauJobFinishedAndLock(this, chunkId, chunkType), outputPacket,
-		            chunkId, chunkVersion, chunkType, newVersion, listenerId_);
+		job_version(*jobPool_, sauJobFinishedAndLock(this, chunkId, chunkType, newVersion),
+		            outputPacket, chunkId, chunkVersion, chunkType, newVersion, listenerId_);
 	} else {
 		safs::log_err("MasterConn::{}: jobPool is null.", __func__);
 		delete outputPacket;
@@ -848,28 +868,46 @@ void MasterConn::setChunkVersionAndLock(const std::vector<uint8_t> &data) {
 
 void MasterConn::lockChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId = 0;
+	uint32_t chunkVersion = 0;
 	ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
-	
-	matocs::chunkLock::deserialize(data, chunkId, chunkType);
 
-	auto *chunkLockOutputPacket = new OutputPacket;
-	auto *writeEndStatusOutputPacket = new OutputPacket;
-	cstoma::chunkLock::serialize(chunkLockOutputPacket->packet, chunkId, chunkType, 0);
-	cstoma::writeEndStatus::serialize(writeEndStatusOutputPacket->packet, chunkId, chunkType, 0);
-	if (jobPool_) {
-		bool createdNewLockJob = jobPool_->startChunkLock(
-		    sauJobFinished(this), writeEndStatusOutputPacket, chunkId, chunkType, listenerId_);
-		if (!createdNewLockJob) {
-			// A lock job for this chunk and type is already in progress, so we can free the output
-			// packet recently allocated for the job callback, as it won't be used.
-			delete writeEndStatusOutputPacket;
-		}
-
-		sauJobFinished(SAUNAFS_STATUS_OK, chunkLockOutputPacket);
+	// Today's lock names no version; a lock of the new kind names the version the part must hold
+	PacketVersion packetVersion = 0;
+	deserializePacketVersionNoHeader(data, packetVersion);
+	const bool versioned = packetVersion == matocs::chunkLock::kWithChunkVersion;
+	if (versioned) {
+		matocs::chunkLock::deserialize(data, chunkId, chunkType, chunkVersion);
 	} else {
+		matocs::chunkLock::deserialize(data, chunkId, chunkType);
+	}
+
+	// A request that cannot be served is answered at once
+	auto *chunkLockOutputPacket = new OutputPacket;
+	cstoma::chunkLock::serialize(chunkLockOutputPacket->packet, chunkId, chunkType, 0);
+	if (!jobPool_) {
 		safs::log_err("MasterConn::{}: jobPool is null.", __func__);
 		sauJobFinished(SAUNAFS_ERROR_NOTDONE, chunkLockOutputPacket);
-		delete writeEndStatusOutputPacket;
+		return;
+	}
+	const uint32_t ownerId = metadataServerId();
+	if (!lockOwnerKnown(chunkId, chunkType, ownerId)) {
+		sauJobFinished(SAUNAFS_ERROR_NOTDONE, chunkLockOutputPacket);
+		return;
+	}
+
+	// A lock of the new kind is installed in a pool job that holds the part, so the connection
+	// never waits behind a write; today's lock is installed here, as before
+	auto install = [jobPool = jobPool_, notice = sauJobFinished(this), chunkId, chunkType, ownerId,
+	                chunkVersion, listenerId = listenerId_,
+	                epoch = jobPool_->lockConnectionEpoch(listenerId_)]() -> uint8_t {
+		return installChunkLock(*jobPool, notice, chunkId, chunkType, ownerId, chunkVersion,
+		                        listenerId, epoch);
+	};
+	if (versioned) {
+		job_lock(*jobPool_, sauJobFinished(this), chunkLockOutputPacket, chunkId, chunkType,
+		         chunkVersion, std::move(install), listenerId_);
+	} else {
+		sauJobFinished(install(), chunkLockOutputPacket);
 	}
 }
 
@@ -879,7 +917,7 @@ void MasterConn::unlockChunk(const std::vector<uint8_t> &data) {
 	
 	matocs::chunkUnlock::deserialize(data, chunkId, chunkType);
 	if (jobPool_) {
-		jobPool_->eraseChunkLock(chunkId, chunkType);
+		jobPool_->eraseChunkLock(chunkId, chunkType, metadataServerId());
 	} else {
 		safs::log_err("MasterConn::{}: jobPool is null.", __func__);
 	}
@@ -913,9 +951,10 @@ void MasterConn::duplicateAndLockChunk(const std::vector<uint8_t> &data) {
 	auto *outputPacket = new OutputPacket;
 	cstoma::duplicateChunk::serialize(outputPacket->packet, newChunkId, chunkType, 0);
 	if (jobPool_) {
-		job_duplicate(*jobPool_, sauJobFinishedAndLock(this, newChunkId, chunkType), outputPacket,
-		              oldChunkId, oldChunkVersion, oldChunkVersion, chunkType, newChunkId,
-		              newChunkVersion, listenerId_);
+		job_duplicate(*jobPool_,
+		              sauJobFinishedAndLock(this, newChunkId, chunkType, newChunkVersion),
+		              outputPacket, oldChunkId, oldChunkVersion, oldChunkVersion, chunkType,
+		              newChunkId, newChunkVersion, listenerId_);
 	} else {
 		safs::log_err("MasterConn::{}: jobPool is null.", __func__);
 		delete outputPacket;
@@ -933,8 +972,9 @@ void MasterConn::truncateChunk(const std::vector<uint8_t> &data) {
 	auto *outputPacket = new OutputPacket;
 	cstoma::truncate::serialize(outputPacket->packet, chunkId, chunkType, 0);
 	if (jobPool_) {
-		job_truncate(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkType, version,
-		             newVersion, chunkLength, listenerId_);
+		job_truncate(*jobPool_, sauJobFinishedAndFollowLock(this, chunkId, chunkType, newVersion),
+		             outputPacket, chunkId, chunkType, version, newVersion, chunkLength,
+		             listenerId_);
 	} else {
 		safs::log_err("MasterConn::truncateChunk: jobPool is null.");
 		delete outputPacket;
@@ -995,33 +1035,59 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 // Callbacks
 
 std::function<void(uint8_t status, void *packet)> MasterConn::sauJobFinishedAndLock(
-    MasterConn *masterConn, uint64_t chunkId, ChunkPartType chunkType) {
-	return [masterConn, chunkId, chunkType, active = masterConn->callbackActive_](uint8_t status,
-	                                                                              void *packet) {
+    MasterConn *masterConn, uint64_t chunkId, ChunkPartType chunkType, uint32_t chunkVersion) {
+	return [masterConn, chunkId, chunkType, chunkVersion, ownerId = masterConn->metadataServerId(),
+	        active = masterConn->callbackActive_](uint8_t status, void *packet) {
 		if (!*active) {
 			deletePacket(packet);
 			return;
 		}
+
+		// After the original job is finished, the chunk lock is prepared; a refused lock fails
+		// the command, as its reply is sent only now. This runs on the requesting socket's thread,
+		// so that connection is still open.
+		if (status == SAUNAFS_STATUS_OK) {
+			auto &jobPool = *masterConn->jobPool_;
+			jobPool.followChunkLockVersion(chunkId, chunkType, ownerId, chunkVersion);
+			if (masterConn->lockOwnerKnown(chunkId, chunkType, ownerId)) {
+				status = installChunkLock(jobPool, masterConn->sauJobFinished(masterConn), chunkId,
+				                          chunkType, ownerId, chunkVersion, masterConn->listenerId_,
+				                          std::nullopt);
+			} else {
+				status = SAUNAFS_ERROR_NOTDONE;
+			}
+		}
 		// The original job's output packet is sent as the response to the master's request
 		masterConn->sauJobFinished(status, packet);
-
-		if (status != SAUNAFS_STATUS_OK) {
-			return;  // If the original job failed, do not prepare the chunk lock
-		}
-
-		// After the original job is finished, we need to prepare the chunk lock
-		auto *writeEndStatusOutputPacket = new OutputPacket;
-		cstoma::writeEndStatus::serialize(writeEndStatusOutputPacket->packet, chunkId, chunkType,
-		                                  status);
-		bool createdNewLockJob = masterConn->jobPool_->startChunkLock(
-		    masterConn->sauJobFinished(masterConn), writeEndStatusOutputPacket, chunkId, chunkType,
-		    masterConn->listenerId_);
-		if (!createdNewLockJob) {
-			// A lock job for this chunk and type is already in progress, so we can free the output
-			// packet recently allocated for the job callback, as it won't be used.
-			delete writeEndStatusOutputPacket;
-		}
 	};
+}
+
+std::function<void(uint8_t status, void *packet)> MasterConn::sauJobFinishedAndFollowLock(
+    MasterConn *masterConn, uint64_t chunkId, ChunkPartType chunkType, uint32_t newVersion) {
+	return [masterConn, chunkId, chunkType, newVersion, ownerId = masterConn->metadataServerId(),
+	        active = masterConn->callbackActive_](uint8_t status, void *packet) {
+		if (!*active) {
+			deletePacket(packet);
+			return;
+		}
+
+		// The requester's lock of the part, if it holds one, moves to the version just written
+		if (status == SAUNAFS_STATUS_OK) {
+			masterConn->jobPool_->followChunkLockVersion(chunkId, chunkType, ownerId, newVersion);
+		}
+		masterConn->sauJobFinished(status, packet);
+	};
+}
+
+bool MasterConn::lockOwnerKnown(uint64_t chunkId, ChunkPartType chunkType, uint32_t ownerId) {
+	// Under several metadata servers a lock names the one that installed it; the configured
+	// connection learns which server it reached from its discovery snapshot
+	if (!jobPool_->identityMode() || ownerId != 0) { return true; }
+	safs::log_warn(
+	    "chunk lock refused: chunkId {:016X}, chunkType {}: the metadata server of {} is not "
+	    "identified yet",
+	    chunkId, chunkType.toString(), address_.toString());
+	return false;
 }
 
 std::function<void(uint8_t status, void *packet)> MasterConn::sauJobFinished(

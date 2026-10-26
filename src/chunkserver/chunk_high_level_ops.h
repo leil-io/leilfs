@@ -23,6 +23,8 @@
 
 #include <cstdint>
 #include <list>
+#include <memory>
+#include <optional>
 
 #include "chunkserver/chunkserver_entry.h"
 #include "chunkserver/io_buffers.h"
@@ -379,7 +381,13 @@ protected:
 	bool isInputBufferFreezable() const;
 
 	/// Starts an open write job for the current chunk.
-	void startOpenWriteJob();
+	/// @param atSessionVersion Whether the part opens only at the session's version, the session
+	/// joining a lock at that version only then, while the open job holds the part.
+	void startOpenWriteJob(bool atSessionVersion);
+
+	/// Takes over the lock the open job joined, once the job has finished, and releases the
+	/// write init's reservation.
+	void adoptJoinedLock();
 
 	/// Starts the next write job: no write job is being processed and there is at least
 	/// one write data buffer waiting.
@@ -422,6 +430,12 @@ protected:
 	/// Indicates if the chunk is locked for writing. If true, master will be waiting for the lock
 	/// to be released when the write operation finishes.
 	bool isChunkLocked_ = false;
+	/// The lock the session joined; only that lock ends with the session.
+	uint64_t lockIdentity_ = 0;
+	/// The lock the open job joined, written by the worker and read once the job finished.
+	std::shared_ptr<uint64_t> joinedLock_;
+	/// The lock the write init reserved until the open job checked the part's version.
+	uint64_t reservedLock_ = 0;
 	/// Indicates if the write operation has ended from the client side, i.e all data has been
 	/// received and replied to.
 	bool isSealed_ = false;
@@ -484,7 +498,9 @@ private:
 /// @param chunkId ID of the chunk.
 /// @param chunkType Type of the chunk.
 /// @param untoldStatus Error status untold to the client, to be sent to the master.
+/// @param lockIdentity The lock the write session joined.
 /// @return A function to be used as a callback for closing a write operation.
 std::function<void(uint8_t status, void *packet)> jobCloseWriteCallback(uint64_t chunkId,
                                                                         ChunkPartType chunkType,
-                                                                        uint8_t untoldStatus);
+                                                                        uint8_t untoldStatus,
+                                                                        uint64_t lockIdentity);

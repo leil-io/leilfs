@@ -859,6 +859,14 @@ void chunk_increase_version_operation(Chunk *chunk, bool needsLocking,
 std::vector<ChunkMutationPlan::Part> chunk_valid_parts(Chunk *chunk);
 
 void chunk_emergency_increase_version(Chunk *c) {
+	// A backend shared by several metadata servers records the new version before any part is
+	// told. It refuses when another server took the chunk over: nothing is sent, since that
+	// server moves the parts itself, and a waiting client retries.
+	const uint8_t operation = c->operation;
+	if (gChunkOperations && !gChunkOperations->recordVersionIncrease(c->chunkid, c->version + 1)) {
+		if (operation != Chunk::NONE) { chunk_report_failed_operation(c->chunkid, operation); }
+		return;
+	}
 	chunk_increase_version_operation(c, false, chunk_valid_parts(c));
 	chunk_update_checksum(c);
 
@@ -1165,6 +1173,20 @@ void chunk_forget_parts_at_other_versions(uint64_t chunkid) {
 	chunk_update_checksum(chunk);
 }
 
+void chunk_reset_to_record(uint64_t chunkid, uint32_t version, uint32_t lockid, uint32_t lockedto) {
+	Chunk *chunk = chunk_find(chunkid);
+	if (chunk == nullptr) { return; }
+	chunk->parts.clear();
+	chunk->version = version;
+	chunk->lockid = lockid;
+	chunk->lockedto = lockedto;
+	chunk->operation = Chunk::NONE;
+	chunk->interrupted = 0;
+	chunk->needVersionIncrease = 0;
+	chunk->updateStats();
+	chunk_update_checksum(chunk);
+}
+
 bool chunk_needs_version_increase(uint64_t chunkid) {
 	Chunk *c = chunk_find(chunkid);
 	return c != nullptr && c->needVersionIncrease != 0;
@@ -1454,7 +1476,7 @@ void chunk_lock_operation(Chunk *chunk, bool lockParts,
 			if (part == nullptr || part->is_busy()) { continue; }
 
 			bool sentChunkLock = false;
-			matocsserv_send_chunklock(part->server(), chunk->chunkid, part->type,
+			matocsserv_send_chunklock(part->server(), chunk->chunkid, chunk->version, part->type,
 			                          chunk_part_needs_side_lock(*part), sentChunkLock);
 			if (sentChunkLock) {
 				part->mark_being_written();
