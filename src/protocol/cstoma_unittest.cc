@@ -178,6 +178,21 @@ TEST(CstomaCommunicationTests, ProbeChunk) {
 	SAUNAFS_VERIFY_INOUT_PAIR(status);
 }
 
+TEST(CstomaCommunicationTests, MaintenanceFence) {
+	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, epoch, 0x1122334455667788, 0);
+	SAUNAFS_DEFINE_INOUT_PAIR(uint8_t, status, 2, 0);
+
+	std::vector<uint8_t> buffer;
+	ASSERT_NO_THROW(cstoma::maintenanceFence::serialize(buffer, epochIn, statusIn));
+
+	verifyHeader(buffer, SAU_CSTOMA_MAINTENANCE_FENCE);
+	removeHeaderInPlace(buffer);
+	ASSERT_NO_THROW(cstoma::maintenanceFence::deserialize(buffer, epochOut, statusOut));
+
+	SAUNAFS_VERIFY_INOUT_PAIR(epoch);
+	SAUNAFS_VERIFY_INOUT_PAIR(status);
+}
+
 TEST(CstomaCommunicationTests, SetVersion) {
 	SAUNAFS_DEFINE_INOUT_PAIR(uint64_t, chunkId, 0xFFFFFFFFFFFFFFFF, 0);
 	SAUNAFS_DEFINE_INOUT_PAIR(ChunkPartType, chunkType, xor_p_of_3, standard);

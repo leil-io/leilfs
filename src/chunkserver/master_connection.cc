@@ -730,6 +730,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_REPLICATE_CHUNK:
 		replicateChunk(message);
 		break;
+	case SAU_MATOCS_MAINTENANCE_FENCE:
+		maintenanceFence(message);
+		break;
 	case SAU_MATOCS_TRUNCATE:
 		truncateChunk(message);
 		break;
@@ -800,6 +803,13 @@ void MasterConn::deleteChunk(const std::vector<uint8_t> &data) {
 	matocs::deleteChunk::deserialize(data, chunkId, chunkType, chunkVersion);
 	auto *outputPacket = new OutputPacket;
 	cstoma::deleteChunk::serialize(outputPacket->packet, chunkId, chunkType, 0);
+	if (maintenanceFenceRefuses()) {
+		safs::log_info(
+		    "delete of chunk {:016X} refused: another connection holds the maintenance fence",
+		    chunkId);
+		sauJobFinished(SAUNAFS_ERROR_NOTDONE, outputPacket);
+		return;
+	}
 	if (jobPool_) {
 		job_delete(*jobPool_, sauJobFinished(this), outputPacket, chunkId, chunkVersion, chunkType,
 		           listenerId_);
@@ -1017,7 +1027,12 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 	                                  chunkVersion);
 	safs::log_debug("cs.matocs.replicate {}", chunkId);
 
-	if (hddScansInProgress()) {
+	if (maintenanceFenceRefuses()) {
+		safs::log_info(
+		    "replication of chunk {:016X} refused: another connection holds the maintenance fence",
+		    chunkId);
+		sauJobFinished(SAUNAFS_ERROR_NOTDONE, outputPacket);
+	} else if (hddScansInProgress()) {
 		// Disk scan in progress - replication is not possible
 		sauJobFinished(SAUNAFS_ERROR_WAITING, outputPacket);
 	} else {
@@ -1030,6 +1045,58 @@ void MasterConn::replicateChunk(const std::vector<uint8_t> &data) {
 			delete outputPacket;
 		}
 	}
+}
+
+void MasterConn::maintenanceFence(const std::vector<uint8_t> &data) {
+	uint64_t epoch = 0;
+	matocs::maintenanceFence::deserialize(data, epoch);
+
+	// Only a metadata server that records copies by identity maintains behind a fence; a pool
+	// without one is a released configuration.
+	const auto fence = jobPool_ ? jobPool_->maintenanceFence() : nullptr;
+	if (!identityProtocolSelected() || !fence) {
+		createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_ERROR_ENOTSUP));
+		return;
+	}
+	if (!fence->fence(epoch, fence->stamp(listenerId_))) {
+		createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_ERROR_WRONGVERSION));
+		return;
+	}
+
+	// A pending older epoch of this connection is superseded by this one and answered so now, as
+	// when another connection's fence supersedes it; nothing else would answer it.
+	if (pendingFenceEpoch_ && *pendingFenceEpoch_ != epoch) {
+		createAttachedPacket(
+		    cstoma::maintenanceFence::build(*pendingFenceEpoch_, SAUNAFS_ERROR_WRONGVERSION));
+	}
+	// The ack waits for the replicate and delete jobs of other connections still running, so
+	// it leaves from the loop (sendPendingMaintenanceFenceAck), never from this handler.
+	pendingFenceEpoch_ = epoch;
+}
+
+void MasterConn::sendPendingMaintenanceFenceAck() {
+	if (!pendingFenceEpoch_ || mode_ != ConnectionMode::CONNECTED) { return; }
+	const auto &fence = jobPool_->maintenanceFence();
+	const MaintenanceFence::Stamp stamp = fence->stamp(listenerId_);
+	const uint64_t epoch = *pendingFenceEpoch_;
+
+	// A newer fence took the pair meanwhile: this one is answered as superseded. The pair's
+	// stamp is this connection's current one only while this connection holds the pair.
+	const auto pair = fence->pair();
+	if (!pair || pair->fenceEpoch != epoch || *pair != stamp) {
+		createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_ERROR_WRONGVERSION));
+		pendingFenceEpoch_.reset();
+		return;
+	}
+
+	if (fence->othersRunning(stamp)) { return; }
+	createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_STATUS_OK));
+	pendingFenceEpoch_.reset();
+}
+
+bool MasterConn::maintenanceFenceRefuses() const {
+	const auto fence = jobPool_ ? jobPool_->maintenanceFence() : nullptr;
+	return fence && !fence->admits(fence->stamp(listenerId_));
 }
 
 // Callbacks

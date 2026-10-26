@@ -20,8 +20,14 @@
 #include "errors/leil_error_codes.h"
 
 #include <sys/poll.h>
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <future>
+#include <latch>
+#include <memory>
 #include <thread>
+#include <vector>
 
 #include "common/slice_traits.h"
 
@@ -705,4 +711,222 @@ TEST(ChunkLockOwnershipTest, WithoutIdentityModeEveryLockBehavesAsUnderMaster) {
 	pool.followChunkLockVersion(kLockedChunk, chunkType, 0, 4);
 	pool.eraseChunkLock(kLockedChunk, chunkType, kServerB);
 	EXPECT_TRUE(pool.isListenerIdle(0));
+}
+
+namespace {
+
+/// Drains both listeners' completions until every status in @p statuses was reported.
+bool drainUntilReported(MasterJobPool &pool, std::vector<std::atomic<int> *> statuses) {
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (std::chrono::steady_clock::now() < deadline) {
+		pool.processCompletedJobs(0);
+		pool.processCompletedJobs(1);
+		if (std::all_of(statuses.begin(), statuses.end(),
+		                [](const auto *status) { return status->load() != -1; })) {
+			return true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	return false;
+}
+
+JobPool::JobCallback recordStatus() {
+	return
+	    [](uint8_t status, void *extra) { static_cast<std::atomic<int> *>(extra)->store(status); };
+}
+
+}  // namespace
+
+TEST(MaintenanceFenceTest, RefusesReplicateAndDeleteOfOtherConnectionsAtDequeue) {
+	auto fence = std::make_shared<MaintenanceFence>();
+	MasterJobPool pool("fence-dequeue", 1, 10);
+	pool.setMaintenanceFence(fence);
+	ASSERT_GE(pool.allocateListener(1), 0);
+	ASSERT_TRUE(fence->fence(1, fence->stamp(0)));
+	std::atomic<int> otherDelete{-1};
+	std::atomic<int> ownDelete{-1};
+	std::atomic<int> otherCreate{-1};
+	const auto noWork = []() -> uint8_t { return SAUNAFS_STATUS_OK; };
+
+	pool.addJob(JobPool::ChunkOperation::Delete, recordStatus(), &otherDelete, noWork, 1);
+	pool.addJob(JobPool::ChunkOperation::Delete, recordStatus(), &ownDelete, noWork, 0);
+	pool.addJob(JobPool::ChunkOperation::Create, recordStatus(), &otherCreate, noWork, 1);
+	ASSERT_TRUE(drainUntilReported(pool, {&otherDelete, &ownDelete, &otherCreate}));
+
+	// Only the fenced kinds of another connection are refused; the pair's own and every other
+	// kind run as before.
+	EXPECT_EQ(otherDelete.load(), SAUNAFS_ERROR_NOTDONE);
+	EXPECT_EQ(ownDelete.load(), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(otherCreate.load(), SAUNAFS_STATUS_OK);
+}
+
+TEST(MaintenanceFenceTest, ThisServersOwnDeleteIsNeverFenced) {
+	auto fence = std::make_shared<MaintenanceFence>();
+	MasterJobPool pool("fence-own-work", 1, 10);
+	pool.setMaintenanceFence(fence);
+	ASSERT_GE(pool.allocateListener(1), 0);
+	ASSERT_TRUE(fence->fence(1, fence->stamp(0)));
+	std::atomic<int> cleanup{-1};
+	std::atomic<int> maintenanceDelete{-1};
+	std::promise<void> started;
+	std::latch release{1};
+	const auto noWork = []() -> uint8_t { return SAUNAFS_STATUS_OK; };
+
+	// The cleanup of a failed write runs on another connection's listener while the pair holds
+	// the fence, and holds no fence acknowledgement while it runs. A refused job never starts.
+	pool.addJob(
+	    JobPool::ChunkOperation::Delete, recordStatus(), &cleanup,
+	    [&]() -> uint8_t {
+		    started.set_value();
+		    release.wait();
+		    return SAUNAFS_STATUS_OK;
+	    },
+	    1, MaintenanceFence::kOwnWork);
+	const bool ran =
+	    started.get_future().wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+	EXPECT_TRUE(ran);
+	if (ran) { EXPECT_FALSE(fence->othersRunning(fence->stamp(0))); }
+	release.count_down();
+
+	// A metadata server's delete on that listener is still refused.
+	pool.addJob(JobPool::ChunkOperation::Delete, recordStatus(), &maintenanceDelete, noWork, 1);
+	ASSERT_TRUE(drainUntilReported(pool, {&cleanup, &maintenanceDelete}));
+	EXPECT_EQ(cleanup.load(), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(maintenanceDelete.load(), SAUNAFS_ERROR_NOTDONE);
+}
+
+TEST(MaintenanceFenceTest, LaterEpochOnTheSameSocketWaitsForAndRefusesTheOlderJobs) {
+	auto fence = std::make_shared<MaintenanceFence>();
+	MasterJobPool pool("fence-reconnect", 1, 10);
+	pool.setMaintenanceFence(fence);
+	ASSERT_GE(pool.allocateListener(1), 0);
+	const ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	constexpr uint64_t kChunk = 78;
+	ASSERT_TRUE(fence->fence(1, fence->stamp(0)));
+	std::atomic<int> olderDelete{-1};
+	std::atomic<int> parkedDelete{-1};
+	std::atomic<int> lockNotice{-1};
+	std::latch started{1};
+	std::latch release{1};
+	const auto noWork = []() -> uint8_t { return SAUNAFS_STATUS_OK; };
+	pool.addJob(
+	    JobPool::ChunkOperation::Delete, recordStatus(), &olderDelete,
+	    [&]() -> uint8_t {
+		    started.count_down();
+		    release.wait();
+		    return SAUNAFS_STATUS_OK;
+	    },
+	    0);
+	started.wait();
+	EXPECT_FALSE(fence->othersRunning(fence->stamp(0)));
+	// A second delete of the same claim waits behind a write lock.
+	ASSERT_EQ(pool.startChunkLock(recordStatus(), &lockNotice, kChunk, chunkType, 1, 3, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t lockIdentity = pool.enforceChunkLock(kChunk, chunkType, 3);
+	ASSERT_NE(lockIdentity, 0U);
+	pool.addJobIfNotLocked({kChunk, chunkType}, JobPool::ChunkOperation::Delete, recordStatus(),
+	                       &parkedDelete, noWork, 0);
+
+	// A later claim on the same socket: the running job of the earlier claim holds the ack, the
+	// parked one is refused when the lock releases it, and a lower epoch is refused.
+	ASSERT_TRUE(fence->fence(2, fence->stamp(0)));
+	EXPECT_EQ(fence->pair(), std::make_optional(fence->stamp(0)));
+	EXPECT_TRUE(fence->othersRunning(fence->stamp(0)));
+	EXPECT_FALSE(fence->fence(1, fence->stamp(1)));
+	pool.endChunkLock(kChunk, chunkType, SAUNAFS_STATUS_OK, lockIdentity);
+	release.count_down();
+	ASSERT_TRUE(drainUntilReported(pool, {&olderDelete, &parkedDelete, &lockNotice}));
+	EXPECT_EQ(olderDelete.load(), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(parkedDelete.load(), SAUNAFS_ERROR_NOTDONE);
+	EXPECT_FALSE(fence->othersRunning(fence->stamp(0)));
+
+	// The same listener reconnects at the current epoch: its successor takes the pair.
+	fence->connectionClosed(0);
+	ASSERT_TRUE(fence->fence(2, fence->stamp(0)));
+	EXPECT_EQ(fence->pair(), std::make_optional(fence->stamp(0)));
+}
+
+TEST(MaintenanceFenceTest, AParkedDeleteStaysRefusedAcrossClaimsOnTheSameSocket) {
+	auto fence = std::make_shared<MaintenanceFence>();
+	MasterJobPool pool("fence-claims", 1, 10);
+	pool.setMaintenanceFence(fence);
+	ASSERT_GE(pool.allocateListener(1), 0);
+	const ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	constexpr uint64_t kChunk = 79;
+	std::atomic<int> lockNotice{-1};
+	std::atomic<int> parkedDelete{-1};
+	const auto noWork = []() -> uint8_t { return SAUNAFS_STATUS_OK; };
+
+	// Listener 1 holds the claim and parks a delete behind a write lock.
+	ASSERT_TRUE(fence->fence(1, fence->stamp(1)));
+	ASSERT_EQ(pool.startChunkLock(recordStatus(), &lockNotice, kChunk, chunkType, 1, 3, 1),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t lockIdentity = pool.enforceChunkLock(kChunk, chunkType, 3);
+	ASSERT_NE(lockIdentity, 0U);
+	pool.addJobIfNotLocked({kChunk, chunkType}, JobPool::ChunkOperation::Delete, recordStatus(),
+	                       &parkedDelete, noWork, 1);
+
+	// Listener 0 takes the claim, then listener 1 takes it back on its still-open socket; the
+	// delete parked under the first claim belongs to neither and is refused when released.
+	ASSERT_TRUE(fence->fence(2, fence->stamp(0)));
+	ASSERT_TRUE(fence->fence(3, fence->stamp(1)));
+	pool.endChunkLock(kChunk, chunkType, SAUNAFS_STATUS_OK, lockIdentity);
+	ASSERT_TRUE(drainUntilReported(pool, {&lockNotice, &parkedDelete}));
+	EXPECT_EQ(parkedDelete.load(), SAUNAFS_ERROR_NOTDONE);
+}
+
+TEST(MaintenanceFenceTest, OneEpochAdmitsOneLiveConnection) {
+	MaintenanceFence fence;
+	// Epoch 0 is no fence: the jobs received before any fence carry it.
+	EXPECT_FALSE(fence.fence(0, fence.stamp(0)));
+	EXPECT_FALSE(fence.pair().has_value());
+	ASSERT_TRUE(fence.fence(1, fence.stamp(0)));
+	// The paired connection again: a repeat. Another live connection at the same epoch: refused,
+	// or its jobs would come back after the paired one's ack.
+	EXPECT_TRUE(fence.fence(1, fence.stamp(0)));
+	EXPECT_FALSE(fence.fence(1, fence.stamp(1)));
+	EXPECT_EQ(fence.pair(), std::make_optional(fence.stamp(0)));
+	// The paired connection's successor on the same listener, once it closed: accepted.
+	fence.connectionClosed(0);
+	EXPECT_FALSE(fence.admits(fence.stamp(0)));
+	EXPECT_TRUE(fence.fence(1, fence.stamp(0)));
+	EXPECT_TRUE(fence.admits(fence.stamp(0)));
+	EXPECT_FALSE(fence.fence(0, fence.stamp(0)));
+
+	// The same server back on another listener after its paired connection closed: accepted, and
+	// the closed connection's jobs stay refused.
+	const auto closed = fence.stamp(0);
+	fence.connectionClosed(0);
+	EXPECT_TRUE(fence.fence(1, fence.stamp(1)));
+	EXPECT_EQ(fence.pair(), std::make_optional(fence.stamp(1)));
+	EXPECT_FALSE(fence.admits(closed));
+}
+
+TEST(MaintenanceFenceTest, ADeleteReleasedByAChunkLockKeepsTheStampItWasReceivedWith) {
+	auto fence = std::make_shared<MaintenanceFence>();
+	MasterJobPool pool("fence-lock", 1, 10);
+	pool.setMaintenanceFence(fence);
+	ASSERT_GE(pool.allocateListener(1), 0);
+	const ChunkPartType chunkType = slice_traits::standard::ChunkPartType();
+	constexpr uint64_t kChunk = 77;
+	std::atomic<int> lockNotice{-1};
+	std::atomic<int> deferredDelete{-1};
+	const auto noWork = []() -> uint8_t { return SAUNAFS_STATUS_OK; };
+
+	// A delete received on listener 1 waits behind a write lock.
+	ASSERT_EQ(pool.startChunkLock(recordStatus(), &lockNotice, kChunk, chunkType, 1, 3, 1),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t lockIdentity = pool.enforceChunkLock(kChunk, chunkType, 3);
+	ASSERT_NE(lockIdentity, 0U);
+	pool.addJobIfNotLocked({kChunk, chunkType}, JobPool::ChunkOperation::Delete, recordStatus(),
+	                       &deferredDelete, noWork, 1);
+	EXPECT_EQ(deferredDelete.load(), -1);
+
+	// Listener 1 reconnects and takes the fence; the lock ends and releases the delete, which
+	// still carries the stamp of the connection that sent it.
+	fence->connectionClosed(1);
+	ASSERT_TRUE(fence->fence(1, fence->stamp(1)));
+	pool.endChunkLock(kChunk, chunkType, SAUNAFS_STATUS_OK, lockIdentity);
+	ASSERT_TRUE(drainUntilReported(pool, {&lockNotice, &deferredDelete}));
+	EXPECT_EQ(deferredDelete.load(), SAUNAFS_ERROR_NOTDONE);
 }

@@ -327,8 +327,10 @@ void chunk_set_maintenance_enabled(bool enabled);
 /// Deletes the copies of in-memory chunks that no file references and that have no durable
 /// record (a create or copy-on-write attempt that never committed). Master's own loop does this
 /// in place; a backend that pages records instead calls it with a per-tick budget. Locked or busy
-/// chunks wait. Returns how many chunks were visited.
-size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64_t)> &hasRecord);
+/// chunks wait, and so does a copy on a server @p mayDelete refuses (default: every server).
+/// Returns how many chunks were visited.
+size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64_t)> &hasRecord,
+                                  const std::function<bool(matocsserventry *)> &mayDelete = {});
 /// True when memory holds a valid part of @p chunkid on @p server at the chunk's version, so a
 /// backend can skip re-verifying a copy this process itself created after the server returned.
 bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server);

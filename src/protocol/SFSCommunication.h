@@ -428,6 +428,19 @@ enum class SugidClearMode : uint8_t {
 /// version==0 chunkid:64 chunktype:16 chunkversion:32 status:8
 // Reply to SAU_MATOCS_PROBE_CHUNK; status NOCHUNK when the part is not stored.
 
+// 0x049C
+#define SAU_MATOCS_MAINTENANCE_FENCE (1000U + 180U)
+/// version==0 epoch:64
+// A metadata server that records copies by identity names the maintenance epoch it runs: from
+// now on the chunkserver runs replicate and delete commands of this connection only, and answers
+// once no such command of an earlier connection is still running.
+
+// 0x049D
+#define SAU_CSTOMA_MAINTENANCE_FENCE (1000U + 181U)
+/// version==0 epoch:64 status:8
+// Reply to SAU_MATOCS_MAINTENANCE_FENCE; status OK once no replicate or delete of an earlier
+// connection can still act, ENOTSUP without identity, WRONGVERSION for an epoch already passed.
+
 // 0x044D
 #define SAU_CSTOMA_REGISTER_CHUNKS (1000U + 101U)
 /// version==0 chunks:(N * [chunkid:64 chunkversion:32 chunktype:8])
