@@ -125,12 +125,14 @@ int CmrDisk::updateChunkAttributes(IChunk *chunk, bool isFromScan) {
 
 	struct stat metaStat {};
 	if (::stat(chunk->fullMetaFilename().c_str(), &metaStat) < 0) {
-		safs::log_err("CmrDisk::updateChunkAttributes: could not access chunk metadata: chunk->metaFilename ({}), strerror ({})",
-				chunk->fullMetaFilename(), strerror(errno));
+		const int err = errno;
+		safs::log_err(
+		    "CmrDisk::updateChunkAttributes: could not access chunk metadata: chunk->metaFilename ({}), strerror ({})",
+		    chunk->fullMetaFilename(), strerror(err));
+		errno = err;  // Kept for the caller to record
 		// Only a confirmed-gone file is NOCHUNK; other errno values
 		// (EMFILE, EINTR, EIO...) must not delete a healthy chunk.
-		return (errno == ENOENT || errno == ENOTDIR) ? SAUNAFS_ERROR_NOCHUNK
-		                                             : SAUNAFS_ERROR_IO;
+		return (err == ENOENT || err == ENOTDIR) ? SAUNAFS_ERROR_NOCHUNK : SAUNAFS_ERROR_IO;
 	}
 	if (!S_ISREG(metaStat.st_mode)) {
 		safs::log_critical("CmrDisk::updateChunkAttributes: chunk metadata file not a regular file: metaFilename ({})",
@@ -140,10 +142,11 @@ int CmrDisk::updateChunkAttributes(IChunk *chunk, bool isFromScan) {
 
 	struct stat dataStat {};
 	if (::stat(chunk->fullDataFilename().c_str(), &dataStat) < 0) {
+		const int err = errno;
 		safs::log_err("CmrDisk::updateChunkAttributes: could not access chunk data {}: {}",
-				chunk->fullDataFilename(), strerror(errno));
-		return (errno == ENOENT || errno == ENOTDIR) ? SAUNAFS_ERROR_NOCHUNK
-		                                             : SAUNAFS_ERROR_IO;
+		              chunk->fullDataFilename(), strerror(err));
+		errno = err;  // Kept for the caller to record
+		return (err == ENOENT || err == ENOTDIR) ? SAUNAFS_ERROR_NOCHUNK : SAUNAFS_ERROR_IO;
 	}
 	if ((dataStat.st_mode & S_IFMT) != S_IFREG) {
 		safs::log_critical("CmrDisk::updateChunkAttributes: chunk data file not a regular file: dataFilename ({})",

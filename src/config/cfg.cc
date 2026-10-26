@@ -25,6 +25,7 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <unordered_map>
 #include <yaml-cpp/yaml.h>
@@ -35,14 +36,17 @@ static char *cfgfname;
 static std::map<std::string, std::string> configParameters;
 static int logundefined=0;
 
+static int cfg_do_load(std::map<std::string, std::string> &parameters);
+
 int cfg_reload(void) {
-	int lu = logundefined;
-	std::string configfname(cfgfname);
-	cfg_term();
-	return cfg_load(configfname.c_str(), lu);
+	// Keep the values in use unless the file is read whole.
+	std::map<std::string, std::string> reloaded;
+	const int status = cfg_do_load(reloaded);
+	if (status == 0) { configParameters = std::move(reloaded); }
+	return status;
 }
 
-static int cfg_do_load(void) {
+static int cfg_do_load(std::map<std::string, std::string> &parameters) {
 	constexpr size_t MAX_LINE_LEN = 1000;
 	char linebuff[MAX_LINE_LEN];
 	uint32_t nps, npe, vps, vpe, i;
@@ -94,13 +98,17 @@ static int cfg_do_load(void) {
 		try {
 			std::string key(linebuff + nps, linebuff + npe);
 			std::string value(linebuff + vps, linebuff + vpe);
-			configParameters[key] = value;
+			parameters[key] = value;
 		} catch (const std::exception& e) {
 			safs_pretty_syslog(LOG_ERR, "could not set config file %s values in key map: %s", cfgfname, e.what());
 			fclose(fd);
-			cfg_term();
 			return -1;
 		}
+	}
+	if (ferror(fd)) {
+		safs_silent_syslog(LOG_ERR, "can't read config file: %s", cfgfname);
+		fclose(fd);
+		return -1;
 	}
 	fclose(fd);
 	return 0;
@@ -108,9 +116,16 @@ static int cfg_do_load(void) {
 
 int cfg_load(const char *configfname,int _lu) {
 	logundefined = _lu;
-	cfgfname = strdup(configfname);
+	free(cfgfname);
+	// Absolute: the daemons change directory after loading.
+	std::error_code error;
+	const auto path = std::filesystem::absolute(configfname, error);
+	cfgfname = strdup(error ? configfname : path.c_str());
 
-	return cfg_do_load();
+	configParameters.clear();
+	const int status = cfg_do_load(configParameters);
+	if (status < 0) { configParameters.clear(); }
+	return status;
 }
 
 std::string cfg_filename() {
@@ -124,6 +139,7 @@ int cfg_isdefined(const char *name) {
 void cfg_term(void) {
 	configParameters.clear();
 	free(cfgfname);
+	cfgfname = nullptr;
 }
 
 // Helper function to setup an initial YAML map of maps for a particular
@@ -230,15 +246,15 @@ int64_t cfg_parse_size(const std::string &str) {
 	    {"ei", 1152921504606846976.0},
 	    {"eib", 1152921504606846976.0}};
 
-	static constexpr double kMaxValue = 18446744073709551615.0;
-
 	auto cleanStr = trimSpaces(str);
 	size_t numberEndPosition = 0;
 	double value = kInvalidConversion;
 
 	try {
 		value = std::stod(cleanStr, &numberEndPosition);
-	} catch (const std::invalid_argument &e) { return kInvalidConversion; }
+	} catch (const std::invalid_argument &e) {
+		return kInvalidConversion;
+	} catch (const std::out_of_range &e) { return kInvalidConversion; }
 
 	if (numberEndPosition < cleanStr.size()) {
 		// Remove leading and trailing spaces
@@ -256,9 +272,12 @@ int64_t cfg_parse_size(const std::string &str) {
 		}
 	}
 
-	if (value > kMaxValue) { return kInvalidConversion; }
+	// Only [0, 2^63) converts; check the sign before -0.25 rounds to -0.
+	if (!(value >= 0)) { return kInvalidConversion; }
+	value = std::round(value);
+	if (!(value < 0x1p63)) { return kInvalidConversion; }
 
-	return static_cast<int64_t>(std::round(value));
+	return static_cast<int64_t>(value);
 }
 
 #define STR_TO_int(x) return strtol(x,NULL,0)
