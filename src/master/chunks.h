@@ -122,6 +122,18 @@ uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet);
 #ifdef METARESTORE
 void chunk_dump(void);
 #else
+struct ChunkPartState {
+	uint32_t chunkVersion{};
+	uint32_t partVersion{};
+	bool valid{};
+	bool busy{};
+	bool todel{};
+};
+
+/// Reads a known part's version and flags; false if the chunk or part is absent.
+bool chunk_get_part_state(matocsserventry *server, uint64_t chunkId, ChunkPartType type,
+                          ChunkPartState &state);
+
 /// One stored part named by its chunkserver, the currency between a backend that keeps
 /// locations outside memory and the in-memory chunk table. The csdbentry outlives connections,
 /// so a location stays valid across a reconnect; its eptr says whether the server is live.
@@ -332,6 +344,9 @@ size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64
 /// True when memory holds a valid part of @p chunkid on @p server at the chunk's version, so a
 /// backend can skip re-verifying a copy this process itself created after the server returned.
 bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server);
+/// The same check for one specific part, including operation-owned BUSY copies.
+bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server,
+                                   ChunkPartType partType);
 
 /// Ticks of chunk_jobs_main that one pass over the in-memory chunk table takes, derived from the
 /// hash size and the configured steps per tick; a backend paging its own records paces itself

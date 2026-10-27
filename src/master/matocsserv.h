@@ -22,6 +22,7 @@
 
 #include "common/platform.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -186,6 +187,39 @@ void matocsserv_test_connection_free(matocsserventry *eptr);
 /// @return True to defer the client reply until matoclserv_chunk_locations_resolved()
 /// runs after all answers or timeout; false if no query can start.
 bool matocsserv_query_chunk_location(uint64_t chunkId);
+
+/// Reconciles a stale report's conflicting disk flag without changing the known version.
+/// Queries only this connection; parts temporarily locked by workers are retried.
+void matocsserv_refresh_chunk_disk_state(matocsserventry *server, uint64_t chunkId,
+                                         ChunkPartType partType);
+
+/// Maximum peer visits, pending-key visits and part checks combined per invocation.
+constexpr std::size_t kDiskStateRefreshWorkLimit = 256;
+
+/// Maximum chunk IDs awaiting disk-state refresh replies per connection.
+constexpr std::size_t kDiskStateRefreshOutstandingLimit = 128;
+
+/// Pause new refresh queries when a connection has this many queued output packets.
+constexpr std::size_t kDiskStateRefreshOutputLimit = 8;
+
+/// Processes a bounded refresh slice and returns the number of work units consumed.
+std::size_t matocsserv_process_disk_state_refreshes(std::chrono::microseconds timeBudget,
+                                                    SteadyTimePoint now);
+
+/// Applies query replies and schedules missing refresh parts for retry relative to now.
+void matocsserv_sau_query_chunks(matocsserventry *server, const std::vector<uint8_t> &data,
+                                 SteadyTimePoint now = SteadyClock::now());
+
+// Socket-free fixture support; connection internals remain private to matocsserv.cc.
+namespace matocsserv_test {
+matocsserventry *create_connection(csdbentry &entry, uint32_t version);
+void destroy_connection(matocsserventry *server);
+std::vector<std::vector<uint8_t>> take_output_packets(matocsserventry *server);
+void rehash_disk_state_refreshes(matocsserventry *server);
+void fill_output_packets(matocsserventry *server);
+void expire_disk_state_refresh(matocsserventry *server, uint64_t chunkId, SteadyTimePoint now);
+std::size_t pending_disk_state_refreshes(const matocsserventry *server);
+}  // namespace matocsserv_test
 
 /*! \brief Maximum number of deferred client waits. */
 uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit();
