@@ -36,10 +36,13 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
+#include <random>
+#include <ranges>
 #include <unordered_map>
 #include <vector>
 
@@ -54,13 +57,14 @@
 #include "common/exit_status.h"
 #include "common/goal.h"
 #include "common/md5.h"
+#include "common/metadata_cluster_member.h"
 #include "common/saunafs_version.h"
 #include "common/sockets.h"
 #include "common/tls_session.h"
 #include "common/type_defs.h"
 #include "errors/sfserr.h"
-#include "mount/g_io_limiters.h"
 #include "mount/exports.h"
+#include "mount/g_io_limiters.h"
 #include "mount/notification_area_logging.h"
 #include "mount/stats.h"
 #include "protocol/SFSCommunication.h"
@@ -153,9 +157,13 @@ static std::mutex fdMutex, recMutex;
 
 static uint32_t sessionid;
 
+/// Numbers this mount's reconnect requests. A server that handles one late, as after it froze,
+/// cannot take the session back from a newer request another server accepted.
+static uint32_t gAttachAttempt = 0;
+
 constexpr uint32_t fuseRegisterReconnectDataLength =
     sizeof(sessionid) + kSaunafsVersionMajorLength + kSaunafsVersionMinorLength +
-    kSaunafsVersionMicroLength;
+    kSaunafsVersionMicroLength + sizeof(gAttachAttempt);
 constexpr uint32_t fuseRegisterWithReconnectPacketInfoLength =
     kFuseRegisterSessionTypeLength + fuseRegisterReconnectDataLength;
 constexpr uint32_t registerReconnectTotalPacketLength = registerTotalHeaderInfoLength +
@@ -173,6 +181,54 @@ static uint32_t masterip=0;
 static uint16_t masterport=0;
 static char srcstrip[17];
 static uint32_t srcip=0;
+
+/// A metadata server the client can register with.
+struct ServerAddress {
+	uint32_t ip = 0;
+	uint16_t port = 0;
+	bool operator==(const ServerAddress &) const = default;
+};
+
+/// Live metadata servers other than the current one, as the cluster registry listed them
+/// through the current server. Only routing hints: the server a client registers with decides
+/// whether it may serve the client's session.
+static std::vector<ServerAddress> gDiscoveredServers;
+static std::mutex gDiscoveredServersMutex;
+/// Asks the keep-alive thread to refresh gDiscoveredServers; set after every registration.
+static std::atomic<bool> gRefreshDiscoveredServers(false);
+/// How often the keep-alive thread refreshes gDiscoveredServers otherwise, in seconds.
+constexpr int kDiscoveryRefreshSeconds = 60;
+
+/// Stores the servers the current one lists. A failed listing keeps the previous list.
+class ClusterServersHandler : public PacketHandler {
+public:
+	bool handle(MessageBuffer buffer) override {
+		try {
+			uint32_t messageId = 0;
+			uint8_t status = 0;
+			std::vector<MetadataClusterMember> servers;
+			matocl::clusterServers::deserialize(buffer.data(), buffer.size(), messageId, status,
+			                                    servers);
+			if (status != SAUNAFS_STATUS_OK) { return true; }
+
+			std::vector<ServerAddress> discovered;
+			for (const auto &server : servers) {
+				if (server.ip == 0 || server.port == 0 ||
+				    server.version < kFirstVersionWithClientFailover) {
+					continue;
+				}
+				discovered.push_back(ServerAddress{server.ip, server.port});
+			}
+			std::lock_guard lock(gDiscoveredServersMutex);
+			gDiscoveredServers = std::move(discovered);
+			return true;
+		} catch (IncorrectDeserializationException &exception) {
+			safs::log_warn("Malformed SAU_MATOCL_CLUSTER_SERVERS: {}", exception.what());
+			return false;
+		}
+	}
+};
+static ClusterServersHandler gClusterServersHandler;
 
 static uint8_t fterm;
 static std::atomic<bool> gIsKilled(false);
@@ -576,6 +632,77 @@ bool fs_sausendandreceive_any(threc *rec, MessageBuffer& messageData) {
 	return false;
 }
 
+/// Makes @p server the one the client talks to.
+static void fs_set_current_server(const ServerAddress &server) {
+	masterip = server.ip;
+	masterport = server.port;
+	snprintf(masterstrip, 17, "%" PRIu32 ".%" PRIu32 ".%" PRIu32 ".%" PRIu32,
+	         (masterip >> 24) & 0xFF, (masterip >> 16) & 0xFF, (masterip >> 8) & 0xFF,
+	         masterip & 0xFF);
+	masterstrip[16] = 0;
+}
+
+/// Resolves the configured metadata servers. The host option may list several, separated by
+/// ';', each with an optional ':port' (@p defaultPortName otherwise); entries that do not
+/// resolve are skipped.
+static std::vector<ServerAddress> fs_resolve_seeds(bool verbose, const std::string &hostNames,
+                                                   const std::string &defaultPortName) {
+	std::vector<ServerAddress> seeds;
+	for (const auto entry : std::views::split(hostNames, ';')) {
+		std::string hostName(entry.begin(), entry.end());
+		if (hostName.empty()) { continue; }
+
+		std::string portName = defaultPortName;
+		if (const auto colon = hostName.rfind(':'); colon != std::string::npos) {
+			portName = hostName.substr(colon + 1);
+			hostName.resize(colon);
+		}
+
+		ServerAddress seed;
+		if (tcpresolve(hostName.c_str(), portName.c_str(), &seed.ip, &seed.port, 0) < 0) {
+			if (verbose) {
+				fprintf(stderr, "can't resolve master hostname and/or portname (%s:%s)\n",
+				        hostName.c_str(), portName.c_str());
+			} else {
+				safs_pretty_syslog(LOG_WARNING,
+				                   "can't resolve master hostname and/or portname (%s:%s)",
+				                   hostName.c_str(), portName.c_str());
+			}
+			continue;
+		}
+		seeds.push_back(seed);
+	}
+	return seeds;
+}
+
+/// The servers to try, in order: the current one, since a client stays on a server that works;
+/// the live ones the registry listed, in random order so the clients of a failed server spread
+/// out; then the configured ones, so a list that went stale during an outage cannot block
+/// recovery.
+static std::vector<ServerAddress> fs_candidate_servers(bool verbose) {
+	std::vector<ServerAddress> candidates;
+	const auto add = [&candidates](const ServerAddress &server) {
+		if (server.ip == 0 || server.port == 0) { return; }
+		if (std::ranges::find(candidates, server) != candidates.end()) { return; }
+		candidates.push_back(server);
+	};
+
+	add(ServerAddress{masterip, masterport});
+
+	std::vector<ServerAddress> discovered;
+	{
+		std::lock_guard lock(gDiscoveredServersMutex);
+		discovered = gDiscoveredServers;
+	}
+	std::ranges::shuffle(discovered, std::mt19937(std::random_device{}()));
+	for (const auto &server : discovered) { add(server); }
+
+	for (const auto &seed : fs_resolve_seeds(verbose, gInitParams.host, gInitParams.port)) {
+		add(seed);
+	}
+	return candidates;
+}
+
 int fs_resolve(bool verbose, const std::string &bindhostname, const std::string &masterhostname, const std::string &masterportname) {
 	if (!bindhostname.empty()) {
 		if (tcpresolve(bindhostname.c_str(), nullptr, &srcip, nullptr, 1) < 0) {
@@ -593,19 +720,11 @@ int fs_resolve(bool verbose, const std::string &bindhostname, const std::string 
 	         (srcip>>24)&0xFF, (srcip>>16)&0xFF, (srcip>>8)&0xFF, srcip&0xFF);
 	srcstrip[16] = 0;
 
-	if (tcpresolve(masterhostname.c_str(), masterportname.c_str(), &masterip, &masterport, 0) < 0) {
-		if (verbose) {
-			fprintf(stderr, "can't resolve master hostname and/or portname (%s:%s)\n",
-			        masterhostname.c_str(), masterportname.c_str());
-		} else {
-			safs_pretty_syslog(LOG_WARNING,"can't resolve master hostname and/or portname (%s:%s)",
-			                   masterhostname.c_str(), masterportname.c_str());
-		}
-		return -1;
-	}
-	snprintf(masterstrip, 17, "%" PRIu32 ".%" PRIu32 ".%" PRIu32 ".%" PRIu32,
-	        (masterip>>24)&0xFF, (masterip>>16)&0xFF, (masterip>>8)&0xFF, masterip&0xFF);
-	masterstrip[16] = 0;
+	// A new client starts with the first configured server that resolves; one that already
+	// talks to a server stays on it, as there is no automatic return to the configured one.
+	const auto seeds = fs_resolve_seeds(verbose, masterhostname, masterportname);
+	if (seeds.empty()) { return -1; }
+	if (masterip == 0) { fs_set_current_server(seeds.front()); }
 
 	return 0;
 }
@@ -1249,24 +1368,32 @@ int fs_connect(bool verbose) {
 		return -1;
 	}
 
-	registrationMessageBuffer.resize(fuseRegisterTotalPacketLength);
+	// A server that cannot register the client, whether down, refusing or without its store,
+	// is passed over for the next one.
+	bool registered = false;
+	for (const auto &candidate : fs_candidate_servers(verbose)) {
+		fs_set_current_server(candidate);
+		registrationMessageBuffer.assign(fuseRegisterTotalPacketLength, 0);
 
-	fd = fs_open_master_connection(verbose);
-	if (fd < 0) { return -1; }
+		fd = fs_open_master_connection(verbose);
+		if (fd < 0) { continue; }
 
-	if (isTlsEnabled() && !fs_starttls_connection()) { return -1; }
+		if ((isTlsEnabled() && !fs_starttls_connection()) ||
+		    (havepassword &&
+		     fs_register_with_get_random(registrationMessageBuffer, passwordDigest, verbose) < 0) ||
+		    fs_register_with_new_session(registrationMessageBuffer, passwordDigest,
+		                                 fuseRegisterPacketInfoLength, havepassword, sesflags,
+		                                 rootuid, rootgid, mapalluid, mapallgid, mingoal, maxgoal,
+		                                 mintrashtime, maxtrashtime, verbose) < 0) {
+			if (fd >= 0) { fs_close(); }
+			continue;
+		}
 
-	if (havepassword &&
-	    fs_register_with_get_random(registrationMessageBuffer, passwordDigest, verbose) < 0) {
-		return -1;
+		registered = true;
+		break;
 	}
-
-	if (fs_register_with_new_session(registrationMessageBuffer, passwordDigest,
-	                                 fuseRegisterPacketInfoLength, havepassword, sesflags, rootuid,
-	                                 rootgid, mapalluid, mapallgid, mingoal, maxgoal, mintrashtime,
-	                                 maxtrashtime, verbose) < 0) {
-		return -1;
-	}
+	if (!registered) { return -1; }
+	gRefreshDiscoveredServers = true;
 
 	if (!verbose) { safs::log_info("registered to master with new session (id #{})", sessionid); }
 
@@ -1283,21 +1410,29 @@ int fs_connect(bool verbose) {
 	return 0;
 }
 
-void fs_reconnect() {
+/// What a reconnect to one server found.
+enum class ReconnectOutcome {
+	kRegistered,  ///< The session continues on this server.
+	kTryAnother,  ///< This server cannot serve now: the session continues elsewhere.
+	kRefused,     ///< This server refuses the client for the session, as when its address
+	              ///< differs from the session's: another server may accept it.
+	kSessionLost  ///< The session was released: a new one must be registered.
+};
+
+/// Registers the existing session with the current server.
+static ReconnectOutcome fs_reconnect_to_current() {
 	std::vector<std::uint8_t> registrationMessageBuffer(registerReconnectTotalPacketLength);
 	uint32_t currentMessageValue;
 	uint8_t *messageToMaster;
 	const uint8_t *messageFromMaster;
 
-	if (sessionid == 0) {
-		safs::log_warn("can't register: session not created");
-		return;
-	}
-
 	fd = fs_open_master_connection();
-	if (fd < 0) { return; }
+	if (fd < 0) { return ReconnectOutcome::kTryAnother; }
 
-	if (isTlsEnabled() && !fs_starttls_connection()) { return; }
+	if (isTlsEnabled() && !fs_starttls_connection()) {
+		if (fd >= 0) { fs_close(); }
+		return ReconnectOutcome::kTryAnother;
+	}
 
 	stats_inc(MASTER_CONNECTS, statsptr);
 	messageToMaster = registrationMessageBuffer.data();
@@ -1311,6 +1446,9 @@ void fs_reconnect() {
 	put16bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MAJOR);
 	put8bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MINOR);
 	put8bit(&messageToMaster, SAUNAFS_PACKAGE_VERSION_MICRO);
+	// The numbers wrap, skipping 0, which means a request without a number.
+	if (++gAttachAttempt == 0) { ++gAttachAttempt; }
+	put32bit(&messageToMaster, gAttachAttempt);
 
 	int writtenBytes = fs_write(fd, registrationMessageBuffer.data(),
 	                            registerReconnectTotalPacketLength, kDefaultTcpCommTimeoutMSeconds);
@@ -1328,7 +1466,7 @@ void fs_reconnect() {
 		}
 
 		fs_close();
-		return;
+		return ReconnectOutcome::kTryAnother;
 	}
 
 	stats_inc(MASTER_BYTESSENT, statsptr, 16 + kFuseRegisterBlobAclLength);
@@ -1351,7 +1489,7 @@ void fs_reconnect() {
 
 		safs::log_warn("register error (read header: {})", errorMessage);
 		fs_close();
-		return;
+		return ReconnectOutcome::kTryAnother;
 	}
 
 	stats_inc(MASTER_BYTESRCVD, statsptr, registerTotalHeaderInfoLength);
@@ -1360,14 +1498,14 @@ void fs_reconnect() {
 	if (currentMessageValue != MATOCL_FUSE_REGISTER) {
 		safs::log_warn("register error (bad answer: {})", currentMessageValue);
 		fs_close();
-		return;
+		return ReconnectOutcome::kTryAnother;
 	}
 
 	get32bit(&messageFromMaster, currentMessageValue);
 	if (currentMessageValue != 1) {
 		safs::log_warn("register error (bad length: {})", currentMessageValue);
 		fs_close();
-		return;
+		return ReconnectOutcome::kTryAnother;
 	}
 
 	readBytes = fs_read(fd, registrationMessageBuffer.data(), currentMessageValue,
@@ -1387,21 +1525,73 @@ void fs_reconnect() {
 
 		safs::log_warn("register error (read data: {})", errorMessage);
 		fs_close();
-		return;
+		return ReconnectOutcome::kTryAnother;
 	}
 
 	stats_inc(MASTER_BYTESRCVD, statsptr, currentMessageValue);
 	stats_inc(MASTER_PACKETSRCVD, statsptr);
 	messageFromMaster = registrationMessageBuffer.data();
+	if (messageFromMaster[0] == SAUNAFS_ERROR_TEMP_NOTPOSSIBLE) {
+		// The server cannot serve the session now, as when it lost its store: the session
+		// itself is intact.
+		safs::log_warn("master {}:{} cannot serve the session now, trying another one", masterstrip,
+		               masterport);
+		fs_close();
+		return ReconnectOutcome::kTryAnother;
+	}
+	if (messageFromMaster[0] == SAUNAFS_ERROR_EPERM) {
+		// The server serves no clients, as one dedicated to maintenance: it says nothing about
+		// the session.
+		safs::log_warn("master {}:{} serves no clients, trying another one", masterstrip,
+		               masterport);
+		fs_close();
+		return ReconnectOutcome::kTryAnother;
+	}
+	if (messageFromMaster[0] == SAUNAFS_ERROR_EACCES) {
+		safs::log_warn("master {}:{} refuses the session: {}", masterstrip, masterport,
+		               saunafs_error_string(messageFromMaster[0]));
+		fs_close();
+		return ReconnectOutcome::kRefused;
+	}
 	if (messageFromMaster[0] != 0) {
 		sessionlost = 1;
 		safs::log_warn("master: register status: {}", saunafs_error_string(messageFromMaster[0]));
 		fs_close();
-		return;
+		return ReconnectOutcome::kSessionLost;
 	}
 
 	lastwrite = time(nullptr);
-	safs::log_info("registered to master (session id #{})", sessionid);
+	safs::log_info("registered to master {}:{} (session id #{})", masterstrip, masterport,
+	               sessionid);
+	return ReconnectOutcome::kRegistered;
+}
+
+void fs_reconnect() {
+	if (sessionid == 0) {
+		safs::log_warn("can't register: session not created");
+		return;
+	}
+
+	// The session moves to the first server that can serve it. One that answers that the
+	// session is gone ends the search, and a new session is registered instead, as it is when
+	// servers refused the session and none took it.
+	bool refused = false;
+	for (const auto &candidate : fs_candidate_servers(false)) {
+		fs_set_current_server(candidate);
+		switch (fs_reconnect_to_current()) {
+		case ReconnectOutcome::kRegistered:
+			gRefreshDiscoveredServers = true;
+			return;
+		case ReconnectOutcome::kSessionLost:
+			return;
+		case ReconnectOutcome::kRefused:
+			refused = true;
+			break;
+		case ReconnectOutcome::kTryAnother:
+			break;
+		}
+	}
+	if (refused) { sessionlost = 1; }
 }
 
 void fs_close_session() {
@@ -1461,6 +1651,7 @@ void* fs_nop_thread(void *arg) {
 	uint64_t lastTweaksGlobalEpoch = gTweaks.getGlobalLastChangeEpoch();
 	uint64_t lastIOLimitsEpoch = gTweaks.getVarLastChangeEpochByName("IOLimitsFilePath");
 	uint64_t lastTlsConfigFileEpoch = gTweaks.getVarLastChangeEpochByName("TlsConfigFile");
+	int lastDiscovery = 0;
 
 	for (;;) {
 		now = time(NULL);
@@ -1497,6 +1688,23 @@ void* fs_nop_thread(void *arg) {
 					stats_inc(MASTER_PACKETSSENT, statsptr);
 				}
 				lastwrite = now;
+			}
+			// Refreshes the servers a session may move to, after every registration and
+			// periodically; the answer arrives through gClusterServersHandler.
+			if (masterVersion >= kFirstVersionWithClientFailover && !disconnect &&
+			    (gRefreshDiscoveredServers.exchange(false) ||
+			     lastDiscovery + kDiscoveryRefreshSeconds <= now)) {
+				const MessageBuffer request = cltoma::clusterServers::build(0);
+				if (fs_write(fd, request.data(), request.size(), kDefaultTcpCommTimeoutMSeconds) !=
+				    static_cast<int32_t>(request.size())) {
+					safs::log_warn("Failed to ask master for the cluster servers");
+					disconnect = true;
+				} else {
+					stats_inc(MASTER_BYTESSENT, statsptr, request.size());
+					stats_inc(MASTER_PACKETSSENT, statsptr);
+					lastwrite = now;
+				}
+				lastDiscovery = now;
 			}
 			if (++inodeswritecnt >= gInitParams.report_reserved_period && !disconnect) {
 				inodeswritecnt = 0;
@@ -1764,6 +1972,16 @@ void* fs_receive_thread(void *) {
 			}
 		}
 		threc *rec = fs_get_threc_by_id(messageId);
+		if (rec == NULL && (packetHeader.type == SAU_MATOCL_FUSE_FLOCK ||
+		                    packetHeader.type == SAU_MATOCL_FUSE_SETLK)) {
+			// A lock granted after its wait failed with a lost connection, or answered twice
+			// by a server delivering another's answer: nothing waits for it any more.
+			MessageBuffer ignored;
+			if (fs_append_from_master(ignored, remainingBytes)) {
+				safs::log_debug("master: ignoring a late lock answer (queryid {})", messageId);
+			}
+			continue;
+		}
 		if (rec == NULL) {
 			safs_pretty_syslog(LOG_WARNING,"master: got unexpected queryid");
 			setDisconnect(true);
@@ -1841,6 +2059,8 @@ void fs_init_threads(uint32_t retries, uint32_t maxWaitTimeForRetry, uint32_t sl
 	gTweaks.registerVariable("MasterCommSleepTimeDivisor", mastercommSleepTimeDivisor, "mastercommsleeptimedivisor");
 	gTweaks.registerVariable("TlsConfigFile", tlsConfigFile, tlsConfigFileMutex, "tlsconfigfile");
 	mountInfoLock.unlock();
+
+	fs_register_packet_type_handler(SAU_MATOCL_CLUSTER_SERVERS, &gClusterServersHandler);
 
 	pthread_attr_init(&thattr);
 	pthread_attr_setstacksize(&thattr,0x100000);
