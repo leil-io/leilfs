@@ -46,3 +46,6 @@ processes.
 
 For setup and I/O validation, see
 `tests/test_suites/ShortSystemTests/test_mock_disk_smoke.sh`.
+
+For large-scale registration and promotion measurements, see
+`tests/test_suites/Benchmarks/test_chunk_registration_benchmark.sh`.
