@@ -104,7 +104,7 @@ RUN --mount=type=cache,target=/leilfs/vcpkg/downloads/,sharing=locked --mount=ty
 # matches nothing is a no-op under BuildKit (already required for --mount).
 # Kept before the other sources so their changes don't re-run the Go install.
 COPY api*/ ./api/
-ARG GO_VERSION=1.22.2
+ARG GO_VERSION=1.27.3
 RUN if [ -f api/CMakeLists.txt ]; then \
         curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
             | tar -C /usr/local -xz; \
