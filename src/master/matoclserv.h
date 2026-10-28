@@ -72,6 +72,10 @@ int matoclserv_network_init();
 /// @param status Status of the metadata saving process
 void matoclserv_broadcast_metadata_saved(uint8_t status);
 
+/// Drops every mount connection without answering, as a lost connection does, so each mount
+/// reconnects, elsewhere when this server cannot serve it. For a server that lost its store.
+void matoclserv_drop_mount_connections();
+
 /// Notify interested clients about the status of metadata checksum recalculation process.
 /// @param status Status of the metadata checksum recalculation process
 void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status);
@@ -101,6 +105,9 @@ void matoclserv_set_batch_stats_enabled(bool enabled);
 /// Whether this process accepts client sessions (default yes). A metadata server of a KV backend
 /// may run without them, for maintenance only; administration and chunkservers are unaffected.
 void matoclserv_set_serving_clients(bool serving);
+
+/// Whether this process accepts client sessions, as matoclserv_set_serving_clients left it.
+bool matoclserv_serving_clients();
 
 /// Returns the current group-commit batch-stats counters (process-wide, since process start).
 MatoclBatchStats matoclserv_get_batch_stats();

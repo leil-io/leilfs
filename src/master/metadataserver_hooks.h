@@ -63,3 +63,15 @@ struct MetadataserverStatusResult {
 /// an implementation may throw, and the dispatch site drops that one connection.
 using MetadataserverStatusHook = std::function<MetadataserverStatusResult()>;
 extern MetadataserverStatusHook gMetadataserverStatusHook;
+
+/// The other live metadata servers a mount may move its session to, with their client ports.
+/// Left unset where one server serves every session (Master), which answers an empty list.
+/// May throw: the mount is then answered an error and keeps the list it had.
+using ClientClusterServersHook = std::function<std::vector<MetadataClusterMember>()>;
+extern ClientClusterServersHook gClientClusterServersHook;
+
+/// True when this server cannot reach its metadata store, so a request it could not commit is
+/// better sent through another server than answered an I/O error. May block briefly to probe
+/// the store. Left unset where there is no other server to send it to (Master).
+using StoreUnreachableHook = std::function<bool()>;
+extern StoreUnreachableHook gStoreUnreachableHook;

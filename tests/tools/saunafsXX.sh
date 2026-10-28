@@ -123,7 +123,7 @@ END
 		done
 		# unpack binaries
 		(	cd "${destdir}"
-		find . -name "*master*.rpm" -print0 | xargs -0 rpm2cpio | cpio -idm ./usr/sbin/sfsmaster
+		find . -name "*master*.rpm" -print0 | xargs -0 rpm2cpio | cpio -idm './usr/sbin/*'
 		find . -name "*chunkserver*.rpm" -print0 | xargs -0 rpm2cpio | cpio -idm ./usr/sbin/sfschunkserver
 		find . -name "*client*.rpm" -print0 | xargs -0 rpm2cpio | cpio -idm ./usr/bin/*
 		)
