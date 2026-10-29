@@ -640,3 +640,157 @@ TEST_F(ChunkMutationPlanTest, RemovedRegistryEntryIsDroppedFromTheChunk) {
 	ASSERT_TRUE(chunk_exists(18));
 	EXPECT_FALSE(chunk_mutation_plan_current(plan));
 }
+
+TEST_F(ChunkMutationPlanTest, DiscoveryBlocksVersionMoveBeforeAnyMutation) {
+	install({{&servers[0], {}}}, true);
+	ChunkMutationDiscovery discovery;
+	FilesystemOperationContext context;
+	context.setChunkMutationCheck([&](const ChunkMutationPlan &plan) {
+		return discovery.requiresQuery(plan, true, 9) ? SAUNAFS_ERROR_NOCHUNKSERVERS
+		                                              : SAUNAFS_STATUS_OK;
+	});
+	ChunkOperationsInMemory operations;
+	uint32_t lockId = 0;
+	uint64_t target = 0;
+	uint8_t operation = 0;
+
+	EXPECT_EQ(operations.multiModify(context, 17, &lockId, 1, false, &operation, &target, 0),
+	          SAUNAFS_ERROR_NOCHUNKSERVERS);
+	EXPECT_EQ(target, 17U);
+	EXPECT_EQ(lockId, 0U);
+	EXPECT_EQ(notifications, 0U);
+	EXPECT_TRUE(chunk_needs_version_increase(17));
+	std::vector<ChunkPartLocation> parts;
+	ASSERT_EQ(chunk_get_mutation_parts(17, 3, parts, 255), SAUNAFS_STATUS_OK);
+	ASSERT_EQ(parts.size(), 1U);
+
+	// A timed-out wait is not permission to execute the previously refused plan.
+	discovery.complete = false;
+	EXPECT_EQ(operations.multiModify(context, 17, &lockId, 1, false, &operation, &target, 0),
+	          SAUNAFS_ERROR_NOCHUNKSERVERS);
+	EXPECT_EQ(notifications, 0U);
+}
+
+TEST_F(ChunkMutationPlanTest, CompletedDiscoveryReplansWithTheNewlyFoundCopy) {
+	install({{&servers[0], {}}}, true);
+	ChunkMutationDiscovery discovery;
+	const auto initial = chunk_plan_modify(17, 0, 1, false, 0);
+	ASSERT_TRUE(discovery.requiresQuery(initial, true, 9));
+
+	// The query finds a second copy before either copy changes version.
+	chunk_server_has_chunk(connections[1], 17, 3, {});
+	discovery.complete = true;
+	FilesystemOperationContext context;
+	context.setChunkMutationCheck([&](const ChunkMutationPlan &plan) {
+		return discovery.requiresQuery(plan, true, 9) ? SAUNAFS_ERROR_NOCHUNKSERVERS
+		                                              : SAUNAFS_STATUS_OK;
+	});
+	ChunkOperationsInMemory operations;
+	uint32_t lockId = 0;
+	uint64_t target = 0;
+	uint8_t operation = 0;
+	ASSERT_EQ(operations.multiModify(context, 17, &lockId, 1, false, &operation, &target, 0),
+	          SAUNAFS_STATUS_OK);
+	for (unsigned index : {0U, 1U}) {
+		ChunkPartState part;
+		ASSERT_TRUE(chunk_get_part_state(connections[index], 17, {}, part));
+		EXPECT_EQ(part.chunkVersion, 4U);
+		EXPECT_EQ(part.partVersion, 4U);
+		EXPECT_TRUE(part.busy);
+	}
+	EXPECT_TRUE(chunk_operation_waits_for_replies(operation));
+}
+
+TEST_F(ChunkMutationPlanTest, DiscoveryRejectsChangedChunkVersionOrConnections) {
+	install({{&servers[0], {}}}, true);
+	const auto original = chunk_plan_modify(17, 0, 1, false, 0);
+	for (unsigned change = 0; change != 3; ++change) {
+		ChunkMutationDiscovery discovery;
+		ASSERT_TRUE(discovery.requiresQuery(original, true, 9));
+		discovery.complete = true;
+		auto changed = original;
+		if (change == 0) { changed.chunkId = changed.targetChunkId = 18; }
+		if (change == 1) {
+			++changed.chunkVersion;
+			++changed.targetVersion;
+		}
+		EXPECT_TRUE(discovery.requiresQuery(changed, true, change == 2 ? 10 : 9));
+		EXPECT_FALSE(discovery.complete);
+	}
+}
+
+TEST_F(ChunkMutationPlanTest, DiscoveryDoesNotGateSteadyStateOrUnchangedVersions) {
+	install({{&servers[0], {}}}, true);
+	const auto bump = chunk_plan_modify(17, 0, 1, false, 0);
+	ChunkMutationDiscovery discovery;
+	EXPECT_FALSE(discovery.requiresQuery(bump, false, 9));
+
+	install({{&servers[0], {}}});
+	const auto unchanged = chunk_plan_modify(17, 0, 1, false, 0);
+	EXPECT_EQ(unchanged.targetVersion, unchanged.chunkVersion);
+	EXPECT_FALSE(discovery.requiresQuery(unchanged, true, 9));
+
+	// A new allocation has no older version to strand on unreported replicas.
+	auto create = bump;
+	create.chunkId = 0;
+	create.targetChunkId = 18;
+	EXPECT_FALSE(discovery.requiresQuery(create, true, 9));
+}
+
+TEST_F(ChunkMutationPlanTest, DiscoveryAlsoBlocksInPlaceTruncation) {
+	install({{&servers[0], {}}});
+	ChunkMutationDiscovery discovery;
+	FilesystemOperationContext context;
+	context.setChunkMutationCheck([&](const ChunkMutationPlan &plan) {
+		return discovery.requiresQuery(plan, true, 9) ? SAUNAFS_ERROR_NOCHUNKSERVERS
+		                                              : SAUNAFS_STATUS_OK;
+	});
+	ChunkOperationsInMemory operations;
+	uint64_t target = 0;
+	EXPECT_EQ(operations.multiTruncate(context, 17, 0, 1000, 1, false, false, &target),
+	          SAUNAFS_ERROR_NOCHUNKSERVERS);
+	EXPECT_EQ(notifications, 0U);
+	std::vector<ChunkPartLocation> parts;
+	EXPECT_EQ(chunk_get_mutation_parts(17, 3, parts, 255), SAUNAFS_STATUS_OK);
+}
+
+TEST_F(ChunkMutationPlanTest, IdentityBackendDoesNotRequireInventoryDiscovery) {
+	class IdentityOperations : public ChunkOperationsInMemory {
+		bool requestsChunkserverIdentity() const override { return true; }
+	};
+	install({{&servers[0], {}}}, true);
+	auto previousOperations = std::move(gChunkOperations);
+	gChunkOperations = std::make_unique<IdentityOperations>();
+	ChunkMutationDiscovery discovery;
+	const auto status =
+	    matocsserv_check_mutation_discovery(chunk_plan_modify(17, 0, 1, false, 0), discovery);
+	gChunkOperations = std::move(previousOperations);
+	EXPECT_EQ(status, SAUNAFS_STATUS_OK);
+	EXPECT_EQ(discovery.chunkId, 0U);
+}
+
+TEST_F(ChunkMutationPlanTest, DiscoveryFromAnUnreadablePlanAuthorizesTheReplannedWrite) {
+	gFSOperations = std::make_unique<CacheTestFilesystemOperations>(goal_config::defaultGoal(1));
+	chunk_invalidate_goal_cache();
+	install({}, true);
+	ChunkMutationDiscovery discovery;
+	FilesystemOperationContext context;
+	context.setChunkMutationCheck([&](const ChunkMutationPlan &plan) {
+		return discovery.requiresQuery(plan, true, 9) ? SAUNAFS_ERROR_NOCHUNKSERVERS
+		                                              : SAUNAFS_STATUS_OK;
+	});
+	ChunkOperationsInMemory operations;
+	uint32_t lockId = 0;
+	uint64_t target = 0;
+	uint8_t operation = 0;
+	ASSERT_EQ(operations.multiModify(context, 17, &lockId, 1, false, &operation, &target, 0),
+	          SAUNAFS_ERROR_CHUNKLOST);
+	EXPECT_EQ(discovery.chunkId, 17U);
+	EXPECT_EQ(discovery.version, 3U);
+
+	// The existing CHUNKLOST discovery must not cause an extra failed client retry.
+	chunk_server_has_chunk(connections[0], 17, 3, {});
+	discovery.complete = true;
+	EXPECT_EQ(operations.multiModify(context, 17, &lockId, 1, false, &operation, &target, 0),
+	          SAUNAFS_STATUS_OK);
+}
