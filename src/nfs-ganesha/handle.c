@@ -549,7 +549,6 @@ static fsal_status_t openByHandle(struct fsal_obj_handle *objectHandle, struct s
 		}
 
 		if (!FSAL_IS_ERROR(status) && createmode >= FSAL_EXCLUSIVE &&
-		    createmode != FSAL_EXCLUSIVE_9P &&
 		    !check_verifier_stat(&attributesValues.attr, verifier, false)) {
 			// Verifier didn't match, return EEXIST
 			status = fsalstat(posix2fsal_error(EEXIST), EEXIST);
@@ -1428,8 +1427,7 @@ static fsal_status_t close2(struct fsal_obj_handle *objectHandle, struct state_t
 	LogFullDebug(COMPONENT_FSAL, "export = %" PRIu16 " inode = %" PRIiNode, handle->key.exportId,
 	             handle->inode);
 
-	if (state->state_type == STATE_TYPE_SHARE || state->state_type == STATE_TYPE_NLM_SHARE ||
-	    state->state_type == STATE_TYPE_9P_FID) {
+	if (state->state_type == STATE_TYPE_SHARE || state->state_type == STATE_TYPE_NLM_SHARE) {
 		update_share_counters_locked(objectHandle, &handle->share, handle->fd.fsalFd.openflags,
 		                             FSAL_O_CLOSED);
 	}
@@ -2207,7 +2205,7 @@ static fsal_status_t listxattrs(struct fsal_obj_handle *objectHandle, count4 max
 
 	// If xattr were retrieved and they can be allocated
 	if (curr_size && curr_size < maximumNameSize) {
-		buffer = gsh_malloc(curr_size);
+		buffer = gsh_malloc(curr_size, MEM_COMP_FSAL);
 
 		// Second time the function is called to retrieve the xattr list
 		retvalue = saunafs_listxattr(export->fsInstance, &op_ctx->creds, handle->inode, curr_size,
@@ -2215,7 +2213,7 @@ static fsal_status_t listxattrs(struct fsal_obj_handle *objectHandle, count4 max
 
 		if (retvalue < 0) {
 			LogDebug(COMPONENT_FSAL, "LISTXATTRS returned rc %d", retvalue);
-			gsh_free(buffer);
+			gsh_free(buffer, MEM_COMP_FSAL);
 			return saunafsToFsalError(retvalue);
 		}
 
@@ -2224,7 +2222,7 @@ static fsal_status_t listxattrs(struct fsal_obj_handle *objectHandle, count4 max
 		                               xattributesNames);
 
 		// Releasing allocated buffer
-		gsh_free(buffer);
+		gsh_free(buffer, MEM_COMP_FSAL);
 	}
 
 	return status;
@@ -2305,7 +2303,7 @@ void handleOperationsInit(struct fsal_obj_ops *ops) {
  * @returns: saunafs_handle instance or NULL.
  */
 struct SaunaFSHandle *allocateHandle(const struct stat *attribute, struct SaunaFSExport *export) {
-	struct SaunaFSHandle *result = gsh_calloc(1, sizeof(struct SaunaFSHandle));
+	struct SaunaFSHandle *result = gsh_calloc(1, sizeof(struct SaunaFSHandle), MEM_COMP_FSAL);
 
 	result->inode = attribute->st_ino;
 	result->key.moduleId = FSAL_ID_SAUNAFS;
@@ -2334,5 +2332,5 @@ struct SaunaFSHandle *allocateHandle(const struct stat *attribute, struct SaunaF
  */
 void deleteHandle(struct SaunaFSHandle *object) {
 	fsal_obj_handle_fini(&object->handle, true);
-	gsh_free(object);
+	gsh_free(object, MEM_COMP_FSAL);
 }

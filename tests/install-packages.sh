@@ -78,6 +78,9 @@ apt_packages=(
 	libgoogle-perftools-dev
 	libgtest-dev
 	libisal-dev
+	# Dockerfile.test builds the FSAL without installing ganesha-deps.txt.
+	# Link it with jemalloc to match Ganesha's default allocator.
+	libjemalloc-dev
 	libjudy-dev
 	liblz4-dev
 	libpam0g-dev

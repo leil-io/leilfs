@@ -155,14 +155,15 @@ static sau_chunkserver_info_t *randomizedChunkserverList(struct SaunaFSExport *e
                                                          uint32_t *chunkserverCount) {
 	sau_chunkserver_info_t *chunkserverInfo = NULL;
 
-	chunkserverInfo = gsh_malloc(SAUNAFS_BIGGEST_STRIPE_COUNT * sizeof(sau_chunkserver_info_t));
+	chunkserverInfo =
+	    gsh_malloc(SAUNAFS_BIGGEST_STRIPE_COUNT * sizeof(sau_chunkserver_info_t), MEM_COMP_FSAL);
 
 	int retvalue = sau_get_chunkservers_info(export->fsInstance, chunkserverInfo,
 	                                         SAUNAFS_BIGGEST_STRIPE_COUNT, chunkserverCount);
 
 	if (retvalue < 0) {
 		*chunkserverCount = 0;
-		gsh_free(chunkserverInfo);
+		gsh_free(chunkserverInfo, MEM_COMP_FSAL);
 		return NULL;
 	}
 
@@ -315,12 +316,10 @@ static int fillUnusedDataServerList(XDR *xdrStream, sau_chunkserver_info_t *chun
 static void releaseResources(sau_chunk_info_t *chunkInfo, sau_chunkserver_info_t *chunkserverInfo) {
 	if (chunkInfo) {
 		sau_destroy_chunks_info(chunkInfo);
-		gsh_free(chunkInfo);
+		gsh_free(chunkInfo, MEM_COMP_FSAL);
 	}
 
-	if (chunkserverInfo) {
-		gsh_free(chunkserverInfo);
-	}
+	if (chunkserverInfo) { gsh_free(chunkserverInfo, MEM_COMP_FSAL); }
 }
 
 /**
@@ -355,12 +354,18 @@ static void releaseResources(sau_chunk_info_t *chunkInfo, sau_chunkserver_info_t
  * @param[out] xdrStream      XDR stream to which the FSAL is to write the
  *                            layout type-specific information corresponding to the deviceid.
  * @param[in]  type           The type of layout that specified the device
+ * @param[in]  notify_types   Notification types requested by the client
+ * @param[out] notification   Bitmap of notify types to populate in the reply
  * @param[in]  deviceid       The device to look up
  *
  * @returns: Valid error codes in RFC 5661, p. 365.
  */
 static nfsstat4 getdeviceinfo(struct fsal_module *module, XDR *xdrStream, const layouttype4 type,
+                              const bitmap4 *notify_types, bitmap4 *notification,
                               const struct pnfs_deviceid *deviceid) {
+	(void)notify_types;
+	(void)notification;
+
 	struct fsal_export *exportHandle = NULL;
 	struct SaunaFSExport *export = NULL;
 
@@ -398,7 +403,7 @@ static nfsstat4 getdeviceinfo(struct fsal_module *module, XDR *xdrStream, const 
 	}
 
 	// get the chunk list for file
-	chunkInfo = gsh_malloc(SAUNAFS_BIGGEST_STRIPE_COUNT * sizeof(sau_chunk_info_t));
+	chunkInfo = gsh_malloc(SAUNAFS_BIGGEST_STRIPE_COUNT * sizeof(sau_chunk_info_t), MEM_COMP_FSAL);
 
 	int retvalue = saunafs_get_chunks_info(export->fsInstance, &op_ctx->creds, deviceid->devid, 0,
 	                                       chunkInfo, SAUNAFS_BIGGEST_STRIPE_COUNT, &chunkCount);
@@ -481,8 +486,8 @@ static nfsstat4 getdeviceinfo(struct fsal_module *module, XDR *xdrStream, const 
 
 	sau_destroy_chunks_info(chunkInfo);
 
-	gsh_free(chunkInfo);
-	gsh_free(chunkserverInfo);
+	gsh_free(chunkInfo, MEM_COMP_FSAL);
+	gsh_free(chunkserverInfo, MEM_COMP_FSAL);
 
 	return NFS4_OK;
 }

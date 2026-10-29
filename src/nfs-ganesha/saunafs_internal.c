@@ -38,7 +38,7 @@ sau_context_t *createContext(sau_t *instance, struct user_cred *cred) {
 	}
 
 	if (cred->caller_glen > 0) {
-		gid_t *garray = gsh_malloc((cred->caller_glen + 1) * sizeof(gid_t));
+		gid_t *garray = gsh_malloc((cred->caller_glen + 1) * sizeof(gid_t), MEM_COMP_FSAL);
 
 		if (garray != NULL) {
 			garray[0] = gid;
@@ -46,7 +46,7 @@ sau_context_t *createContext(sau_t *instance, struct user_cred *cred) {
 
 			memcpy(garray + 1, cred->caller_garray, size);
 			sau_update_groups(instance, ctx, garray, cred->caller_glen + 1);
-			gsh_free(garray);
+			gsh_free(garray, MEM_COMP_FSAL);
 		}
 	}
 

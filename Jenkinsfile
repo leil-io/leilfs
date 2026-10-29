@@ -57,7 +57,7 @@ def fetchGanesha() {
     def ganeshaEnv = readFile('tests/ci_build/ganesha/ganesha.env')
     def tag = ganeshaEnvVar(ganeshaEnv, 'GANESHA_VERSION')
     def url = ganeshaEnvVar(ganeshaEnv, 'GANESHA_GIT_URL')
-    // Directory name keeps the numeric form (V9.15 -> nfs-ganesha-9.15), like Libraries.cmake.
+    // Directory name keeps the numeric form (V<X.Y> -> nfs-ganesha-<X.Y>), like Libraries.cmake.
     def version = tag.replaceFirst(/^[Vv]/, '')
     dir("external/nfs-ganesha-${version}") {
         checkout([

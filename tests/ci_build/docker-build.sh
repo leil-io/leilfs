@@ -143,7 +143,7 @@ case "${option,,}" in
 	ganesha)
 		docker_context_dir="${PROJECT_DIR}/tests/ci_build/ganesha"
 		# All bases use the source-building Dockerfile so the image ships the
-		# pinned Ganesha V9.15 (+ its ntirpc).
+		# Ganesha release pinned in ganesha.env (+ its ntirpc).
 		dockerfile="${docker_context_dir}/Dockerfile"
 		;;
 	*)

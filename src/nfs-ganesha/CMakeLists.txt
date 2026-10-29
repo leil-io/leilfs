@@ -21,6 +21,7 @@ add_definitions(-D__USE_MISC)
 
 include_directories(${CMAKE_SOURCE_DIR}/external/${NFS_GANESHA_DIR_NAME}/src/include)
 include_directories(${CMAKE_SOURCE_DIR}/external/${NTIRPC_DIR_NAME}/ntirpc)
+include_directories(${CMAKE_SOURCE_DIR}/external/${NTIRPC_DIR_NAME}/src/monitoring/include)
 
 add_library(fsalsaunafs MODULE ${NFS_GANESHA_PLUGIN_MAIN} ${NFS_GANESHA_PLUGIN_SOURCES})
 
@@ -30,6 +31,12 @@ target_include_directories(fsalsaunafs PUBLIC
         )
 
 target_link_libraries(fsalsaunafs leil-client_pic)
+
+# Ganesha dlopen()s FSALs with RTLD_DEEPBIND, so malloc() resolves through the
+# FSAL's own dependencies. Link the allocator Ganesha uses (jemalloc by default)
+# so gsh_malloc() and Ganesha's malloc_usable_size()-based mem stats agree.
+find_library(JEMALLOC_LIBRARY NAMES jemalloc REQUIRED)
+target_link_libraries(fsalsaunafs ${JEMALLOC_LIBRARY})
 
 # SaunaFS FSAL (libfsalsaunafs.so) will be installed at ${SAUNAFS_ROOT}/lib/ganesha
 install(TARGETS fsalsaunafs COMPONENT fsal DESTINATION ${LIB_SUBDIR}/ganesha)
