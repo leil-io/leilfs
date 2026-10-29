@@ -57,6 +57,8 @@ inline IOPriorityMode gIOPriorityMode;
 /// connection at a time replicates and deletes here, the others are answered NOTDONE when their
 /// job is dequeued. Set only by a metadata server that records copies by identity; Master and
 /// Shadow never set it, and without a pair every check admits everything, as released.
+/// The pair outlives its connection, so a server must fence before it maintains here: until the
+/// next fence, held-back jobs matching that pair can still run; other maintenance gets NOTDONE.
 class MaintenanceFence {
 public:
 	/// What a job is stamped with when it is received: its listener, that listener's connection
@@ -224,7 +226,9 @@ public:
 
 	const std::shared_ptr<MaintenanceFence> &maintenanceFence() const { return maintenanceFence_; }
 
-	/// The operations the maintenance fence governs.
+	/// The operations the maintenance fence governs. A version change, duplicate or truncate
+	/// belongs to its sender's client operation, not to maintenance, so a fence answer does not
+	/// wait for one.
 	static bool fencedOperation(uint32_t operation) {
 		return operation == ChunkOperation::Replicate || operation == ChunkOperation::Delete;
 	}

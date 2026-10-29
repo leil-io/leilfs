@@ -441,7 +441,7 @@ bool MaintenanceFence::fence(uint64_t epoch, Stamp stamp) {
 	if (pair_ && epoch < pair_->fenceEpoch) { return false; }
 	// At the current epoch only the paired connection again, or any other once the paired one
 	// closed: a second live connection at one epoch would revive the first's jobs, while a closed
-	// one's jobs keep its stamp and stay refused.
+	// one's jobs keep its stamp and are refused once another connection takes the pair.
 	const bool pairLive = pair_ && (pair_->listenerId >= kMaxMetadataConnections ||
 	                                connectionEpochs_[pair_->listenerId] == pair_->connectionEpoch);
 	if (pair_ && epoch == pair_->fenceEpoch && candidate != *pair_ && pairLive) { return false; }
