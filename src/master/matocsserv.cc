@@ -325,10 +325,13 @@ struct PendingChunkQuery {
 	/// Number of queried chunkservers which have not answered yet.
 	/// The waiters are resolved when it reaches zero or the deadline expires.
 	uint32_t outstandingReplies = 0;
+	/// Restricts this attempt to peers whose inventories are incomplete.
+	bool registeringOnly = false;
 };
 
 /// Chunk ids currently being resolved by on-demand queries.
 static std::unordered_map<uint64_t, PendingChunkQuery> gPendingChunkQueries;
+static uint64_t gChunkQueryConnectionGeneration = 1;
 
 // Avoid a warning per request while the query cap remains saturated.
 static bool gOnDemandChunkQueryLimitWarningEmitted = false;
@@ -346,7 +349,7 @@ static std::vector<uint64_t> gChunkQueryIdsToSend;
 static uint64_t gNextChunkQueryGeneration = 1;
 
 static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr);
-static void matocsserv_resolve_chunk_query(uint64_t chunkId);
+static void matocsserv_resolve_chunk_query(uint64_t chunkId, bool complete);
 
 static uint64_t matocsserv_new_chunk_query_generation() {
 	const uint64_t generation = gNextChunkQueryGeneration++;
@@ -1405,6 +1408,7 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	}
 
 	// Initialize chunk-registration tracking after accepting the host.
+	++gChunkQueryConnectionGeneration;
 	eptr->registrationChunksSeen = false;
 	eptr->chunkRegistrationComplete = false;
 	eptr->pullRegistration = false;
@@ -1464,6 +1468,42 @@ static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr) {
 	return eptr->mode == ChunkserverConnectionMode::CONNECTED && eptr->csdb != nullptr &&
 	       !eptr->registrationState.identityPending() &&
 	       eptr->version >= kFirstVersionWithChunkLocationQuery;
+}
+
+bool ChunkMutationDiscovery::requiresQuery(const ChunkMutationPlan &plan, bool inventoryIncomplete,
+                                           uint64_t currentConnectionGeneration) {
+	const bool missingLocations =
+	    plan.status == SAUNAFS_ERROR_CHUNKLOST || plan.status == SAUNAFS_ERROR_NOCHUNKSERVERS;
+	const bool versionMove =
+	    plan.targetChunkId == plan.chunkId && plan.targetVersion > plan.chunkVersion;
+	if (!inventoryIncomplete || plan.chunkId == 0 || (!missingLocations && !versionMove)) {
+		return false;
+	}
+	if (complete && chunkId == plan.chunkId && version == plan.chunkVersion &&
+	    connectionGeneration == currentConnectionGeneration) {
+		return false;
+	}
+	*this = {plan.chunkId, plan.chunkVersion, currentConnectionGeneration, false};
+	return true;
+}
+
+uint8_t matocsserv_check_mutation_discovery(const ChunkMutationPlan &plan,
+                                            ChunkMutationDiscovery &discovery) {
+	if (gChunkOperations->requestsChunkserverIdentity()) { return SAUNAFS_STATUS_OK; }
+
+	bool inventoryIncomplete = false;
+	for (const auto &entry : matocsservList) {
+		if (entry->mode != ChunkserverConnectionMode::CONNECTED || entry->csdb == nullptr ||
+		    entry->chunkRegistrationComplete) {
+			continue;
+		}
+		inventoryIncomplete = true;
+		// A legacy or handshaking peer cannot confirm its unreported copies yet.
+		if (!matocsserv_can_answer_chunk_queries(entry.get())) { discovery.complete = false; }
+	}
+	return discovery.requiresQuery(plan, inventoryIncomplete, gChunkQueryConnectionGeneration)
+	           ? SAUNAFS_ERROR_NOCHUNKSERVERS
+			   : SAUNAFS_STATUS_OK;
 }
 
 void matocsserv_refresh_chunk_disk_state(matocsserventry *server, uint64_t chunkId,
@@ -1670,21 +1710,23 @@ std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
 }
 
 /// Completes the on-demand query for \p chunkId and wakes its waiters.
-static void matocsserv_resolve_chunk_query(uint64_t chunkId) {
+/// @param complete True when all targeted peers replied; false on timeout or when
+///        no target remained. Passed to waiters as query completion, not inventory completion.
+static void matocsserv_resolve_chunk_query(uint64_t chunkId, bool complete) {
 	gPendingChunkQueries.erase(chunkId);
 	if (gOnDemandChunkQueryLimit == 0 ||
 	    gPendingChunkQueries.size() < gOnDemandChunkQueryLimit) {
 		gOnDemandChunkQueryLimitWarningEmitted = false;
 	}
 	matocsserv_update_pending_chunk_query_gauge();
-	matoclserv_chunk_locations_resolved(chunkId);
+	matoclserv_chunk_locations_resolved(chunkId, complete);
 }
 
 uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit() {
 	return kMaxOnDemandChunkQueryWaiters;
 }
 
-bool matocsserv_query_chunk_location(uint64_t chunkId) {
+bool matocsserv_query_chunk_location(uint64_t chunkId, bool registeringOnly) {
 	if (gPendingChunkQueries.find(chunkId) != gPendingChunkQueries.end()) {
 		// Already being queried; the caller can wait for the same resolution
 		return true;
@@ -1695,7 +1737,7 @@ bool matocsserv_query_chunk_location(uint64_t chunkId) {
 			if (!gOnDemandChunkQueryLimitWarningEmitted) {
 				safs::log_warn(
 				    "on-demand chunk-location query limit reached ({}); returning new requests "
-				    "with currently known locations",
+				    "without starting another query",
 				    gOnDemandChunkQueryLimit);
 				gOnDemandChunkQueryLimitWarningEmitted = true;
 			}
@@ -1707,7 +1749,8 @@ bool matocsserv_query_chunk_location(uint64_t chunkId) {
 
 	bool anyTarget = false;
 	for (const auto &entry : matocsservList) {
-		if (matocsserv_can_answer_chunk_queries(entry.get())) {
+		if (matocsserv_can_answer_chunk_queries(entry.get()) &&
+		    (!registeringOnly || !entry->chunkRegistrationComplete)) {
 			anyTarget = true;
 			break;
 		}
@@ -1717,7 +1760,8 @@ bool matocsserv_query_chunk_location(uint64_t chunkId) {
 	gPendingChunkQueries.emplace(
 	    chunkId, PendingChunkQuery{
 	                 .deadline = Timeout(std::chrono::milliseconds(gOnDemandChunkQueryTimeout_ms)),
-	                 .outstandingReplies = 0});
+	                 .outstandingReplies = 0,
+	                 .registeringOnly = registeringOnly});
 	gChunkQueryIdsToSend.push_back(chunkId);
 	matocsserv_update_pending_chunk_query_gauge();
 
@@ -1741,19 +1785,26 @@ void matocsserv_flush_chunk_queries() {
 		}
 	}
 
-	uint32_t targetCount = 0;
 	for (auto &entry : matocsservList) {
 		auto *eptr = entry.get();
 		if (!matocsserv_can_answer_chunk_queries(eptr)) { continue; }
 
 		for (const auto &[generation, generationChunkIds] : idsByGeneration) {
-			for (const auto &idGroup : matocsserv_split_chunk_query_ids(generationChunkIds)) {
+			std::vector<uint64_t> idsForPeer;
+			for (const auto chunkId : generationChunkIds) {
+				auto &query = gPendingChunkQueries.at(chunkId);
+				// Completed inventories already supplied their copies. Mutation discovery
+				// needs only the peers whose replicas may still be unreported.
+				if (query.registeringOnly && eptr->chunkRegistrationComplete) { continue; }
+				idsForPeer.push_back(chunkId);
+				++query.outstandingReplies;
+			}
+			for (const auto &idGroup : matocsserv_split_chunk_query_ids(idsForPeer)) {
 				OutputPacket outPacket;
 				matocs::queryChunks::serialize(outPacket.packet, generation, idGroup);
 				eptr->outputPackets.push_back(std::move(outPacket));
 			}
 		}
-		++targetCount;
 	}
 
 	for (const auto &generationEntry : idsByGeneration) {
@@ -1761,10 +1812,9 @@ void matocsserv_flush_chunk_queries() {
 			auto queryIter = gPendingChunkQueries.find(chunkId);
 			if (queryIter == gPendingChunkQueries.end()) { continue; }
 
-			queryIter->second.outstandingReplies += targetCount;
 			if (queryIter->second.outstandingReplies == 0) {
-				// All eligible chunkservers disappeared since the id was queued
-				matocsserv_resolve_chunk_query(chunkId);
+				// No peer was targeted: candidates became ineligible or finished registration.
+				matocsserv_resolve_chunk_query(chunkId, false);
 			}
 		}
 	}
@@ -1780,7 +1830,7 @@ void matocsserv_pending_chunk_queries_check() {
 		if (query.deadline.expired()) { expiredChunkIds.push_back(chunkId); }
 	}
 
-	for (const auto chunkId : expiredChunkIds) { matocsserv_resolve_chunk_query(chunkId); }
+	for (const auto chunkId : expiredChunkIds) { matocsserv_resolve_chunk_query(chunkId, false); }
 	if (!expiredChunkIds.empty()) {
 		metrics::Counter::increment(metrics::Counter::Master::CHUNK_LOCATION_QUERY_TIMEOUT,
 		                            expiredChunkIds.size());
@@ -1846,7 +1896,9 @@ void matocsserv_sau_query_chunks(matocsserventry *eptr, const std::vector<uint8_
 		}
 
 		if (queryIter->second.outstandingReplies > 0) { --queryIter->second.outstandingReplies; }
-		if (queryIter->second.outstandingReplies == 0) { matocsserv_resolve_chunk_query(chunkId); }
+		if (queryIter->second.outstandingReplies == 0) {
+			matocsserv_resolve_chunk_query(chunkId, true);
+		}
 	}
 }
 
@@ -2611,6 +2663,7 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 				gRegistrationBudgetCursor = matocsservList.end();
 			}
 
+			++gChunkQueryConnectionGeneration;
 			gChunkOperations->serverDisconnected(eptr, eptr->label);
 
 			if (eptr->csdb) { csdb_lost_connection(eptr->servip, eptr->servport); }

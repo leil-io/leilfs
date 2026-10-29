@@ -40,6 +40,31 @@ extern Timeout gTimeoutSinceLastChunkRegistration;
 struct matocsserventry;
 
 struct csdbentry;
+struct ChunkMutationPlan;
+
+/// Discovery confirmation belongs to one deferred mutation, not every stored chunk.
+struct ChunkMutationDiscovery {
+	uint64_t chunkId = 0;               ///< Chunk requiring discovery; 0 for an ordinary lookup.
+	uint32_t version = 0;               ///< Version whose replica set was queried.
+	uint64_t connectionGeneration = 0;  ///< Invalidated by connection joins and departures.
+	bool complete = false;              ///< All targeted query replies were received.
+
+	/// Resets the confirmation if required discovery is missing or stale.
+	/// @param plan The proposed write or truncate, including failed plans.
+	/// @param inventoryIncomplete Whether a connected peer's inventory is incomplete.
+	/// @param currentConnectionGeneration Current peer-set generation to validate against.
+	/// @return True if the request needs discovery before this plan can proceed.
+	bool requiresQuery(const ChunkMutationPlan &plan, bool inventoryIncomplete,
+	                   uint64_t currentConnectionGeneration);
+};
+
+/// Checks mutation discovery against connected inventory recovery; exempts identity backends.
+/// @param plan The proposed write or truncate, including failed plans.
+/// @param[in,out] discovery Request confirmation, reset if a new query is required.
+/// @return SAUNAFS_STATUS_OK if discovery is unnecessary or confirmed;
+///         SAUNAFS_ERROR_NOCHUNKSERVERS if it is still required.
+uint8_t matocsserv_check_mutation_discovery(const ChunkMutationPlan &plan,
+                                            ChunkMutationDiscovery &discovery);
 
 /// A list of chunkservers.
 using Chunkservers = std::vector<matocsserventry*>;
@@ -181,12 +206,14 @@ matocsserventry *matocsserv_test_connection(csdbentry *entry, uint32_t ip, uint1
                                             uint32_t version);
 void matocsserv_test_connection_free(matocsserventry *eptr);
 
-/// Coalesces location queries and broadcasts to all eligible chunkservers, even
-/// after registration: disk scans may still reveal unreported chunks.
+/// Coalesces location queries and broadcasts to eligible chunkservers. Read queries
+/// also include completed inventories, since disk scans may reveal more chunks.
 /// @param chunkId Chunk whose locations should be discovered.
+/// @param registeringOnly Restrict new attempts to peers with incomplete inventories.
+///        An existing attempt for this chunk is joined without changing its targets.
 /// @return True to defer the client reply until matoclserv_chunk_locations_resolved()
 /// runs after all answers or timeout; false if no query can start.
-bool matocsserv_query_chunk_location(uint64_t chunkId);
+bool matocsserv_query_chunk_location(uint64_t chunkId, bool registeringOnly = false);
 
 /// Reconciles a stale report's conflicting disk flag without changing the known version.
 /// Queries only this connection; parts temporarily locked by workers are retried.

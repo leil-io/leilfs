@@ -65,6 +65,7 @@
 #include "common/input_packet.h"
 #include "common/io_limits_config_loader.h"
 #include "common/io_limits_database.h"
+#include "common/lambda_guard.h"
 #include "common/legacy_vector.h"
 #include "common/loop_watchdog.h"
 #include "common/massert.h"
@@ -163,16 +164,13 @@ struct DelayedChunkOperation {
 	bool pendingIsFailedCreate = false;  ///< stashed isFailedCreateOperation flag
 };
 
-/// A client chunk operation (FUSE_READ_CHUNK / FUSE_WRITE_CHUNK) held back
-/// while an on-demand chunk-location query is in flight (the requested chunk
-/// exists in metadata but no location is known yet, e.g. right after a
-/// promotion while chunkservers are still re-registering). When the query
-/// resolves, the stored request is replayed once with deferring disabled, so
-/// the client gets whatever is known at that point.
+/// A client request waiting for chunk-location discovery. Reads use the available
+/// results on replay; version-changing mutations require a matching confirmation.
 struct DeferredChunkLocationWait {
 	uint64_t chunkId = 0;
 	PacketHeader header{};
 	std::vector<uint8_t> requestData;
+	ChunkMutationDiscovery discovery;
 };
 
 ///< This looks to be the client type.
@@ -3231,7 +3229,18 @@ void matoclserv_fuse_setattr(matoclserventry *eptr, const uint8_t *data, uint32_
 	});
 }
 
-void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
+static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t chunkId,
+                                                 PacketHeader header,
+                                                 const std::vector<uint8_t> &requestData,
+                                                 const ChunkMutationDiscovery &discovery = {});
+
+/// Handles both truncate packets, including the client-assisted EC completion path.
+/// @param allowDefer Whether this request may wait for discovery; false on replay.
+/// @param discovery Request confirmation to revalidate against the current plan;
+///        empty for the initial request. Validation still runs when deferral is disabled.
+static void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header,
+                                     const uint8_t *data, bool allowDefer,
+                                     const ChunkMutationDiscovery &discovery) {
 	sassert(header.type == SAU_CLTOMA_FUSE_TRUNCATE || header.type == SAU_CLTOMA_FUSE_TRUNCATE_END);
 
 	// Deserialize the request (immutable inputs for the replayable body below)
@@ -3272,6 +3281,8 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 	// attempt's entry before re-running.
 	enum class TruncPhase : uint8_t { kError, kReplyWriteChunk, kDelayed, kDone };
 	struct TruncState {
+		ChunkMutationDiscovery discovery;
+		bool discoveryRequired = false;
 		TruncPhase phase = TruncPhase::kError;
 		uint32_t type = 0;
 		uint64_t chunkId = 0;
@@ -3285,6 +3296,7 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		std::shared_ptr<const uint8_t> writeStartStatus;
 	};
 	auto truncState = std::make_shared<TruncState>();
+	truncState->discovery = discovery;
 	truncState->type = isEnd ? FUSE_TRUNCATE_END : FUSE_TRUNCATE;
 	// lockId survives body replays while it holds (mirror write_chunk): a batch-conflict replay
 	// of the non-END duplicate path passes the previously allocated lockId back into writeChunk
@@ -3305,6 +3317,13 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		        SAUNAFS_STATUS_OK) {
 			truncState->lockId = reqLockId;
 		}
+		truncState->discoveryRequired = false;
+		ctx.setChunkMutationCheck([truncState](const ChunkMutationPlan &plan) {
+			const auto status = matocsserv_check_mutation_discovery(plan, truncState->discovery);
+			truncState->discoveryRequired = status != SAUNAFS_STATUS_OK;
+			return status;
+		});
+		auto clearCheck = makeLambdaGuard([&ctx] { ctx.setChunkMutationCheck({}); });
 		truncState->phase = TruncPhase::kError;
 		truncState->writeStartStatus.reset();
 		truncState->type = isEnd ? FUSE_TRUNCATE_END : FUSE_TRUNCATE;
@@ -3393,7 +3412,13 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 
 	if (eptr->sessionData) { eptr->sessionData->currHourOperationsStats[2]++; }
 
-	auto sendTruncateReply = [eptr, serializer, messageId, inode, truncState](uint8_t replyStatus) {
+	auto sendTruncateReply = [eptr, serializer, messageId, inode, truncState, allowDefer, header,
+	                          request](uint8_t replyStatus) {
+		if (truncState->discoveryRequired && allowDefer &&
+		    matoclserv_defer_chunk_location_wait(eptr, truncState->discovery.chunkId, header,
+		                                         request, truncState->discovery)) {
+			return;
+		}
 		std::vector<uint8_t> reply;
 		if (replyStatus == SAUNAFS_STATUS_OK && truncState->phase == TruncPhase::kReplyWriteChunk) {
 			// New client must write the chunk itself before truncating.
@@ -3450,6 +3475,10 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 		    }
 	    },
 	    isEnd);
+}
+
+void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
+	matoclserv_fuse_truncate(eptr, header, data, true, {});
 }
 
 void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
@@ -4381,15 +4410,18 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 /// Holds the request back if an on-demand chunk-location query for \p chunkId
 /// could be started; the request is replayed by
 /// matoclserv_chunk_locations_resolved once the query completes.
+/// @param discovery Empty for a best-effort lookup; a nonzero chunkId marks required
+///        mutation discovery and restricts new queries to incomplete inventories.
 static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t chunkId,
                                                  PacketHeader header,
-                                                 const std::vector<uint8_t> &requestData) {
+                                                 const std::vector<uint8_t> &requestData,
+                                                 const ChunkMutationDiscovery &discovery) {
 	const auto waiterLimit = matocsserv_get_on_demand_chunk_query_waiter_limit();
 	if (gDeferredChunkLocationWaitCount >= waiterLimit) {
 		if (!gDeferredChunkLocationWaitLimitWarningEmitted) {
 			safs::log_warn(
 			    "{}: on-demand chunk-location query waiter limit reached ({}); "
-			    "returning new requests with currently known locations",
+			    "not deferring additional requests",
 			    __func__, waiterLimit);
 			gDeferredChunkLocationWaitLimitWarningEmitted = true;
 		}
@@ -4397,11 +4429,11 @@ static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t
 		    metrics::Counter::Master::CHUNK_LOCATION_WAITER_LIMIT_REJECTED);
 		return false;
 	}
-	if (!matocsserv_query_chunk_location(chunkId)) { return false; }
+	if (!matocsserv_query_chunk_location(chunkId, discovery.chunkId != 0)) { return false; }
 
 	auto &waits = eptr->deferredChunkLocationWaits[chunkId];
 	if (waits.empty()) { gDeferredChunkLocationWaiters[chunkId].push_back(eptr); }
-	waits.push_back(DeferredChunkLocationWait{chunkId, header, requestData});
+	waits.push_back(DeferredChunkLocationWait{chunkId, header, requestData, discovery});
 	++gDeferredChunkLocationWaitCount;
 	matoclserv_update_deferred_chunk_location_waiter_gauge();
 	return true;
@@ -4517,8 +4549,12 @@ void matoclserv_chunks_info(matoclserventry *eptr, const uint8_t *data, uint32_t
 	matoclserv_createpacket(eptr, matocl::chunksInfo::build(message_id, chunks));
 }
 
+/// @param allowDefer Whether this request may wait for discovery; false on replay.
+/// @param discovery Request confirmation to revalidate against the current plan;
+///        empty for the initial request. Validation still runs when deferral is disabled.
 static void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header,
-                                        const uint8_t *data, bool allowDefer) {
+                                        const uint8_t *data, bool allowDefer,
+                                        const ChunkMutationDiscovery &discovery) {
 	sassert(header.type == SAU_CLTOMA_FUSE_WRITE_CHUNK);
 	inode_t inode;
 	uint32_t chunkIndex;
@@ -4540,6 +4576,8 @@ static void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader head
 	// lock again. `queued` tracks the DelayedChunkOperation the latest run enqueued while
 	// its commit is in flight.
 	struct WriteChunkState {
+		ChunkMutationDiscovery discovery;
+		bool discoveryRequired = false;
 		uint64_t chunkId = 0;
 		// Lock created by an earlier replay attempt. This remains valid input state,
 		// unlike chunkId, which is output from the current attempt only.
@@ -4552,6 +4590,7 @@ static void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader head
 		bool tookDelayedPath = false;  ///< onCommit took the delayed path; reply via chunk_status
 	};
 	auto wc = std::make_shared<WriteChunkState>();
+	wc->discovery = discovery;
 	wc->lockId = lockId;
 
 	// Replayable body: re-runnable on a fresh txn if the commit conflicts (concurrent
@@ -4567,6 +4606,13 @@ static void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader head
 		wc->queued = nullptr;
 		// Reset the previous attempt's outputs so a failed replay cannot leak them
 		// into the error handling below; retainedChunkId alone survives (see above).
+		wc->discoveryRequired = false;
+		ctx.setChunkMutationCheck([wc](const ChunkMutationPlan &plan) {
+			const auto status = matocsserv_check_mutation_discovery(plan, wc->discovery);
+			wc->discoveryRequired = status != SAUNAFS_STATUS_OK;
+			return status;
+		});
+		auto clearCheck = makeLambdaGuard([&ctx] { ctx.setChunkMutationCheck({}); });
 		wc->chunkId = 0;
 		wc->fileLength = 0;
 		wc->opflag = 0;
@@ -4645,7 +4691,9 @@ static void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader head
 		if ((errorStatus == SAUNAFS_ERROR_NOCHUNKSERVERS ||
 		     errorStatus == SAUNAFS_ERROR_CHUNKLOST) &&
 		    allowDefer && wc->chunkId > 0 &&
-		    matoclserv_defer_chunk_location_wait(eptr, wc->chunkId, header, receivedData)) {
+		    matoclserv_defer_chunk_location_wait(
+		        eptr, wc->chunkId, header, receivedData,
+		        wc->discoveryRequired ? wc->discovery : ChunkMutationDiscovery{})) {
 			// The chunk's copies are probably still being re-registered; the
 			// request is replayed when the on-demand query resolves.
 			return;
@@ -4710,10 +4758,10 @@ static void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader head
 }
 
 void matoclserv_fuse_write_chunk(matoclserventry *eptr, PacketHeader header, const uint8_t *data) {
-	matoclserv_fuse_write_chunk(eptr, header, data, true);
+	matoclserv_fuse_write_chunk(eptr, header, data, true, {});
 }
 
-void matoclserv_chunk_locations_resolved(uint64_t chunkId) {
+void matoclserv_chunk_locations_resolved(uint64_t chunkId, bool complete) {
 	auto waiterIter = gDeferredChunkLocationWaiters.find(chunkId);
 	if (waiterIter == gDeferredChunkLocationWaiters.end()) { return; }
 
@@ -4732,15 +4780,22 @@ void matoclserv_chunk_locations_resolved(uint64_t chunkId) {
 		matoclserv_update_deferred_chunk_location_waiter_gauge();
 		if (eptr->mode == ClientConnectionMode::KILL) { continue; }
 
-		// Replay with deferring disabled: the client gets whatever is known
-		// now (possibly still no locations, which it retries as before)
-		for (const auto &wait : matchedWaits) {
+		// Replay once. Reads use known locations; mutation guards also check whether
+		// discovery succeeded, so a timeout cannot authorize a version change.
+		for (auto &wait : matchedWaits) {
+			wait.discovery.complete = complete;
 			switch (wait.header.type) {
 			case SAU_CLTOMA_FUSE_READ_CHUNK:
 				matoclserv_fuse_read_chunk(eptr, wait.header, wait.requestData.data(), false);
 				break;
 			case SAU_CLTOMA_FUSE_WRITE_CHUNK:
-				matoclserv_fuse_write_chunk(eptr, wait.header, wait.requestData.data(), false);
+				matoclserv_fuse_write_chunk(eptr, wait.header, wait.requestData.data(), false,
+				                            wait.discovery);
+				break;
+			case SAU_CLTOMA_FUSE_TRUNCATE:
+			case SAU_CLTOMA_FUSE_TRUNCATE_END:
+				matoclserv_fuse_truncate(eptr, wait.header, wait.requestData.data(), false,
+				                         wait.discovery);
 				break;
 			default:
 				safs::log_warn("chunk-locations-resolved: unexpected deferred packet type {}",
