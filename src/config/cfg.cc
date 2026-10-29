@@ -120,7 +120,7 @@ int cfg_load(const char *configfname,int _lu) {
 	// Absolute: the daemons change directory after loading.
 	std::error_code error;
 	const auto path = std::filesystem::absolute(configfname, error);
-	cfgfname = strdup(error ? configfname : path.c_str());
+	cfgfname = strdup(error ? configfname : path.string().c_str());
 
 	configParameters.clear();
 	const int status = cfg_do_load(configParameters);
