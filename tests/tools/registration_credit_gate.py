@@ -50,6 +50,7 @@ def main():
     parser.add_argument("--query-marker")
     parser.add_argument("--lost-marker")
     parser.add_argument("--drop-query-responses", action="store_true")
+    parser.add_argument("--dropped-query-marker")
     parser.add_argument("--damage-first-bulk", action="store_true")
     args = parser.parse_args()
     if args.initial_credits < 0:
@@ -124,6 +125,8 @@ def main():
                     if packet_type == SAU_CSTOMA_QUERY_CHUNKS:
                         # Fault injection verifies the query test cannot pass via timeout recovery.
                         if args.drop_query_responses:
+                            if args.dropped_query_marker:
+                                signal(args.dropped_query_marker)
                             continue
                         if args.query_marker:
                             signal(args.query_marker)

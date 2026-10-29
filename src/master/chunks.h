@@ -261,10 +261,16 @@ void chunk_report_failed_operation(uint64_t chunkid, uint8_t operation);
 /// made, which only an apply deferred past a KV commit can see.
 bool chunk_apply_mutation_plan(const ChunkMutationPlan &plan, uint8_t &operation);
 
+/// Observes each plan without changing the registry. Returns OK to continue or an error
+/// to veto a valid plan before mutation; a failed plan retains its original error.
+using ChunkMutationCheck = std::function<uint8_t(const ChunkMutationPlan &)>;
+
 uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal, bool quota_exceeded,
-                           uint8_t *opflag, uint64_t *nchunkid, uint32_t min_server_version);
-uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length,
-		uint8_t goal, bool denyTruncatingParityParts, bool quota_exceeded, uint64_t *nchunkid);
+                           uint8_t *opflag, uint64_t *nchunkid, uint32_t min_server_version,
+                           const ChunkMutationCheck &beforeMutation = {});
+uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length, uint8_t goal,
+                             bool denyTruncatingParityParts, bool quota_exceeded,
+                             uint64_t *nchunkid, const ChunkMutationCheck &beforeMutation = {});
 void chunk_stats(uint32_t *del,uint32_t *repl);
 uint32_t get_chunk_info_serialized_size();
 void chunk_store_info(uint8_t *buff);

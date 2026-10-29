@@ -1968,14 +1968,18 @@ bool chunk_apply_mutation_plan(const ChunkMutationPlan &plan, uint8_t &operation
 /// target chunk ID to the caller in case of modification.
 /// @param minServerVersion The minimum server version required for the chunk creation, used to
 /// check if the operation can be performed in case of creation.
+/// @param beforeMutation Optional plan check, also called for failed plans. A non-OK
+///        result refuses a valid plan before registry changes or chunkserver commands.
 /// @return The status of the operation.
 uint8_t chunk_multi_modify(uint64_t currentChunkId, uint32_t *lockid, uint8_t goal,
                            bool quotaExceeded, uint8_t *operation, uint64_t *targetChunkId,
-                           uint32_t minServerVersion = 0) {
+                           uint32_t minServerVersion, const ChunkMutationCheck &beforeMutation) {
 	const auto plan =
 	    chunk_plan_modify(currentChunkId, *lockid, goal, quotaExceeded, minServerVersion);
 	if (plan.targetChunkId != 0) { *targetChunkId = plan.targetChunkId; }
+	const auto checked = beforeMutation ? beforeMutation(plan) : uint8_t{SAUNAFS_STATUS_OK};
 	if (plan.status != SAUNAFS_STATUS_OK) { return plan.status; }
+	if (checked != SAUNAFS_STATUS_OK) { return checked; }
 
 	assert(chunk_mutation_plan_current(plan));
 	chunk_run_mutation_plan(plan, *operation);
@@ -2000,14 +2004,18 @@ uint8_t chunk_multi_modify(uint64_t currentChunkId, uint32_t *lockid, uint8_t go
 /// performed.
 /// @param targetChunkId Pointer to the target chunk ID after truncation, used to transmit the
 /// target chunk ID to the caller in case of truncation.
+/// @param beforeMutation Optional plan check, also called for failed plans. A non-OK
+///        result refuses a valid plan before registry changes or chunkserver commands.
 /// @return The status of the operation.
 uint8_t chunk_multi_truncate(uint64_t currentChunkId, uint32_t lockid, uint32_t length,
                              uint8_t goal, bool denyTruncatingParityParts, bool quotaExceeded,
-                             uint64_t *targetChunkId) {
+                             uint64_t *targetChunkId, const ChunkMutationCheck &beforeMutation) {
 	const auto plan = chunk_plan_truncate(currentChunkId, lockid, length, goal,
 	                                      denyTruncatingParityParts, quotaExceeded);
 	if (plan.targetChunkId != 0) { *targetChunkId = plan.targetChunkId; }
+	const auto checked = beforeMutation ? beforeMutation(plan) : uint8_t{SAUNAFS_STATUS_OK};
 	if (plan.status != SAUNAFS_STATUS_OK) { return plan.status; }
+	if (checked != SAUNAFS_STATUS_OK) { return checked; }
 
 	uint8_t operation = Chunk::NONE;
 	assert(chunk_mutation_plan_current(plan));
