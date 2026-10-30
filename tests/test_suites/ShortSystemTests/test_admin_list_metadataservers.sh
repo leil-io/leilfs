@@ -28,5 +28,5 @@ saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
 shadow_version=$(list_metadata_servers | awk '/shadow/{print $6}')
 saunafs_master_n 0 stop
-master_version=$(metadata_get_version "${info[master_data_path]}/metadata.sfs")
+master_version=$(metadata_get_version "${info[master_data_path]}/metadata.leil")
 assert_equals "$master_version" "$shadow_version"

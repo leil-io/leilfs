@@ -20,8 +20,8 @@ cd "${info[mount0]}"
 FILE_SIZE=1K file-generate chunk{1..5}
 cd
 assert_eventually 'saunafs_shadow_synchronized 1'
-assert_success grep -q CHECKSUM "${info[master0_data_path]}/changelog.sfs"
-cp "${info[master1_data_path]}/metadata.sfs" "${TEMP_DIR}/metadata_before_reload.sfs"
+assert_success grep -q CHECKSUM "${info[master0_data_path]}/changelog.leil"
+cp "${info[master1_data_path]}/metadata.leil" "${TEMP_DIR}/metadata_before_reload.sfs"
 syslog_start_line=$(wc -l < /var/log/syslog)
 syslog_next_line=$((${syslog_start_line} + 1))
 
@@ -43,7 +43,7 @@ assert_eventually "tail -n +${syslog_next_line} /var/log/syslog | \
 	grep -q 'unloading filesystem at'"
 assert_eventually 'saunafs_shadow_synchronized 1'
 assert_failure cmp -s "${TEMP_DIR}/metadata_before_reload.sfs" \
-	"${info[master1_data_path]}/metadata.sfs"
+	"${info[master1_data_path]}/metadata.leil"
 reload_log=$(tail -n +"${syslog_next_line}" /var/log/syslog)
 assert_awk_finds_no '/Failed to set next chunk ID from metadata file/' "${reload_log}"
 assert_awk_finds_no '/Metadata checksum not matching/' "${reload_log}"

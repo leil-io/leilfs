@@ -19,8 +19,8 @@ CHUNKSERVERS=3 \
 # Save path of meta-mount in SFS_META_MOUNT_PATH for metadata generators
 export SFS_META_MOUNT_PATH=${info[mount1]}
 
-# Save path of changelog.sfs in CHANGELOG to make it possible to verify generated changes
-export CHANGELOG="${info[master_data_path]}"/changelog.sfs
+# Save path of changelog.leil in CHANGELOG to make it possible to verify generated changes
+export CHANGELOG="${info[master_data_path]}"/changelog.leil
 
 environment_sanity_check() {
 	local exec_time=$(execution_time getent hosts sfsmaster)

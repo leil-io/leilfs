@@ -52,10 +52,10 @@ chmod a+x $TEMP_DIR/metarestore.sh
 
 backup_copies=1
 function check_backup_copies() {
-	expect_equals $backup_copies $(ls "${info[master_data_path]}"/metadata.sfs.? | wc -l)
-	expect_file_exists "${info[master_data_path]}/metadata.sfs"
+	expect_equals $backup_copies $(ls "${info[master_data_path]}"/metadata.leil.? | wc -l)
+	expect_file_exists "${info[master_data_path]}/metadata.leil"
 	for (( i = 1 ; i <= backup_copies ; ++i )); do
-		expect_file_exists "${info[master_data_path]}/metadata.sfs.$i"
+		expect_file_exists "${info[master_data_path]}/metadata.leil.$i"
 	done
 }
 
@@ -64,8 +64,8 @@ function check_backup_copies() {
 function check() {
 	cd "${info[master_data_path]}"
 	rm -f "$TEMP_DIR/metaout"
-	assert_file_exists "changelog.sfs"
-	assert_file_exists "metadata.sfs"
+	assert_file_exists "changelog.leil"
+	assert_file_exists "metadata.leil"
 	if [[ $2 == OK ]]; then
 		assert_success saunafs_admin_master save-metadata ${admin_timeout}
 	else
@@ -82,10 +82,10 @@ function check() {
 	if [[ $2 == OK ]]; then
 		# check if the dumped metadata is up to date,
 		# ie. if its version is equal to (1 + last entry in changelog.1)
-		assert_file_exists changelog.sfs.1
-		last_change=$(tail -1 changelog.sfs.1 | cut -d : -f 1)
+		assert_file_exists changelog.leil.1
+		last_change=$(tail -1 changelog.leil.1 | cut -d : -f 1)
 		assert_success test -n "$last_change"
-		assert_equals $((last_change+1)) "$(sfsmetadump metadata.sfs | awk 'NR==2{print $6}')"
+		assert_equals $((last_change+1)) "$(sfsmetadump metadata.leil | awk 'NR==2{print $6}')"
 		if ((backup_copies < 5)); then
 			backup_copies=$((backup_copies + 1))
 		fi

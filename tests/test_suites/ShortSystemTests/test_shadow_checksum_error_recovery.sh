@@ -8,7 +8,7 @@ CHUNKSERVERS=1 \
 touch "${info[mount0]}"/file
 
 # Corrupt the changelog, start a shadow master and see if it can deal with it.
-sed -i 's/file/fool/g' "${info[master_data_path]}"/changelog.sfs
+sed -i 's/file/fool/g' "${info[master_data_path]}"/changelog.leil
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
 

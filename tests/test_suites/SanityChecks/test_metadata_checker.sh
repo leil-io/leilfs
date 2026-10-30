@@ -44,7 +44,7 @@ function get_metadata_sections() {
 }
 
 function get_empty_metadata_size() {
-    local sections=$(get_metadata_sections "${info[master_data_path]}/metadata.sfs")
+    local sections=$(get_metadata_sections "${info[master_data_path]}/metadata.leil")
     local total_size=$(echo "${sections}" | awk -v header1="${METADATA_HEADER_SIZE}" -v section_headers="$(("${METADATA_SECTION_HEADER_SIZE}" * "${METADATA_SECTION_AMOUNT}"))" '{sum+=$9} END {print header1+sum+section_headers}')
     ## Verify all empty section default sizes at Initialize from empty metadata
     assert_equals 33 "$(echo "${sections}" | grep -i "Node" | awk '{print $9}')"
@@ -59,7 +59,7 @@ function get_empty_metadata_size() {
     echo "${total_size}"
 }
 
-metadata_init_version="$(metadata_get_version "${info[master_data_path]}/metadata.sfs")"
+metadata_init_version="$(metadata_get_version "${info[master_data_path]}/metadata.leil")"
 
 log_data="$(sed -n '/connected to Master/,$p' "${TEMP_DIR}/syslog" | grep -E info)"
 metadata_path="$(echo ${log_data} | grep -E "*opened metadata file*"| awk -F 'metadata file ' '{print $2}' | awk '{print $1}')"
@@ -69,7 +69,7 @@ assert_file_exists "${metadata_path}"
 assert_equals ${METADATA_SECTION_AMOUNT} $(grep -E "Section loaded successfully" "${TEMP_DIR}/syslog" | wc -l)
 
 assert_equals ${METADATA_INIT_SIZE} "$(stat -c %s "${metadata_path}")"
-assert_equals 1 $(metadata_get_version "${info[master_data_path]}/metadata.sfs")
+assert_equals 1 $(metadata_get_version "${info[master_data_path]}/metadata.leil")
 
 read -r total_inodes dir_inodes file_inodes symlink_inodes chunk_amount <<< "$(echo "${log_data}" | grep -E "metadata file ${metadata_path} read" | sed -n 's/.*metadata file .* read (\(.*\) inodes including \(.*\) directory inodes, \(.*\) file inodes, \(.*\) symlink inodes and \(.*\) chunks).*/\1 \2 \3 \4 \5 /p')"
 
@@ -108,7 +108,7 @@ file_inodes_before_restart="$(grep -E "Files:" <<< "$saunafs_info_output" | awk 
 symlink_inodes_before_restart="$(grep -E "Symlinks:" <<< "$saunafs_info_output" | awk '{print $2}')"
 
 ## Check version has increased
-metadata_current_version="$(metadata_get_version "${info[master_data_path]}/metadata.sfs")"
+metadata_current_version="$(metadata_get_version "${info[master_data_path]}/metadata.leil")"
 assert_success check_version_increased ${metadata_current_version} ${metadata_init_version}
 
 ## Restart master and check metadata size and inodes

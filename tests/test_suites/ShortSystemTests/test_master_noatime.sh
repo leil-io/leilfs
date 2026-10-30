@@ -4,7 +4,7 @@ USE_RAMDISK="YES" \
 	setup_local_empty_saunafs info
 
 count_accesses() {
-	grep -c -w ACCESS "${info[master_data_path]}"/changelog.sfs || true
+	grep -c -w ACCESS "${info[master_data_path]}"/changelog.leil || true
 }
 
 # Verify if atime updates are detectable in changelogs by count_accesses

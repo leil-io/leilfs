@@ -10,7 +10,7 @@ CHUNKSERVERS=0 \
 	AUTO_SHADOW_MASTER="YES" \
 	setup_local_empty_saunafs info
 
-metadata_file="${info[master0_data_path]}/metadata.sfs"
+metadata_file="${info[master0_data_path]}/metadata.leil"
 
 ACTUAL_HEADER_TAG="SFSM 2.9"
 ACTUAL_TRAILER_TAG="[SFS EOF MARKER]"
@@ -42,36 +42,36 @@ echo -n "MFS" | dd of=${metadata_file} bs=1 seek=$(( $(stat --print="%s" ${metad
 assert_equals "$(head -c8 ${metadata_file})" "${LEGACY_HEADER_TAG}"
 assert_equals "$(tail -c16 ${metadata_file})" "${LEGACY_TRAILER_TAG}"
 
-mv -iv "${info[master0_data_path]}/metadata.sfs" "${info[master0_data_path]}/metadata.mfs"
+mv -iv "${info[master0_data_path]}/metadata.leil" "${info[master0_data_path]}/metadata.mfs"
 assertlocal_file_exists "${info[master0_data_path]}/metadata.mfs"
 
 # Start master server to reload metadata legacy format
 assertlocal_success saunafs_master_n 0 start
 # Restart master server to load metadata in new format when both are present
 assertlocal_success saunafs_master_n 0 restart
-assertlocal_file_exists "${info[master0_data_path]}/metadata.sfs"
+assertlocal_file_exists "${info[master0_data_path]}/metadata.leil"
 assertlocal_file_exists "${info[master0_data_path]}/metadata.mfs"
 
 # Shadows has not  synchronize metadata at this point
-assertlocal_file_not_exists "${info[master1_data_path]}/metadata.sfs"
+assertlocal_file_not_exists "${info[master1_data_path]}/metadata.leil"
 #start shadow server to synchronize metadata
 assert_success saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"
-assertlocal_file_exists "${info[master1_data_path]}/metadata.sfs"
+assertlocal_file_exists "${info[master1_data_path]}/metadata.leil"
 
 # Stop master server to save metadata in new format
 assert_success saunafs_master_n 0 stop
 
 # Synchronized metadata in shadows has proper Tags
-SHADOW_METADATA_FILE="${info[master1_data_path]}/metadata.sfs"
+SHADOW_METADATA_FILE="${info[master1_data_path]}/metadata.leil"
 assert_equals "$(head -c8 ${SHADOW_METADATA_FILE})" "${ACTUAL_HEADER_TAG}"
 assert_equals "$(tail -c16 ${SHADOW_METADATA_FILE})" "${ACTUAL_TRAILER_TAG}"
 
 # Stop metalogger service and verify created changelogs
 saunafs_metalogger_daemon stop
-assertlocal_file_exists "${info[master0_data_path]}/changelog_ml.sfs"
+assertlocal_file_exists "${info[master0_data_path]}/changelog_ml.leil"
 
 # Expected Values after reload
-metadata_file="${info[master0_data_path]}/metadata.sfs"
+metadata_file="${info[master0_data_path]}/metadata.leil"
 assert_equals "$(head -c8 ${metadata_file})" "${ACTUAL_HEADER_TAG}"
 assert_equals "$(tail -c16 ${metadata_file})" "${ACTUAL_TRAILER_TAG}"

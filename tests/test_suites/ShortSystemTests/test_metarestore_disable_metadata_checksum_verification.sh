@@ -3,7 +3,7 @@ CHUNKSERVERS=1 \
 	MASTER_EXTRA_CONFIG="METADATA_CHECKSUM_FREQUENCY = 1" \
 	setup_local_empty_saunafs info
 
-changelog_file="${info[master_data_path]}/changelog.sfs"
+changelog_file="${info[master_data_path]}/changelog.leil"
 
 # Create some metadata
 cd ${info[mount0]}

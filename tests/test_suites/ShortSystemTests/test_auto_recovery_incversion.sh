@@ -11,7 +11,7 @@ CHUNKSERVERS=2 \
 	setup_local_empty_saunafs info
 
 # Remember version of the metadata file. We expect it not to change when generating data.
-metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.sfs)
+metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.leil)
 
 cd ${info[mount0]}
 mkdir dir
@@ -26,7 +26,7 @@ assert_success rm "$chunk"
 
 # Truncate file (this will generate INCVERSION change) and remember the metadata
 truncate -s 1 dir/file
-assert_awk_finds '/INCVERSION/' "$(cat "${info[master_data_path]}"/changelog.sfs)"
+assert_awk_finds '/INCVERSION/' "$(cat "${info[master_data_path]}"/changelog.leil)"
 echo b > something_more  # To make sure that after INCVERSION we are able to apply other changes
 if [[ ${info[is_windows_system]} -eq 1 ]]; then
 	# On Windows, we need to wait for the metadata to be dumped
@@ -39,7 +39,7 @@ cd
 saunafs_master_daemon kill
 
 # Make sure changes are in changelog only (ie. that metadata wasn't dumped)
-assert_equals "$metadata_version" "$(metadata_get_version "${info[master_data_path]}"/metadata.sfs)"
+assert_equals "$metadata_version" "$(metadata_get_version "${info[master_data_path]}"/metadata.leil)"
 
 # Restore the filesystem from changelog by starting master server and check it
 assert_success saunafs_master_daemon start

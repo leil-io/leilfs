@@ -38,6 +38,7 @@
 #include "chunkserver/network_stats.h"
 #include "common/charts.h"
 #include "common/event_loop.h"
+#include "common/legacy_data_files.h"
 #include "common/time_utils.h"
 #include "slogger/slogger.h"
 
@@ -59,7 +60,9 @@
 #define MEMORY_USAGE 1
 #endif
 
-#define CHARTS_FILENAME "csstats.sfs"
+#define CHARTS_FILENAME "csstats.leil"
+/// Its pre-rebrand name, still used where it is the only one, see legacy_data_files
+#define CHARTS_LEGACY_FILENAME "csstats.sfs"
 
 #define CHARTS_UCPU 0
 #define CHARTS_SCPU 1
@@ -288,5 +291,7 @@ int chartsdata_init() {
 	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_MINUTE, 0, chartsdata_refresh);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, SECONDS_IN_ONE_HOUR, 0, chartsdata_store);
 	eventloop_destructregister(chartsdata_term);
-	return charts_init(calcdefs, statdefs, estatdefs, CHARTS_FILENAME);
+	const bool legacy = legacy_data_files::usesLegacyNames(".", {"csstats"});
+	return charts_init(calcdefs, statdefs, estatdefs,
+	                   legacy ? CHARTS_LEGACY_FILENAME : CHARTS_FILENAME);
 }

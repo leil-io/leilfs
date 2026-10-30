@@ -16,7 +16,7 @@ echo "sfssubfolder=some/subfolder" >> "${info[mount1_cfg]}"
 saunafs_mount_start 1
 
 # Remember version of the metadata file. We expect it not to change when generating data.
-metadata_file="${info[master_data_path]}/metadata.sfs"
+metadata_file="${info[master_data_path]}/metadata.leil"
 metadata_version=$(metadata_get_version "$metadata_file")
 
 # Generate metadata in /some/subfolder

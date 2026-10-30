@@ -49,6 +49,7 @@
 #include "common/cwrap.h"
 #include "common/event_loop.h"
 #include "common/exit_status.h"
+#include "common/legacy_data_files.h"
 #include "common/main.h"
 #include "common/massert.h"
 #include "common/setup.h"
@@ -834,21 +835,23 @@ inline void tuneMalloc() {
 
 /// True if `dir` looks like an initialized data directory rather than an
 /// empty one freshly created by package install/upgrade (the master's
-/// metadata.sfs.empty placeholder is always present regardless, so bare
+/// metadata.leil.empty placeholder is always present regardless, so bare
 /// directory existence can't tell the two apart). Mirrors the filenames
 /// master/metalogger actually look for at startup, plus the ".1" rotated
 /// backup MasterConn::downloadNext() leaves behind (see rotateFiles() in
 /// masterconn.cc). Duplicated here as literals (metadata_backend_common.h
 /// kMetadataFilename/kMetadataLegacyFilename/kMetadataMlFilename) since this
 /// generic entry point is shared by chunkserver too and shouldn't pull in
-/// master-specific headers.
-inline bool hasKnownMetadata(const std::string &dir) {
+/// master-specific headers; named apart from hasKnownMetadata(), which the
+/// daemons that do include them (through init.h) also see. Pre-rebrand names
+/// count too: a daemon keeps using them where they are the only ones.
+static bool dataPathHasMetadata(const std::string &dir) {
 	static const char *const kKnownMetadataFilenames[] = {
-	    "metadata.sfs", "metadata.mfs", "metadata_ml.sfs", "metadata.sfs.1",
-	    "metadata_ml.sfs.1"};
+	    "metadata.leil", "metadata.mfs", "metadata_ml.leil", "metadata.leil.1",
+	    "metadata_ml.leil.1"};
 	for (const char *name : kKnownMetadataFilenames) {
-		if (access((dir + "/" + name).c_str(), F_OK) == 0) {
-			return true;
+		for (const auto &candidate : {std::string(name), legacy_data_files::legacyName(name)}) {
+			if (access((dir + "/" + candidate).c_str(), F_OK) == 0) { return true; }
 		}
 	}
 	return false;
@@ -1016,8 +1019,8 @@ int main(int argc,char **argv) {
 
 	wrkdir = cfg_getstr("DATA_PATH",DATA_PATH);
 
-	if (strcmp(wrkdir, DATA_PATH) == 0 && !hasKnownMetadata(DATA_PATH) &&
-	    hasKnownMetadata(DATA_PATH_LEGACY)) {
+	if (strcmp(wrkdir, DATA_PATH) == 0 && !dataPathHasMetadata(DATA_PATH) &&
+	    dataPathHasMetadata(DATA_PATH_LEGACY)) {
 		// Only log once a real sink is set up (see the legacy config file warning
 		// above). Lightweight run modes such as isalive never call setup_logs(),
 		// so logging here unconditionally falls back to spdlog's default stdout

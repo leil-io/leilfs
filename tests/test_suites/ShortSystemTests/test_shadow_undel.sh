@@ -24,7 +24,7 @@ only_file_in_trash() {
 }
 
 trash="${info[mount1]}/trash"
-changelog_file="${info[master_data_path]}"/changelog.sfs
+changelog_file="${info[master_data_path]}"/changelog.leil
 
 saunafs_master_n 1 start
 assert_eventually "saunafs_shadow_synchronized 1"

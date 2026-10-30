@@ -603,7 +603,7 @@ add_metadata_server_() {
 	if [[ "${saunafs_info_[metadata_backend]}" == "FILE" ]]; then
 		if [[ "$personality" == "master" ]]; then
 			cp "$masterserver_master_cfg" "$masterserver_cfg"
-			echo -n 'SFSM NEW' >"$masterserver_data_path/metadata.sfs"
+			echo -n 'SFSM NEW' >"$masterserver_data_path/metadata.leil"
 		elif [[ "$personality" == "shadow" ]]; then
 			cp "$masterserver_shadow_cfg" "$masterserver_cfg"
 		else
@@ -1105,7 +1105,7 @@ get_data_path() {
 }
 
 get_current_master_sessions_file() {
-  echo "${saunafs_info_[master${saunafs_info_[current_master]}_data_path]}/sessions.sfs"
+  echo "${saunafs_info_[master${saunafs_info_[current_master]}_data_path]}/sessions.leil"
 }
 
 # print enabled chunkserver hdd paths on selected server, one per line

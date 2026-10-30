@@ -13,8 +13,8 @@ CHUNKSERVERS=1 \
 	AUTO_SHADOW_MASTER="NO" \
 	setup_local_empty_saunafs info
 
-changelog_file="${info[master_data_path]}/changelog.sfs"
-metadata_file="${info[master_data_path]}/metadata.sfs"
+changelog_file="${info[master_data_path]}/changelog.leil"
+metadata_file="${info[master_data_path]}/metadata.leil"
 
 # Remember version of the metadata file. We expect it not to change when generating data.
 metadata_version=$(metadata_get_version "$metadata_file")

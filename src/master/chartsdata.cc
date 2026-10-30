@@ -40,6 +40,7 @@
 #include "master/chunk_operations_interface.h"
 #include "master/filesystem_stats.h"
 #include "master/matoclserv.h"
+#include "master/metadata_backend_common.h"
 #include "slogger/slogger.h"
 
 #if defined(SAUNAFS_HAVE_GETRUSAGE)
@@ -59,8 +60,6 @@
 #if defined(CPU_USAGE) && defined(SAUNAFS_HAVE_STRUCT_RUSAGE_RU_MAXRSS)
 #define MEMORY_USAGE 1
 #endif
-
-#define CHARTS_FILENAME "stats.sfs"
 
 #define CHARTS_UCPU 0
 #define CHARTS_SCPU 1
@@ -268,5 +267,5 @@ int chartsdata_init() {
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 60, 0, chartsdata_refresh);
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 3600, 0, chartsdata_store);
 	eventloop_destructregister(chartsdata_term);
-	return charts_init(calcdefs, statdefs, estatdefs, CHARTS_FILENAME);
+	return charts_init(calcdefs, statdefs, estatdefs, kStatsFilename);
 }

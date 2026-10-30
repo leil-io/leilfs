@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "common/event_loop.h"
+#include "common/legacy_data_files.h"
 #include "common/random.h"
 #include "common/run_tab.h"
 #include "config/cfg.h"
@@ -40,6 +41,7 @@
 #include "master/matocsserv.h"
 #include "master/matomlserv.h"
 #include "master/matontserv.h"
+#include "master/metadata_backend_common.h"
 #include "master/metadata_backend_file.h"
 #ifdef ENABLE_FOUNDATIONDB
 #include "master/metadata_backend_forkless.h"
@@ -103,12 +105,22 @@ inline int session_manager_init() {
 	return 0;
 }
 
+/// Keeps the pre-rebrand data file names (*.sfs) where the data directory only has those
+inline int data_file_names_init() {
+	if (legacy_data_files::usesLegacyNames(".", {"metadata", "changelog", "sessions", "stats"})) {
+		useLegacyDataFileNames();
+	}
+	return 0;
+}
+
 /// Functions to call before normal startup
 inline const std::vector<RunTab> earlyRunTabs = {
     RunTab{.function = metadataserver::personality_validate, .name = "validate personality"}};
 
 /// Functions to call during normal startup
 inline const std::vector<RunTab> runTabs = {
+    // has to be before anything uses its data files
+    RunTab{.function = data_file_names_init, .name = "data file names"},
     RunTab{.function = prometheus_init, .name = "prometheus module"},
     // has to be first
     RunTab{.function = hstorage_init, .name = "name storage"},

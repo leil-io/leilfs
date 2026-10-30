@@ -13,7 +13,7 @@ CHUNKSERVERS=1 \
 
 # Do some change and corrupt the changelog
 touch "${info[mount0]}"/file
-sed -i 's/file/fool/g' "${info[master_data_path]}"/changelog.sfs
+sed -i 's/file/fool/g' "${info[master_data_path]}"/changelog.leil
 
 # Start a shadow master and see if it can deal with the corrupted changelog
 saunafs_master_n 1 start
@@ -33,7 +33,7 @@ assert_awk_finds_no '/master.mltoma_changelog_apply_error: delay/' "$log"
 # Stop the shadow master, generate new changes, break them.
 saunafs_master_n 1 stop
 touch "${info[mount0]}"/file2
-sed -i 's/file2/fool2/g' "${info[master_data_path]}"/changelog.sfs
+sed -i 's/file2/fool2/g' "${info[master_data_path]}"/changelog.leil
 
 # Start the shadow master again; it shouldn't synchronize within first seconds because of
 # METADATA_SAVE_REQUEST_MIN_PERIOD. Let's verify if the synchronization needs at least 7 seconds.

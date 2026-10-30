@@ -347,5 +347,5 @@ generate_changelog() {
 
 # get_changes <dir> -- prints all the changes that can be found in changelog in the given directory
 get_changes() {
-	find "$1" -regextype posix-egrep -regex '.*/changelog.sfs([.][0-9]+)?$' | xargs sort -n -u
+	find "$1" -regextype posix-egrep -regex '.*/changelog.leil([.][0-9]+)?$' | xargs sort -n -u
 }

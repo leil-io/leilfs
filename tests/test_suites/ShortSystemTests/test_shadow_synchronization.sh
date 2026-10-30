@@ -19,7 +19,7 @@ CHUNKSERVERS=3 \
 
 # Save these two paths for metadata generators
 export SFS_META_MOUNT_PATH=${info[mount1]}
-export CHANGELOG="${info[master0_data_path]}"/changelog.sfs
+export CHANGELOG="${info[master0_data_path]}"/changelog.leil
 
 # Generate a lot of different changes
 cd "${info[mount0]}"

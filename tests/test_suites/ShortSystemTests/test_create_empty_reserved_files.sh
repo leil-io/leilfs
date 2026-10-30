@@ -19,12 +19,12 @@ count_files() {
 trash="${info[mount1]}/trash"
 reserved="${info[mount1]}/reserved"
 
-# A metadata dump rotates changelog.sfs (a shadow that rejects a change can request one), so read
+# A metadata dump rotates changelog.leil (a shadow that rejects a change can request one), so read
 # every changelog file and keep each "<version>: <timestamp>|<change>" line once. A failed read
 # fails the caller instead of looking like an empty changelog.
 master_changelog() {
 	local changes
-	changes=$(cat "${info[master_data_path]}"/changelog.sfs*) || return 1
+	changes=$(cat "${info[master_data_path]}"/changelog.leil*) || return 1
 	awk -F': ' '!seen[$1]++' <<< "${changes}"
 }
 

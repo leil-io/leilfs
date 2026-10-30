@@ -7,7 +7,7 @@ endif()
 configure_file(postinst.in postinst)
 set(POSTINST_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/postinst PARENT_SCOPE)
 
-install(FILES metadata.sfs                                   DESTINATION ${DATA_SUBDIR} RENAME metadata.sfs.empty)
+install(FILES metadata.leil                                  DESTINATION ${DATA_SUBDIR} RENAME metadata.leil.empty)
 install_legacy_dir_symlink(${DATA_PATH_LEGACY} leil)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/leil-exports.cfg      DESTINATION ${SFSMASTER_EXAMPLES_SUBDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/leil-goals.cfg        DESTINATION ${SFSMASTER_EXAMPLES_SUBDIR})

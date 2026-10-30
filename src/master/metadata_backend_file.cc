@@ -1475,7 +1475,7 @@ void MetadataBackendFile::init() {
 		throw FilesystemException(
 		    "can't open metadata file " + currentPath + "/" + kMetadataFilename +
 		    ": if this is a new installation create empty metadata by copying " + currentPath +
-		    "/" + kMetadataFilename + ".empty to " + currentPath + "/" + kMetadataFilename);
+		    "/metadata.leil.empty to " + currentPath + "/" + kMetadataFilename);
 	}
 #endif
 }

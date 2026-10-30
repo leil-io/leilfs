@@ -11,9 +11,9 @@ assert_eventually "saunafs_shadow_synchronized 1"
 # Generate some changes and remember a list of files in shadow's working directory
 touch "${info[mount0]}"/file{1..10}
 assert_eventually "saunafs_shadow_synchronized 1"
-# stats.sfs is a file which appears periodically every hour, so it is ignored here
+# stats.leil is a file which appears periodically every hour, so it is ignored here
 # to avoid the situation that it is created after this check, but before the final one
-files_before=$(ls "${info[master1_data_path]}" | grep -v "stats.sfs" | sort)
+files_before=$(ls "${info[master1_data_path]}" | grep -v "stats.leil" | sort)
 
 # Make shadow master lose connection with the master by making it sleep more than timeout
 shadow_pid=$(saunafs_master_n 1 test | sed 's/.*: //')
@@ -26,5 +26,5 @@ sleep 13
 touch "${info[mount0]}"/file{1..20}
 kill -CONT "$shadow_pid"
 assert_eventually "saunafs_shadow_synchronized 1"
-# Again, stats.sfs is ignored as its existence depends on a particular time of day
-assert_equals "$files_before" "$(ls "${info[master1_data_path]}" | grep -v "stats.sfs" | sort)"
+# Again, stats.leil is ignored as its existence depends on a particular time of day
+assert_equals "$files_before" "$(ls "${info[master1_data_path]}" | grep -v "stats.leil" | sort)"

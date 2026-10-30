@@ -52,8 +52,8 @@ assert_awk_finds_no '/Executing deferred metadata dump/' "${log}"
 # Message for the usual metadata dump
 assert_awk_finds '/Metadata dumped successfully after applying changelogs/' "${log}"
 
-# Save birth timestamp of metadata.sfs after stopping the initial master
-birth_timestamp_after_stop=$(get_birth_time_timestamp "${info[master_data_path]}/metadata.sfs")
+# Save birth timestamp of metadata.leil after stopping the initial master
+birth_timestamp_after_stop=$(get_birth_time_timestamp "${info[master_data_path]}/metadata.leil")
 
 # Restart the master server, this time using `-o defer-metadata-dump` option
 assert_success saunafs_master_daemon_ha start -o initial-personality=master \
@@ -92,12 +92,12 @@ echo "Waiting for deferred metadata dump to complete..."
 log=$(cat "${master_log_file}")
 assert_awk_finds '/Deferred metadata dump completed successfully/' "${log}"
 
-# Save birth timestamp of metadata.sfs after starting the master
-birth_timestamp_after_start=$(get_birth_time_timestamp "${info[master_data_path]}/metadata.sfs")
+# Save birth timestamp of metadata.leil after starting the master
+birth_timestamp_after_start=$(get_birth_time_timestamp "${info[master_data_path]}/metadata.leil")
 
 # Validate the file was actually updated
 assert_less_than "${birth_timestamp_after_stop}" "${birth_timestamp_after_start}"
-echo "Verified: metadata.sfs was updated by deferred dump"
+echo "Verified: metadata.leil was updated by deferred dump"
 echo "  Birthtime after stop: ${birth_timestamp_after_stop}"
 echo "  Birthtime after start:  ${birth_timestamp_after_start}"
 echo "  Difference: $((birth_timestamp_after_start - birth_timestamp_after_stop))"

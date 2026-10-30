@@ -6,7 +6,7 @@ CHUNKSERVERS=3 \
 	setup_local_empty_saunafs info
 
 # Remember version of the metadata file. We expect it not to change when generating data.
-metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.sfs)
+metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.leil)
 
 cd ${info[mount0]}
 mkdir dir
@@ -81,7 +81,7 @@ cd
 saunafs_master_daemon kill
 
 # Make sure changes are in changelog only (ie. that metadata wasn't dumped).
-assert_equals "$metadata_version" "$(metadata_get_version "${info[master_data_path]}"/metadata.sfs)"
+assert_equals "$metadata_version" "$(metadata_get_version "${info[master_data_path]}"/metadata.leil)"
 
 # Restore the filesystem from changelog by starting master server and check it.
 assert_success saunafs_master_daemon start

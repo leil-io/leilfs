@@ -20,7 +20,7 @@ assert_success saunafs-admin stop-master-without-saving-metadata \
 assert_eventually "! saunafs_master_daemon isalive"
 
 # Verify if a proper lock file was left by the master server
-lockfile="${info[master_data_path]}/metadata.sfs.lock"
+lockfile="${info[master_data_path]}/metadata.leil.lock"
 assert_file_exists "$lockfile"
 assert_equals "quick_stop: $last_metadata_version" "$(cat "$lockfile")"
 

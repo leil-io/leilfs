@@ -9,7 +9,7 @@ assert_eventually_prints $'master\trunning' \
 
 version=$(saunafs-admin metadataserver-status --porcelain localhost ${info[matocl]} | cut -f3)
 # Version of last changelog entry.
-changelog_version=$(tail -1 "${info[master_data_path]}"/changelog.sfs | grep -o '^[0-9]*')
+changelog_version=$(tail -1 "${info[master_data_path]}"/changelog.leil | grep -o '^[0-9]*')
 
 # Make sure admin returned correct metadata version.
 assert_equals $version "$((changelog_version + 1))"

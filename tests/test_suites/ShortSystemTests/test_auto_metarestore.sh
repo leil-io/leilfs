@@ -9,7 +9,7 @@ saunafs_metalogger_daemon start
 for i in {1..5}; do
 	touch "${info[mount0]}/file_$i."{1..20}
 	saunafs_master_daemon stop
-	cp "${info[master_data_path]}/metadata.sfs" "$TEMP_DIR/metadata.$i"
+	cp "${info[master_data_path]}/metadata.leil" "$TEMP_DIR/metadata.$i"
 	if (( $i == 2 )); then
 		saunafs_metalogger_daemon stop
 		rm "${info[master_data_path]}"/*changelog*
@@ -22,7 +22,7 @@ saunafs_metalogger_daemon kill
 
 # Function takes three metadata files as arguments and tries to recover the filesystem
 verify_recovery() {
-	declare -A files=([metadata.sfs]="$1" [metadata.sfs.1]="$2" [metadata_ml.sfs]="$3")
+	declare -A files=([metadata.leil]="$1" [metadata.leil.1]="$2" [metadata_ml.leil]="$3")
 	rm -f "${info[master_data_path]}"/metadata*
 	local filelist=""
 	for file in "${!files[@]}"; do
@@ -64,7 +64,7 @@ verify_recovery "" "$TEMP_DIR/metadata.1" "$TEMP_DIR/metadata.5"
 verify_recovery "$TEMP_DIR/metadata.1" "" "$TEMP_DIR/metadata.4"
 verify_recovery "$TEMP_DIR/metadata.1" "" "$TEMP_DIR/metadata.5"
 
-MESSAGE="Veryfing recovery when metadata.sfs is older than a backup"
+MESSAGE="Veryfing recovery when metadata.leil is older than a backup"
 verify_recovery "$TEMP_DIR/metadata.1" "$TEMP_DIR/metadata.4" ""
 verify_recovery "$TEMP_DIR/metadata.1" "$TEMP_DIR/metadata.5" ""
 

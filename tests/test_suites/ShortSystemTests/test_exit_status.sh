@@ -29,10 +29,10 @@ expect_equals 0 $(get_status saunafs_master_daemon isalive)
 expect_equals 0 $(get_status saunafs_master_daemon stop)
 expect_equals 0 $(get_status saunafs_master_daemon stop)
 expect_equals 1 $(get_status saunafs_master_daemon isalive)
-mv "${info[master_data_path]}/metadata.sfs" "${info[master_data_path]}/metadata.sfs.xxx"
+mv "${info[master_data_path]}/metadata.leil" "${info[master_data_path]}/metadata.leil.xxx"
 expect_less_or_equal 2 $(get_status saunafs_master_daemon start)
 expect_less_or_equal 2 $(get_status saunafs_master_daemon restart)
 expect_equals 1 $(get_status saunafs_master_daemon isalive)
-mv "${info[master_data_path]}/metadata.sfs.xxx" "${info[master_data_path]}/metadata.sfs"
+mv "${info[master_data_path]}/metadata.leil.xxx" "${info[master_data_path]}/metadata.leil"
 expect_equals 0 $(get_status saunafs_master_daemon start)
 expect_equals 0 $(get_status saunafs_master_daemon isalive)

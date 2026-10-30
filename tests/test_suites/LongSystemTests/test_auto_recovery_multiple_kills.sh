@@ -15,14 +15,14 @@ CHUNKSERVERS=1 \
 # Save path of meta-mount in SFS_META_MOUNT_PATH for metadata generators
 export SFS_META_MOUNT_PATH=${info[mount1]}
 
-# Save path of changelog.sfs in CHANGELOG to make it possible to verify generated changes
-export CHANGELOG="${info[master_data_path]}/changelog.sfs"
+# Save path of changelog.leil in CHANGELOG to make it possible to verify generated changes
+export CHANGELOG="${info[master_data_path]}/changelog.leil"
 
 for generator in $(metadata_get_all_generators); do
 	export MESSAGE="Testing generator $generator"
 
 	# Remember version of the metadata file. We expect it not to change when generating data.
-	metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.sfs)
+	metadata_version=$(metadata_get_version "${info[master_data_path]}"/metadata.leil)
 
 	# Generate some content using the current generator and remember its metadata
 	cd "${info[mount0]}"
@@ -34,7 +34,7 @@ for generator in $(metadata_get_all_generators); do
 	saunafs_master_daemon kill
 
 	# Make sure changes are in changelog only (ie. that metadata wasn't dumped)
-	assert_equals "$metadata_version" "$(metadata_get_version "${info[master_data_path]}"/metadata.sfs)"
+	assert_equals "$metadata_version" "$(metadata_get_version "${info[master_data_path]}"/metadata.leil)"
 
 	# Restore the filesystem from changelog by starting master server and check it
 	assert_failure saunafs_master_daemon start # Should fail without -o auto-recovery!
