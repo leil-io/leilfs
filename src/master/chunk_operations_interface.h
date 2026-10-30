@@ -217,6 +217,10 @@ public:
 	/// without a registration inventory asks instead of trusting what it last recorded.
 	virtual void gotProbeStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
 	                            uint32_t chunkVersion, uint8_t status) = 0;
+	/// A chunkserver answered the maintenance fence sent at @p epoch: with status OK no replicate
+	/// or delete of an earlier connection can still run there. Master never fences.
+	virtual void maintenanceFenceAnswered(matocsserventry * /*ptr*/, uint64_t /*epoch*/,
+	                                      uint8_t /*status*/) {}
 	/// Every part answered the chunk's pending operation and the chunk is idle again. A backend
 	/// that keeps the part set outside memory publishes it here.
 	virtual void operationSettled(uint64_t chunkId) = 0;

@@ -188,6 +188,17 @@ public:
 
 	void replicateChunk(const std::vector<uint8_t> &data);
 
+	/// Takes the maintenance fence for this connection at the epoch a metadata server that
+	/// records copies by identity names; the ack follows from sendPendingMaintenanceFenceAck.
+	void maintenanceFence(const std::vector<uint8_t> &data);
+
+	/// Answers a taken fence once no replicate or delete of another connection is still
+	/// running, or as superseded when a newer fence took the pair meanwhile. Called every loop.
+	void sendPendingMaintenanceFenceAck();
+
+	/// A closed socket owes no fence ack; the metadata server fences again when it reconnects.
+	void forgetMaintenanceFence() { pendingFenceEpoch_.reset(); }
+
 	// Callbacks
 
 	static std::function<void(uint8_t status, void *packet)> sauJobFinished(MasterConn *masterConn);
@@ -205,6 +216,10 @@ public:
 	/// False, after logging the refusal, for a lock of a metadata server whose identity this
 	/// connection does not know yet, while locks name their installer (identity mode).
 	bool lockOwnerKnown(uint64_t chunkId, ChunkPartType chunkType, uint32_t ownerId);
+
+	/// Whether the maintenance fence belongs to another connection, so a replicate or delete
+	/// received here is answered NOTDONE at once rather than queued.
+	bool maintenanceFenceRefuses() const;
 
 	// Termination
 
@@ -334,6 +349,8 @@ private:
 	/// Durable completion policy for connections which selected identity registration. Never
 	/// reset: a lock job moved to listener 0 from a retired peer completes only while it drains.
 	bool identityProtocolSelected_{false};
+	/// A taken maintenance fence whose ack waits for older replicate and delete jobs to end.
+	std::optional<uint64_t> pendingFenceEpoch_;
 	int socketFD_{-1};                         ///< Socket file descriptor for this connection.
 	int32_t pDescPos_{-1};                     ///< Position in the pollfd array.
 	Timer lastRead_;                           ///< Time since the last read operation.

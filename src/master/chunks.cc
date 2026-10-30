@@ -3717,7 +3717,8 @@ bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server) {
 	});
 }
 
-size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64_t)> &hasRecord) {
+size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64_t)> &hasRecord,
+                                  const std::function<bool(matocsserventry *)> &mayDelete) {
 	// Resumes where the previous call stopped, inside a bucket too, so a small budget still
 	// covers the whole table and one long bucket cannot exceed it.
 	static uint32_t bucket = 0;
@@ -3735,6 +3736,7 @@ size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64
 
 			for (auto &part : c->parts) {
 				if (!part.is_valid() || part.is_busy() || part.server() == nullptr) { continue; }
+				if (mayDelete && !mayDelete(part.server())) { continue; }
 				matocsserv_send_deletechunk(part.server(), c->chunkid, c->version, part.type);
 				c->deleteCopy(part);
 			}

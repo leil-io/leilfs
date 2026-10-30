@@ -500,10 +500,15 @@ int fs_init(bool doLoad) {
 	}
 
 	if (!gMetadataLockfile->isLocked()) {
+		// A stale lock guards metadata recovered from local files; a backend that loads nothing
+		// from them has nothing to recover after a crash.
+		const bool recoversFromFiles =
+		    gMetadataBackend == nullptr || gMetadataBackend->replaysChangelogsOnLoad();
 		try {
-			gMetadataLockfile->lock((fs_can_do_auto_recovery() || !metadataserver::isMaster())
-			                            ? Lockfile::StaleLock::kSwallow
-			                            : Lockfile::StaleLock::kReject);
+			gMetadataLockfile->lock(
+			    (fs_can_do_auto_recovery() || !metadataserver::isMaster() || !recoversFromFiles)
+			        ? Lockfile::StaleLock::kSwallow
+			        : Lockfile::StaleLock::kReject);
 		} catch (const LockfileException &e) {
 			if (e.reason() == LockfileException::Reason::kStaleLock) {
 				throw LockfileException(
