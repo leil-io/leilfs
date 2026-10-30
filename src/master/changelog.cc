@@ -53,7 +53,7 @@ Signal<const ChangelogEvent &> &getChangelogSignal() {
 }
 
 /// Base name of a changelog file.
-/// Something like "changelog.sfs" or "changelog_ml.sfs"
+/// Something like "changelog.leil" or "changelog_ml.leil"
 static std::string gChangelogFilename;
 
 /// Minimal acceptable value of BACK_LOGS config entry.
@@ -291,14 +291,14 @@ void load_changelogs() {
 	 * We need to load 3 changelog files in extreme case.
 	 * If we are being run as Shadow we need to download two
 	 * changelog files:
-	 * 1 - current changelog => "changelog.sfs.1"
+	 * 1 - current changelog => "changelog.leil.1"
 	 * 2 - previous changelog in case Shadow connects during metadata dump,
-	 *     that is "changelog.sfs.2"
+	 *     that is "changelog.leil.2"
 	 * Beside this we received changelog lines that we stored in
-	 * yet another changelog file => "changelog.sfs"
+	 * yet another changelog file => "changelog.leil"
 	 *
 	 * If we are master we only really care for:
-	 * "changelog.sfs.1" and "changelog.sfs" files.
+	 * "changelog.leil.1" and "changelog.leil" files.
 	 */
 	static const std::string changelogs[]{
 	    std::string(kChangelogFilename) + ".2",

@@ -72,7 +72,7 @@ public:
 	/// To be used from configuration to instantiate the correct backend.
 	virtual std::string backendType() = 0;
 
-	/// Whether this backend keeps a downloadable metadata image file (metadata.sfs) on the
+	/// Whether this backend keeps a downloadable metadata image file (metadata.leil) on the
 	/// master that a shadow/metalogger can fetch. File-based backends return true; backends that
 	/// hold metadata elsewhere (e.g. the forkless/FDB backend) return false, so the download
 	/// chain continues from changelogs instead. Keeps download behavior a backend capability

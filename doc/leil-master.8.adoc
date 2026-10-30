@@ -91,12 +91,19 @@ manual)
 *.sfsmaster.lock*:: lock file of running LeilFS master process (created in
 data directory)
 
-*metadata.sfs*, *metadata.sfs.back*:: LeilFS filesystem metadata image
+*metadata.leil*, *metadata.leil.back*:: LeilFS filesystem metadata image
 
-*`changelog.*.sfs`*:: LeilFS filesystem metadata change logs (merged into
-*metadata.sfs* once per hour)
+*changelog.leil*, *`changelog.leil.*`*:: LeilFS filesystem metadata change logs
+(merged into *metadata.leil* once per hour)
 
-*data.stats*:: LeilFS master charts state
+*sessions.leil*:: LeilFS client sessions
+
+*stats.leil*:: LeilFS master charts state
+
+Older releases gave these files a *.sfs* extension. *leil-master* keeps using those
+names in a data directory that only has them. To switch to the new names, stop
+*leil-master*, rename its *metadata*, *changelog*, *sessions* and *stats* files
+from *.sfs* to *.leil* and start it again.
 
 == REPORTING BUGS
 

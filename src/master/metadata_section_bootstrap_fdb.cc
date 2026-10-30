@@ -111,7 +111,7 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 	return true;
 }
 
-// Imports each metadata section from metadata.sfs into FDB, then writes META_HEADER last so a
+// Imports each metadata section from metadata.leil into FDB, then writes META_HEADER last so a
 // partially bootstrapped store is never mistaken for a complete one.
 //
 // Crash/failure recovery (intentionally NOT atomic — bootstrap is a one-time migration):
@@ -120,7 +120,7 @@ bool MetadataSectionBootstrapFDB::prepare(const std::string &metadataFilePath) {
 // startup the empty-store protection detects "section data without header" and aborts rather
 // than treating it as a fresh filesystem. To retry, an operator must first clear the FDB
 // keyspace used by this master (drop the section-prefix keys, or wipe/recreate the FDB
-// directory) so the store is truly empty; bootstrap then re-runs cleanly from metadata.sfs.
+// directory) so the store is truly empty; bootstrap then re-runs cleanly from metadata.leil.
 bool MetadataSectionBootstrapFDB::bootstrapSections() {
 	safs::log_info("{}: Bootstrapping metadata sections from file into FDB backend", __func__);
 	if (!prepare(kMetadataFilename)) { return false; }
@@ -227,7 +227,7 @@ int8_t MetadataSectionBootstrapFDB::loadNodesSection() {
 		const uint8_t *nodeBegin = ptr;
 		uint8_t typeU8 = get8bit(&ptr);
 
-		// End marker for NODE section in metadata.sfs
+		// End marker for NODE section in metadata.leil
 		if (typeU8 == 0) { break; }
 
 		auto type = static_cast<FSNodeType>(typeU8);

@@ -109,7 +109,7 @@ inline constexpr std::string_view kNodeKeyPrefix = "NODE_";  // Section NODE 1.0
 /// @note ParentId is serialized as Big Endian to maintain numeric order in lexicographical sorting,
 /// enabling efficient range queries for all edges of a specific parent.
 /// @note ChildId is also serialized as Big Endian.
-/// @note The in-memory implementation only needs to persist the EDGE section in metadata.sfs,
+/// @note The in-memory implementation only needs to persist the EDGE section in metadata.leil,
 /// but the KV implementations need additional reverse indexes for efficient lookups and traversals,
 /// which are stored as separate keys with their own prefixes (e.g., DIR_PARENT_, PARENT_).
 /// @see kEdgeByHashKeyPrefix, kEdgeLowerKeyPrefix, kDirParentKeyPrefix, kParentKeyPrefix,

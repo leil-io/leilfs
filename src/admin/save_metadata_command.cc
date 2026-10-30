@@ -34,7 +34,7 @@ std::string SaveMetadataCommand::name() const {
 
 void SaveMetadataCommand::usage() const {
 	std::cerr << name() << " <metadataserver ip> <metadataserver port>\n"
-			"    Requests saving the current state of metadata into the metadata.sfs file.\n"
+			"    Requests saving the current state of metadata into the metadata.leil file.\n"
 			"    With --async fail if the process cannot be started, e.g. because the process\n"
 			"    is already in progress. Without --async, fails if either the process cannot be\n"
 			"    started or if it finishes with an error (i.e., no metadata file is created).\n"

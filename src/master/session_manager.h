@@ -358,7 +358,7 @@ protected:
 
 /// File-backed session manager used by the classic master personality.
 ///
-/// Persists sessions to @c sessions.sfs (see @c kSessionsFilename) next to the
+/// Persists sessions to @c sessions.leil (see @c kSessionsFilename) next to the
 /// metadata image, using the SFSSIGNATURE "S \001\006\004" format. There is no
 /// per-session open-file index on disk. After restart, Session::openFilesSet is
 /// rebuilt from FSNodeFile::sessionIds during metadata loading, and the

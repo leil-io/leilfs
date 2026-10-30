@@ -63,14 +63,19 @@ PID file of running LeilFS metalogger process
 lock file of running LeilFS metalogger process
 (created in data directory)
 
-*changelog_ml.***.sfs*::
+*changelog_ml.leil*, *`changelog_ml.leil.*`*::
 LeilFS filesystem metadata change logs (backup of master change log files)
 
-*metadata.ml.sfs.back*::
-Latest copy of complete metadata.sfs.back file from LeilFS master.
+*metadata_ml.leil.back*::
+Latest copy of complete metadata.leil.back file from LeilFS master.
 
-*sessions.ml.sfs*::
-Latest copy of sessions.sfs file from LeilFS master.
+*sessions_ml.leil*::
+Latest copy of sessions.leil file from LeilFS master.
+
+Older releases gave these files a *.sfs* extension. *leil-metalogger* keeps using
+those names in a data directory that only has them. To switch to the new names,
+stop *leil-metalogger*, rename its *metadata_ml*, *changelog_ml* and *sessions_ml*
+files from *.sfs* to *.leil* and start it again.
 
 == REPORTING BUGS
 
