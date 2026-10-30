@@ -180,8 +180,10 @@ uint32_t JobPool::addJob(ChunkOperation operation, JobCallback callback, void *e
                          std::optional<MaintenanceFence::Stamp> stamp) {
 	auto *listenerInfo = listenerForJob(listenerId, __func__);
 	if (!stamp) {
-		stamp = maintenanceFence_ ? maintenanceFence_->stamp(listenerId)
-		                          : MaintenanceFence::Stamp{listenerId, 0, 0};
+		stamp =
+		    fencedOperation(operation) && maintenanceFence_ && maintenanceFence_->trackingEnabled()
+		        ? maintenanceFence_->stamp(listenerId)
+		        : MaintenanceFence::Stamp{listenerId, 0, 0};
 	}
 
 	std::unique_lock lock(listenerInfo->jobsMutex);
@@ -389,12 +391,11 @@ void JobPool::workerThread(const std::string &poolName, uint8_t workerId) {
 		sassert(listenerInfo != nullptr);
 		std::unique_lock jobsUniqueLock(listenerInfo->jobsMutex);
 		jobState = job->state;
-		// The maintenance fence decides here for a metadata server's replicate or delete,
-		// whichever path queued it: one released by a chunk lock never passed a receipt check.
-		// This server's own work is never fenced.
+		// Lock-deferred maintenance needs this check too. Keep the tracking decision through
+		// completion, so activation while a job runs cannot end an uncounted admission.
 		const MaintenanceFence::Stamp stamp = job->stamp;
-		const bool fenced = maintenanceFence_ != nullptr && fencedOperation(operation) &&
-		                    stamp != MaintenanceFence::kOwnWork;
+		const bool fenced = fencedOperation(operation) && stamp != MaintenanceFence::kOwnWork &&
+		                    maintenanceFence_ && maintenanceFence_->trackingEnabled();
 		if (jobState == State::Enabled && fenced && !maintenanceFence_->start(stamp)) {
 			jobState = State::Disabled;
 		}
@@ -435,15 +436,16 @@ void MaintenanceFence::connectionClosed(uint32_t listenerId) {
 
 bool MaintenanceFence::fence(uint64_t epoch, Stamp stamp) {
 	std::lock_guard lock(mutex_);
-	const Stamp candidate{stamp.listenerId, stamp.connectionEpoch, epoch};
 	// Epoch 0 is the stamp of a job received with no fence: a pair at it would admit those jobs.
 	if (epoch == 0) { return false; }
 	if (pair_ && epoch < pair_->fenceEpoch) { return false; }
+
 	// At the current epoch only the paired connection again, or any other once the paired one
 	// closed: a second live connection at one epoch would revive the first's jobs, while a closed
 	// one's jobs keep its stamp and are refused once another connection takes the pair.
 	const bool pairLive = pair_ && (pair_->listenerId >= kMaxMetadataConnections ||
 	                                connectionEpochs_[pair_->listenerId] == pair_->connectionEpoch);
+	const Stamp candidate{stamp.listenerId, stamp.connectionEpoch, epoch};
 	if (pair_ && epoch == pair_->fenceEpoch && candidate != *pair_ && pairLive) { return false; }
 	pair_ = candidate;
 	return true;
@@ -545,6 +547,11 @@ void JobPool::getFromJobQueue(uint32_t *jobId, uint32_t *operation, uint8_t **jo
 	jobsQueue->get(jobId, operation, jobPtrArg, nullptr);
 }
 
+void MasterJobPool::enableIdentityMode() {
+	if (maintenanceFence_) { maintenanceFence_->enableTracking(); }
+	identityMode_.store(true, std::memory_order_relaxed);
+}
+
 uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
                                           JobCallback callback, void *extra,
                                           ProcessJobCallback processJob, uint32_t listenerId,
@@ -553,8 +560,10 @@ uint32_t MasterJobPool::addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOper
 	// Stamped now, whether the job runs at once or waits behind a lock: it belongs to the
 	// connection and the fenced epoch that received it, not to whatever the listener has later.
 	if (!stamp) {
-		stamp = maintenanceFence_ ? maintenanceFence_->stamp(listenerId)
-		                          : MaintenanceFence::Stamp{listenerId, 0, 0};
+		stamp =
+		    fencedOperation(operation) && maintenanceFence_ && maintenanceFence_->trackingEnabled()
+		        ? maintenanceFence_->stamp(listenerId)
+		        : MaintenanceFence::Stamp{listenerId, 0, 0};
 	}
 
 	std::unique_lock lockedChunkLock(chunkToJobReplyMapMutex_);

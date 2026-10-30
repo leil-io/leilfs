@@ -506,6 +506,7 @@ TEST(MasterConnectionTests, MovedLockCleanupRunsUnderTheHoldersFence) {
 	auto replicationPool = std::make_shared<MasterJobPool>("moved-lock-fence-repl", 1, 10);
 	jobPool->setMaintenanceFence(fence);
 	replicationPool->setMaintenanceFence(fence);
+	jobPool->enableIdentityMode();
 	const std::vector<int> jobDescriptors{jobPool->allocateListener(0),
 	                                      jobPool->allocateListener(1)};
 	ASSERT_GE(replicationPool->allocateListener(0), 0);
@@ -520,12 +521,15 @@ TEST(MasterConnectionTests, MovedLockCleanupRunsUnderTheHoldersFence) {
 	// and is acknowledged at once: no older replicate or delete runs.
 	const auto chunkType = slice_traits::standard::ChunkPartType();
 	constexpr uint64_t chunkId = 124;
-	ASSERT_EQ(jobPool->startChunkLock({}, nullptr, chunkId, chunkType, 0, 0, 1),
+	ASSERT_EQ(jobPool->startChunkLock({}, nullptr, chunkId, chunkType, 42, 0, 1),
 	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t lockIdentity = jobPool->enforceChunkLock(chunkId, chunkType, 0);
+	ASSERT_NE(lockIdentity, 0U);
 	configured.setMode(ConnectionMode::CONNECTED);
 	auto fencePacket = matocs::maintenanceFence::build(1);
 	removeHeaderInPlace(fencePacket);
 	configured.maintenanceFence(fencePacket);
+	ASSERT_EQ(fence->pair(), std::make_optional(fence->stamp(0)));
 	configured.sendPendingMaintenanceFenceAck();
 	EXPECT_FALSE(configured.isOutputQueueEmpty());
 	configured.resetPackets();
@@ -547,7 +551,7 @@ TEST(MasterConnectionTests, MovedLockCleanupRunsUnderTheHoldersFence) {
 		};
 	};
 	jobPool->detachLockJobs(cleanupMaker, 1, 0);
-	jobPool->endChunkLock(chunkId, chunkType, SAUNAFS_ERROR_IO, 0);
+	jobPool->endChunkLock(chunkId, chunkType, SAUNAFS_ERROR_IO, lockIdentity);
 	ASSERT_NO_FATAL_FAILURE(awaitCompletion(jobDescriptors[0]));
 	jobPool->processCompletedJobs(0);
 	ASSERT_NO_FATAL_FAILURE(awaitCompletion(jobDescriptors[0]));
@@ -779,6 +783,8 @@ TEST(MasterConnectionTests, MaintenanceFenceAcksOnceOlderJobsEnd) {
 	auto fence = std::make_shared<MaintenanceFence>();
 	auto jobPool = std::make_shared<MasterJobPool>("fence-conn", 1, 10);
 	auto replicationPool = std::make_shared<MasterJobPool>("fence-conn-repl", 1, 10);
+	const int replicationDescriptor = replicationPool->allocateListener(0);
+	ASSERT_GE(replicationDescriptor, 0);
 	jobPool->setMaintenanceFence(fence);
 	replicationPool->setMaintenanceFence(fence);
 	const std::vector<int> jobDescriptors{jobPool->allocateListener(0),
@@ -789,6 +795,7 @@ TEST(MasterConnectionTests, MaintenanceFenceAcksOnceOlderJobsEnd) {
 	older.setMode(ConnectionMode::CONNECTED);
 	holder.setMode(ConnectionMode::CONNECTED);
 	holder.setSendInventory(false);
+	jobPool->enableIdentityMode();
 	auto fencePacket = matocs::maintenanceFence::build(1);
 	removeHeaderInPlace(fencePacket);
 
@@ -797,8 +804,11 @@ TEST(MasterConnectionTests, MaintenanceFenceAcksOnceOlderJobsEnd) {
 	older.maintenanceFence(fencePacket);
 	EXPECT_FALSE(older.isOutputQueueEmpty());
 	older.resetPackets();
+
+	// The old connection's jobs share one stamp across pools, so both must hold the barrier.
 	HeldJobs held;
 	auto olderDelete = held.add();
+	auto olderReplicate = held.add();
 	auto *packet = new OutputPacket;
 	cstoma::deleteChunk::serialize(packet->packet, 100, slice_traits::standard::ChunkPartType(), 0);
 	jobPool->addJob(
@@ -809,7 +819,14 @@ TEST(MasterConnectionTests, MaintenanceFenceAcksOnceOlderJobsEnd) {
 		    return SAUNAFS_STATUS_OK;
 	    },
 	    0);
+	replicationPool->addJob(JobPool::ChunkOperation::Replicate, {}, nullptr,
+	                        [olderReplicate]() -> uint8_t {
+		                        olderReplicate->started.count_down();
+		                        olderReplicate->release.wait();
+		                        return SAUNAFS_STATUS_OK;
+	                        });
 	olderDelete->started.wait();
+	olderReplicate->started.wait();
 	holder.maintenanceFence(fencePacket);
 	holder.sendPendingMaintenanceFenceAck();
 	EXPECT_TRUE(holder.isOutputQueueEmpty());
@@ -824,8 +841,8 @@ TEST(MasterConnectionTests, MaintenanceFenceAcksOnceOlderJobsEnd) {
 	holder.sendPendingMaintenanceFenceAck();
 	EXPECT_TRUE(holder.isOutputQueueEmpty());
 
-	// A delete the older connection sends now is answered without a job; the ack leaves once
-	// the running job of the older connection ends.
+	// A new delete is refused at receipt. Completing the ordinary-pool job alone must not
+	// release the shared barrier while replication still runs.
 	auto deletePacket = matocs::deleteChunk::build(101, slice_traits::standard::ChunkPartType(), 0);
 	removeHeaderInPlace(deletePacket);
 	older.deleteChunk(deletePacket);
@@ -834,6 +851,116 @@ TEST(MasterConnectionTests, MaintenanceFenceAcksOnceOlderJobsEnd) {
 	ASSERT_NO_FATAL_FAILURE(awaitCompletion(jobDescriptors[0]));
 	jobPool->processCompletedJobs(0);
 	holder.sendPendingMaintenanceFenceAck();
+	EXPECT_TRUE(holder.isOutputQueueEmpty());
+
+	// Only the final completion releases the count shared by both pools.
+	olderReplicate->releaseWorker();
+	ASSERT_NO_FATAL_FAILURE(awaitCompletion(replicationDescriptor));
+	replicationPool->processCompletedJobs(0);
+	holder.sendPendingMaintenanceFenceAck();
 	EXPECT_FALSE(holder.isOutputQueueEmpty());
 	EXPECT_TRUE(jobPool->isListenerIdle(0));
+	EXPECT_TRUE(replicationPool->isListenerIdle(0));
+}
+
+TEST(MasterConnectionTests, WithoutIdentityMaintenanceRunsAcrossAReconnect) {
+	auto fence = std::make_shared<MaintenanceFence>();
+	auto jobPool = std::make_shared<MasterJobPool>("unfenced", 1, 10);
+	auto replicationPool = std::make_shared<MasterJobPool>("unfenced-repl", 1, 10);
+	jobPool->setMaintenanceFence(fence);
+	replicationPool->setMaintenanceFence(fence);
+	MasterConn connection("localhost", "9420", "default", jobPool, replicationPool);
+	connection.setMode(ConnectionMode::CONNECTED);
+	const auto initialStamp = fence->stamp(0);
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	constexpr uint64_t chunkId = 125;
+	std::atomic<int> parkedDelete{-1};
+	std::atomic<int> newDelete{-1};
+	std::atomic<int> replicate{-1};
+	const auto record = [](uint8_t status, void *extra) {
+		static_cast<std::atomic<int> *>(extra)->store(status);
+	};
+	const auto noWork = []() -> uint8_t { return SAUNAFS_STATUS_OK; };
+
+	// A delete held behind a write lock survives Master's socket close, as without a tracker.
+	ASSERT_EQ(jobPool->startChunkLock({}, nullptr, chunkId, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t lockIdentity = jobPool->enforceChunkLock(chunkId, chunkType, 0);
+	ASSERT_NE(lockIdentity, 0U);
+	jobPool->addJobIfNotLocked({chunkId, chunkType}, JobPool::ChunkOperation::Delete, record,
+	                           &parkedDelete, noWork);
+	EXPECT_FALSE(connection.maintenanceFenceRefuses());
+	connection.setMode(ConnectionMode::KILL);
+	masterconn_close_connection(*jobPool, *replicationPool, connection, 0);
+	connection.setMode(ConnectionMode::CONNECTED);
+
+	// The next socket's commands are admitted without enabling stamps or running-job tracking.
+	EXPECT_FALSE(connection.maintenanceFenceRefuses());
+	EXPECT_FALSE(fence->trackingEnabled());
+	EXPECT_EQ(fence->stamp(0), initialStamp);
+	jobPool->addJob(JobPool::ChunkOperation::Delete, record, &newDelete, noWork);
+	replicationPool->addJob(JobPool::ChunkOperation::Replicate, record, &replicate, noWork);
+	jobPool->endChunkLock(chunkId, chunkType, SAUNAFS_STATUS_OK, lockIdentity);
+	jobPool->stop();
+	replicationPool->stop();
+	EXPECT_EQ(parkedDelete.load(), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(newDelete.load(), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(replicate.load(), SAUNAFS_STATUS_OK);
+	EXPECT_FALSE(fence->pair().has_value());
+}
+
+TEST(MasterConnectionTests, IdentityTrackingStartsBeforeTheFirstFenceAndPairsCompletions) {
+	auto fence = std::make_shared<MaintenanceFence>();
+	auto jobPool = std::make_shared<MasterJobPool>("tracking", 1, 10);
+	auto replicationPool = std::make_shared<MasterJobPool>("tracking-repl", 1, 10);
+	jobPool->setMaintenanceFence(fence);
+	replicationPool->setMaintenanceFence(fence);
+	const int jobDescriptor = jobPool->allocateListener(0);
+	const int replicationDescriptor = replicationPool->allocateListener(0);
+	ASSERT_GE(jobPool->allocateListener(1), 0);
+	MasterConn holder("localhost", "9420", "default", jobPool, replicationPool, 1, 42);
+	holder.setMode(ConnectionMode::CONNECTED);
+	HeldJobs held;
+	auto untrackedDelete = held.add();
+	auto trackedReplicate = held.add();
+
+	// Inactive pools do not account for even a running maintenance job.
+	jobPool->addJob(JobPool::ChunkOperation::Delete, {}, nullptr, [untrackedDelete]() -> uint8_t {
+		untrackedDelete->started.count_down();
+		untrackedDelete->release.wait();
+		return SAUNAFS_STATUS_OK;
+	});
+	untrackedDelete->started.wait();
+	EXPECT_FALSE(fence->trackingEnabled());
+	EXPECT_FALSE(fence->othersRunning(MaintenanceFence::kOwnWork));
+
+	// Identity selection enables both pools before any fence; this replication must be counted.
+	holder.setSendInventory(false);
+	jobPool->enableIdentityMode();
+	EXPECT_TRUE(replicationPool->maintenanceFence()->trackingEnabled());
+	replicationPool->addJob(JobPool::ChunkOperation::Replicate, {}, nullptr,
+	                        [trackedReplicate]() -> uint8_t {
+		                        trackedReplicate->started.count_down();
+		                        trackedReplicate->release.wait();
+		                        return SAUNAFS_STATUS_OK;
+	                        });
+	trackedReplicate->started.wait();
+	untrackedDelete->releaseWorker();
+	ASSERT_NO_FATAL_FAILURE(awaitCompletion(jobDescriptor));
+	jobPool->processCompletedJobs(0);
+	EXPECT_TRUE(fence->othersRunning(MaintenanceFence::kOwnWork));
+
+	// The untracked completion must not consume the replication's count at the same stamp.
+	auto packet = matocs::maintenanceFence::build(1);
+	removeHeaderInPlace(packet);
+	holder.maintenanceFence(packet);
+	holder.sendPendingMaintenanceFenceAck();
+	EXPECT_TRUE(holder.isOutputQueueEmpty());
+	trackedReplicate->releaseWorker();
+	ASSERT_NO_FATAL_FAILURE(awaitCompletion(replicationDescriptor));
+	replicationPool->processCompletedJobs(0);
+	holder.sendPendingMaintenanceFenceAck();
+	EXPECT_FALSE(holder.isOutputQueueEmpty());
+	masterconn_close_connection(*jobPool, *replicationPool, holder, 1);
+	EXPECT_TRUE(fence->trackingEnabled());
 }

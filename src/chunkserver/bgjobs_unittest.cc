@@ -739,29 +739,35 @@ JobPool::JobCallback recordStatus() {
 
 TEST(MaintenanceFenceTest, RefusesReplicateAndDeleteOfOtherConnectionsAtDequeue) {
 	auto fence = std::make_shared<MaintenanceFence>();
+	fence->enableTracking();
 	MasterJobPool pool("fence-dequeue", 1, 10);
 	pool.setMaintenanceFence(fence);
 	ASSERT_GE(pool.allocateListener(1), 0);
 	ASSERT_TRUE(fence->fence(1, fence->stamp(0)));
 	std::atomic<int> otherDelete{-1};
+	std::atomic<int> otherReplicate{-1};
 	std::atomic<int> ownDelete{-1};
 	std::atomic<int> otherCreate{-1};
 	const auto noWork = []() -> uint8_t { return SAUNAFS_STATUS_OK; };
 
 	pool.addJob(JobPool::ChunkOperation::Delete, recordStatus(), &otherDelete, noWork, 1);
+	pool.addJob(JobPool::ChunkOperation::Replicate, recordStatus(), &otherReplicate, noWork, 1);
 	pool.addJob(JobPool::ChunkOperation::Delete, recordStatus(), &ownDelete, noWork, 0);
 	pool.addJob(JobPool::ChunkOperation::Create, recordStatus(), &otherCreate, noWork, 1);
-	ASSERT_TRUE(drainUntilReported(pool, {&otherDelete, &ownDelete, &otherCreate}));
+	ASSERT_TRUE(
+	    drainUntilReported(pool, {&otherDelete, &otherReplicate, &ownDelete, &otherCreate}));
 
 	// Only the fenced kinds of another connection are refused; the pair's own and every other
 	// kind run as before.
 	EXPECT_EQ(otherDelete.load(), SAUNAFS_ERROR_NOTDONE);
+	EXPECT_EQ(otherReplicate.load(), SAUNAFS_ERROR_NOTDONE);
 	EXPECT_EQ(ownDelete.load(), SAUNAFS_STATUS_OK);
 	EXPECT_EQ(otherCreate.load(), SAUNAFS_STATUS_OK);
 }
 
 TEST(MaintenanceFenceTest, ThisServersOwnDeleteIsNeverFenced) {
 	auto fence = std::make_shared<MaintenanceFence>();
+	fence->enableTracking();
 	MasterJobPool pool("fence-own-work", 1, 10);
 	pool.setMaintenanceFence(fence);
 	ASSERT_GE(pool.allocateListener(1), 0);
@@ -797,6 +803,7 @@ TEST(MaintenanceFenceTest, ThisServersOwnDeleteIsNeverFenced) {
 
 TEST(MaintenanceFenceTest, LaterEpochOnTheSameSocketWaitsForAndRefusesTheOlderJobs) {
 	auto fence = std::make_shared<MaintenanceFence>();
+	fence->enableTracking();
 	MasterJobPool pool("fence-reconnect", 1, 10);
 	pool.setMaintenanceFence(fence);
 	ASSERT_GE(pool.allocateListener(1), 0);
@@ -848,6 +855,7 @@ TEST(MaintenanceFenceTest, LaterEpochOnTheSameSocketWaitsForAndRefusesTheOlderJo
 
 TEST(MaintenanceFenceTest, AParkedDeleteStaysRefusedAcrossClaimsOnTheSameSocket) {
 	auto fence = std::make_shared<MaintenanceFence>();
+	fence->enableTracking();
 	MasterJobPool pool("fence-claims", 1, 10);
 	pool.setMaintenanceFence(fence);
 	ASSERT_GE(pool.allocateListener(1), 0);
@@ -904,6 +912,7 @@ TEST(MaintenanceFenceTest, OneEpochAdmitsOneLiveConnection) {
 
 TEST(MaintenanceFenceTest, ADeleteReleasedByAChunkLockKeepsTheStampItWasReceivedWith) {
 	auto fence = std::make_shared<MaintenanceFence>();
+	fence->enableTracking();
 	MasterJobPool pool("fence-lock", 1, 10);
 	pool.setMaintenanceFence(fence);
 	ASSERT_GE(pool.allocateListener(1), 0);

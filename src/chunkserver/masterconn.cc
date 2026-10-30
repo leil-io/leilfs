@@ -301,7 +301,9 @@ void masterconn_close_connection(MasterJobPool &jobPool, MasterJobPool &replicat
 	jobPool.changeLockJobsCallback(masterconn_unwantedLockJobFinished, listenerId);
 	replicationJobPool.disableAndChangeCallbackAll(masterconn_unwantedjobfinished, listenerId);
 	// The jobs this socket leaves behind keep its stamp; its next socket fences anew.
-	if (const auto &fence = jobPool.maintenanceFence()) { fence->connectionClosed(listenerId); }
+	if (const auto &fence = jobPool.maintenanceFence(); fence && fence->trackingEnabled()) {
+		fence->connectionClosed(listenerId);
+	}
 	connection.forgetMaintenanceFence();
 	connection.closeSocketQuietly();
 	if (!connection.sendsInventory()) { connection.requeueUnsentReports(); }

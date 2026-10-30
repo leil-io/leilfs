@@ -1054,7 +1054,7 @@ void MasterConn::maintenanceFence(const std::vector<uint8_t> &data) {
 	// Only a metadata server that records copies by identity maintains behind a fence; a pool
 	// without one is a released configuration.
 	const auto fence = jobPool_ ? jobPool_->maintenanceFence() : nullptr;
-	if (!identityProtocolSelected() || !fence) {
+	if (!identityProtocolSelected() || !fence || !fence->trackingEnabled()) {
 		createAttachedPacket(cstoma::maintenanceFence::build(epoch, SAUNAFS_ERROR_ENOTSUP));
 		return;
 	}
@@ -1095,8 +1095,9 @@ void MasterConn::sendPendingMaintenanceFenceAck() {
 }
 
 bool MasterConn::maintenanceFenceRefuses() const {
-	const auto fence = jobPool_ ? jobPool_->maintenanceFence() : nullptr;
-	return fence && !fence->admits(fence->stamp(listenerId_));
+	if (!jobPool_) { return false; }
+	const auto &fence = jobPool_->maintenanceFence();
+	return fence && fence->trackingEnabled() && !fence->admits(fence->stamp(listenerId_));
 }
 
 // Callbacks

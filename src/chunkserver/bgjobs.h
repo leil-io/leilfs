@@ -55,8 +55,8 @@ inline IOPriorityMode gIOPriorityMode;
 
 /// The maintenance fence of a chunkserver, shared by its master job pools: one metadata server
 /// connection at a time replicates and deletes here, the others are answered NOTDONE when their
-/// job is dequeued. Set only by a metadata server that records copies by identity; Master and
-/// Shadow never set it, and without a pair every check admits everything, as released.
+/// job is dequeued. Identity registration turns it on before that server's commands arrive;
+/// Master and Shadow never register by identity, so their jobs bypass it.
 /// The pair outlives its connection, so a server must fence before it maintains here: until the
 /// next fence, held-back jobs matching that pair can still run; other maintenance gets NOTDONE.
 class MaintenanceFence {
@@ -74,6 +74,13 @@ public:
 	/// The stamp of work this chunkserver queues itself, never a metadata server's command:
 	/// the delete of a part its failed write left behind. The fence never judges it.
 	static constexpr Stamp kOwnWork{kMaxMetadataConnections, 0, 0};
+
+	/// Identity registration enables tracking for both pools before maintenance arrives.
+	/// Tracking survives reconnects; changing metadata protocols requires a process restart.
+	void enableTracking() { trackingEnabled_.store(true, std::memory_order_release); }
+
+	/// Whether identity registration enabled receipt stamping and worker accounting.
+	bool trackingEnabled() const { return trackingEnabled_.load(std::memory_order_acquire); }
 
 	/// The stamp a job of @p listenerId receives now.
 	Stamp stamp(uint32_t listenerId) const;
@@ -106,6 +113,8 @@ public:
 	bool othersRunning(Stamp stamp) const;
 
 private:
+	/// Set once at identity registration, before its commands can be queued.
+	std::atomic<bool> trackingEnabled_{false};
 	mutable std::mutex mutex_;
 	/// Each listener's connection count; guarded by mutex_.
 	std::array<uint32_t, kMaxMetadataConnections> connectionEpochs_{};
@@ -212,14 +221,14 @@ public:
 	/// @param processJob The callback function to process the job.
 	/// @param listenerId The ID of the listener associated with the job.
 	/// @param stamp The stamp of the job's origin, for a job held back until now
-	/// (addJobIfNotLocked) or queued for a closed connection; the listener's current one when
-	/// absent.
+	/// (addJobIfNotLocked) or queued for a closed connection; active maintenance takes the
+	/// listener's current one when absent.
 	/// @return The ID of the added job.
 	uint32_t addJob(ChunkOperation operation, JobCallback callback, void *extra,
 	                ProcessJobCallback processJob, uint32_t listenerId = 0,
 	                std::optional<MaintenanceFence::Stamp> stamp = std::nullopt);
 
-	/// Shares the chunkserver's maintenance fence with this pool; without one nothing is fenced.
+	/// Attaches the shared fence before jobs arrive. Identity registration enables its tracking.
 	void setMaintenanceFence(std::shared_ptr<MaintenanceFence> fence) {
 		maintenanceFence_ = std::move(fence);
 	}
@@ -418,10 +427,8 @@ public:
 		kRefused,    ///< Another metadata server holds the lock at the same or a newer version.
 	};
 
-	/// Switches on the lock rules of metadata servers that share their chunks, once a connection
-	/// selected the identity protocol. There is no way back; until then every lock behaves as
-	/// under Master.
-	void enableIdentityMode() { identityMode_.store(true, std::memory_order_relaxed); }
+	/// Enables identity lock rules and shared maintenance tracking, permanently.
+	void enableIdentityMode();
 
 	/// @see enableIdentityMode
 	bool identityMode() const { return identityMode_.load(std::memory_order_relaxed); }
@@ -434,8 +441,8 @@ public:
 	/// @param extra Additional data to be passed to the callback.
 	/// @param processJob The callback function to process the job.
 	/// @param listenerId The ID of the listener associated with the job.
-	/// @param stamp The job's origin under the maintenance fence; the listener's current one
-	/// when absent.
+	/// @param stamp The job's origin under the maintenance fence; active maintenance takes the
+	/// listener's current one when absent.
 	/// @return The ID of the added job, or the lock job ID if the chunk is locked.
 	uint32_t addJobIfNotLocked(ChunkWithType chunkWithType, ChunkOperation operation,
 	                           JobCallback callback, void *extra, ProcessJobCallback processJob,
@@ -812,6 +819,8 @@ uint32_t job_invalid(MasterJobPool &jobPool, JobPool::JobCallback callback, void
 /// @param chunkVersion The version of the chunk.
 /// @param chunkType The type of the chunk.
 /// @param listenerId The ID of the listener associated with the job.
+/// @param stamp Origin override, or MaintenanceFence::kOwnWork for this server's own cleanup.
+/// Tracked maintenance takes its receipt stamp when absent.
 /// @return The ID of the added job.
 uint32_t job_delete(MasterJobPool &jobPool, JobPool::JobCallback callback, void *extra,
                     uint64_t chunkId, uint32_t chunkVersion, ChunkPartType chunkType,
