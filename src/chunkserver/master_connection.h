@@ -24,9 +24,9 @@
 
 #include <sys/poll.h>
 #include <cstdint>
-#include <list>
 #include <memory>
 #include <optional>
+#include <queue>
 #include <string>
 #include <utility>
 
@@ -38,8 +38,9 @@
 #include "common/saunafs_version.h"
 #include "common/time_utils.h"
 #include "common/tls_session.h"
+#include "protocol/matocs.h"
 
-static constexpr uint32_t kMaxPacketSize = 10000;
+static constexpr uint32_t kMaxPacketSize = kMaxMasterToChunkserverPacketSize;
 static constexpr uint32_t kMaxBackgroundJobsCount = 1000;
 
 // Common variables from config
@@ -49,6 +50,7 @@ inline uint32_t gTimeout_ms;
 
 // Forward declaration
 class MasterJobPool;
+class MasterConnOutputQueueTests;
 
 /// @brief Enum representing the connection mode to the Metadata Server (MDS).
 enum class ConnectionMode : std::uint8_t {
@@ -100,6 +102,11 @@ public:
 	void attachPacket(void *packet);
 
 	void createAttachedPacket(MessageBuffer serializedPacket);
+
+	/// Enqueues a reply in the FIFO priority lane. The write loop finishes an
+	/// already partially transmitted packet first, then sends priority packets
+	/// ahead of the ordinary backlog (e.g. registration bulks).
+	void createAttachedPriorityPacket(MessageBuffer serializedPacket);
 
 	template <class... Data>
 	void createAttachedNoVersionPacket(PacketHeader::Type type, const Data &...data) {
@@ -187,6 +194,11 @@ public:
 	void duplicateTruncateChunk(const std::vector<uint8_t> &data);
 
 	void replicateChunk(const std::vector<uint8_t> &data);
+
+	/// Handles SAU_MATOCS_QUERY_CHUNKS: replies immediately (from the event
+	/// loop, in-memory lookup only) which of the queried chunks this
+	/// chunkserver hosts. See cstoma::queryChunks.
+	void queryChunks(const std::vector<uint8_t> &data);
 
 	// Callbacks
 
@@ -302,9 +314,13 @@ public:
 
 	bool isTlsEnabled() const { return !tlsCertFile_.empty() && !tlsKeyFile_.empty(); }
 
-	bool isOutputQueueEmpty() const { return outputPackets_.empty(); }
+	bool isOutputQueueEmpty() const {
+		return outputPackets_.empty() && priorityOutputPackets_.empty();
+	}
 
 private:
+	std::queue<OutputPacket> &nextOutputPacketQueue();
+
 	std::string masterHostStr_;                  ///< Hostname of the master server.
 	std::string masterPortStr_;                  ///< Port of the master server.
 	uint32_t version_{saunafsVersion(0, 0, 0)};  ///< Version of the master server.
@@ -339,7 +355,11 @@ private:
 	Timer lastRead_;                           ///< Time since the last read operation.
 	Timer lastWrite_;                          ///< Time since the last write operation.
 	InputPacket inputPacket_{kMaxPacketSize};  ///< Input buffer for reading data from the socket.
-	std::list<OutputPacket> outputPackets_;    ///< Output packets to be sent to the master.
+	std::queue<OutputPacket> outputPackets_;   ///< Output packets to be sent to the master.
+	std::queue<OutputPacket>
+	    priorityOutputPackets_;  ///< Priority replies to be sent to the master.
+	/// SSL_write retries must keep the same buffer even before bytesSent advances.
+	std::queue<OutputPacket> *tlsWriteRetryQueue_{nullptr};
 
 	NetworkAddress address_;            ///< Address of this master server (IP and port).
 	NetworkAddress bindHostAddress_;    ///< Address to bind the socket to (IP and port).
@@ -355,4 +375,5 @@ private:
 	std::string tlsKeyFile_;     ///< Path to the TLS private key file.
 	std::string tlsCaCertFile_;  ///< Path to the TLS CA certificate file.
 	int lastHandshakeError_{0};  ///< Last error code from TLS handshake.
+	friend class MasterConnOutputQueueTests;
 };

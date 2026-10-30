@@ -34,11 +34,13 @@
 #include <cstring>
 #include <ctime>
 
+#include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/chunkserver_id.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/network_main_thread.h"
+#include "common/chunk_version_with_todel_flag.h"
 #include "common/input_packet.h"
 #include "common/loop_watchdog.h"
 #include "common/network_address.h"
@@ -86,12 +88,23 @@ void MasterConn::deletePacket(void *packet) {
 
 void MasterConn::attachPacket(void *packet) {
 	auto *outputPacket = static_cast<OutputPacket *>(packet);
-	outputPackets_.emplace_back(std::move(*outputPacket));
+	outputPackets_.emplace(std::move(*outputPacket));
 	delete outputPacket;
 }
 
 void MasterConn::createAttachedPacket(MessageBuffer serializedPacket) {
-	outputPackets_.emplace_back(std::move(serializedPacket));
+	outputPackets_.emplace(std::move(serializedPacket));
+}
+
+void MasterConn::createAttachedPriorityPacket(MessageBuffer serializedPacket) {
+	priorityOutputPackets_.emplace(std::move(serializedPacket));
+}
+
+std::queue<OutputPacket> &MasterConn::nextOutputPacketQueue() {
+	if (tlsWriteRetryQueue_ != nullptr) { return *tlsWriteRetryQueue_; }
+	if (!outputPackets_.empty() && outputPackets_.front().bytesSent != 0) { return outputPackets_; }
+	if (!priorityOutputPackets_.empty()) { return priorityOutputPackets_; }
+	return outputPackets_;
 }
 
 // Configuration
@@ -493,7 +506,7 @@ void MasterConn::providePollDescriptors(std::vector<pollfd> &pdesc, bool doTermi
 		pDescPos_ = static_cast<int32_t>(pdesc.size() - 1);
 	}
 
-	if (((mode_ == ConnectionMode::CONNECTED) && !outputPackets_.empty()) ||
+	if (((mode_ == ConnectionMode::CONNECTED) && !isOutputQueueEmpty()) ||
 	    mode_ == ConnectionMode::CONNECTING) {
 		if (pDescPos_ >= 0) {
 			pdesc[pDescPos_].events |= POLLOUT;
@@ -550,7 +563,7 @@ void MasterConn::servePoll(const std::vector<pollfd> &pdesc) {
 
 			// Keep the connection alive by sending a NOP packet
 			if ((mode_ == ConnectionMode::CONNECTED) &&
-			    lastWrite_.elapsed_ms() > (gTimeout_ms / 3) && outputPackets_.empty()) {
+			    lastWrite_.elapsed_ms() > (gTimeout_ms / 3) && isOutputQueueEmpty()) {
 				createAttachedNoVersionPacket(ANTOAN_NOP, 0);
 			}
 		}
@@ -647,8 +660,9 @@ void MasterConn::writeToSocket() {
 
 	watchdog.start();
 
-	while (!outputPackets_.empty()) {
-		OutputPacket &pack = outputPackets_.front();
+	while (!isOutputQueueEmpty()) {
+		auto &packets = nextOutputPacketQueue();
+		OutputPacket &pack = packets.front();
 
 		if (mode_ == ConnectionMode::CONNECTED && tlsSession_) {
 			bytesWritten = ::SSL_write(tlsSession_->session(), pack.packet.data() + pack.bytesSent,
@@ -656,14 +670,17 @@ void MasterConn::writeToSocket() {
 			if (bytesWritten <= 0) {
 				int err = ::SSL_get_error(tlsSession_->session(), static_cast<int>(bytesWritten));
 				if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-					// Need more I/O; return and let poll drive readiness.
+					// OpenSSL may have buffered data even though bytesSent is still zero.
+					tlsWriteRetryQueue_ = &packets;
 					return;
 				}
+				tlsWriteRetryQueue_ = nullptr;
 				safs::log_err("MasterConn(TLS): write error to {}: {}", address_.toString(),
 				              opensslErrorString(err));
 				setMode(ConnectionMode::KILL);
 				return;
 			}
+			tlsWriteRetryQueue_ = nullptr;
 		} else {
 			bytesWritten = ::write(socketFD_, pack.packet.data() + pack.bytesSent,
 			                       pack.packet.size() - pack.bytesSent);
@@ -683,7 +700,7 @@ void MasterConn::writeToSocket() {
 
 		if (pack.packet.size() != pack.bytesSent) { return; }
 
-		outputPackets_.pop_front();
+		packets.pop();
 
 		if (watchdog.expired()) { break; }
 	}
@@ -745,6 +762,9 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 	case SAU_MATOCS_CLUSTER_MEMBERS:
 		receiveClusterSnapshot(message);
 		break;
+	case SAU_MATOCS_QUERY_CHUNKS:
+		queryChunks(message);
+		break;
 	default:
 		safs::log_info("MasterConn: got unknown message (type: {}): {}", header.type,
 		               address_.toString());
@@ -757,6 +777,47 @@ void MasterConn::gotPacket(PacketHeader header, const MessageBuffer &message) tr
 }
 
 // Chunk operations
+
+void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
+	uint64_t generation{};
+	std::vector<uint64_t> chunkIds;
+	matocs::queryChunks::deserialize(data, generation, chunkIds);
+
+	std::vector<ChunkWithVersionAndType> foundChunks;
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		for (const auto chunkId : chunkIds) {
+			for (const auto &[chunkType, count] : gPresentChunkTypes) {
+				auto chunkIter = gChunksMap.find(makeChunkKey(chunkId, chunkType));
+				if (chunkIter == gChunksMap.end()) { continue; }
+
+				IChunk *chunk = chunkIter->second.get();
+
+				// Read versions only from Available chunks under gChunksMapMutex.
+				// Workers change versions while chunks are Locked; skip busy chunks
+				// without blocking the network event loop.
+				if (chunk->state() != ChunkState::Available) { continue; }
+
+				const bool markedForDeletion =
+				    chunk->owner() != nullptr && chunk->owner()->isMarkedForDeletion();
+				foundChunks.emplace_back(
+				    chunkId,
+				    common::combineVersionWithTodelFlag(chunk->version(), markedForDeletion),
+				    chunkType);
+
+				// Do not mark query results as swept: no acknowledgement follows
+				// this reply, so the master can discard it after its query
+				// generation expires. The regular sweep will report it later;
+				// duplicate location reports are safe.
+			}
+		}
+	}
+
+	// The master holds client operations back until this answer arrives, so
+	// it must jump any registration backlog in the output queue.
+	createAttachedPriorityPacket(
+	    cstoma::queryChunks::build(generation, chunkIds, foundChunks));
+}
 
 void MasterConn::createChunk(const std::vector<uint8_t> &data) {
 	uint64_t chunkId;
@@ -1115,6 +1176,7 @@ void MasterConn::sauJobFinished(uint8_t status, void *packet) {
 // Termination
 
 void MasterConn::closeSocketQuietly() {
+	tlsWriteRetryQueue_ = nullptr;
 	if (socketFD_ >= 0) {
 		tcpclose(socketFD_);
 		socketFD_ = -1;
@@ -1127,6 +1189,7 @@ void MasterConn::closeSocketQuietly() {
 }
 
 void MasterConn::releaseResources() {
+	tlsWriteRetryQueue_ = nullptr;
 	if (mode_ != ConnectionMode::FREE && mode_ != ConnectionMode::CONNECTING) {
 		if (tlsSession_ != nullptr) {
 			int ret = SSL_shutdown(tlsSession_->session());
@@ -1147,12 +1210,18 @@ void MasterConn::releaseResources() {
 }
 
 void MasterConn::resetPackets() {
+	tlsWriteRetryQueue_ = nullptr;
 	inputPacket_.reset();
-	outputPackets_.clear();
+	decltype(outputPackets_){}.swap(outputPackets_);
+	decltype(priorityOutputPackets_){}.swap(priorityOutputPackets_);
 }
 
 void MasterConn::requeueUnsentReports() {
-	for (const auto &output : outputPackets_) {
+	tlsWriteRetryQueue_ = nullptr;
+	while (!outputPackets_.empty()) {
+		auto output = std::move(outputPackets_.front());
+		outputPackets_.pop();
+
 		if (output.packet.size() < PacketHeader::kSize) { continue; }
 		PacketHeader header;
 		deserializePacketHeader(output.packet, header);
