@@ -48,6 +48,15 @@ inline std::string gBindHostStr;
 inline std::string gLabel;
 inline uint32_t gTimeout_ms;
 
+/// CHUNK_REGISTRATION_START_TIMEOUT (seconds): how long a pull-capable
+/// chunkserver waits for SAU_MATOCS_REGISTER_CHUNKS_START before falling
+/// back to push registration on a fresh connection.
+inline uint32_t gPullRegistrationStartTimeout_s;
+
+/// CHUNK_REGISTRATION_FORCE_PUSH: skip the pull protocol entirely and always
+/// push the full chunk list (testability / emergency escape hatch).
+inline bool gForcePushRegistration;
+
 // Forward declaration
 class MasterJobPool;
 class MasterConnOutputQueueTests;
@@ -66,6 +75,8 @@ enum class RegistrationStatus : std::uint8_t {
 	kUnregistered,           ///< Initial state, not registered yet.
 	kRegistrationRequested,  ///< Registration has been requested but not yet confirmed.
 	kHostRegistered,         ///< Registration has been confirmed.
+	kAwaitingPullStart,      ///< Waiting for the master to start pull registration.
+	kChunksRegistering,      ///< Master-driven (pull) chunk registration in progress.
 	kChunksRegistered,       ///< Chunks have been registered with the MDS.
 };
 
@@ -142,6 +153,18 @@ public:
 	std::optional<MetadataClusterSnapshot> takeClusterSnapshot() {
 		return std::exchange(clusterSnapshot_, std::nullopt);
 	}
+
+	// Master-driven (pull) chunk registration
+
+	/// Handles SAU_MATOCS_REGISTER_CHUNKS_START: begins the pull sweep.
+	void onRegisterChunksStart(const std::vector<uint8_t> &data);
+
+	/// Handles SAU_MATOCS_REGISTER_CHUNKS_CREDIT: releases more bulks.
+	void onRegisterChunksCredit(const std::vector<uint8_t> &data);
+
+	/// Handles the pull-start timeout and retries sweeps deferred by locked chunks.
+	/// Called periodically from the event loop.
+	void checkPullRegistration();
 
 	int initConnect();
 
@@ -260,6 +283,14 @@ public:
 		       registrationStatus_ == RegistrationStatus::kChunksRegistered;
 	}
 
+	/// These states have queued REGISTER_SPACE; ordinary updates may follow it.
+	bool canSendSpaceUpdates() const {
+		return mode_ == ConnectionMode::CONNECTED &&
+		       (registrationStatus_ == RegistrationStatus::kAwaitingPullStart ||
+		        registrationStatus_ == RegistrationStatus::kChunksRegistering ||
+		        registrationStatus_ == RegistrationStatus::kChunksRegistered);
+	}
+
 	void setMode(ConnectionMode newMode) {
 		if (newMode == ConnectionMode::CONNECTED && mode_ != newMode) {
 			callbackActive_ = std::make_shared<bool>(true);
@@ -343,6 +374,28 @@ private:
 	uint32_t registrationAttempts_{0};  ///< Number of registration attempts.
 	bool isVersionLessThan5_{false};    ///< Indicates if the master server is an old version.
 
+	// Master-driven (pull) chunk registration
+
+	/// Sends the space/label/config registration tail.
+	void sendRegistrationTail();
+
+	/// Runs the old push registration (full sweep in one go).
+	void pushRegisterChunks();
+
+	/// Sends sweep bulks while pull credits remain; sends
+	/// SAU_CSTOMA_REGISTER_CHUNKS_END when the sweep completes.
+	void pumpPullRegistration();
+
+	uint32_t pullBulkSize_{0};    ///< Chunks per bulk, dictated by the master.
+	uint32_t pullCredits_{0};     ///< Bulks the master is ready to accept.
+	uint64_t pullChunksSent_{0};  ///< Chunks reported in this pull session.
+	/// Retry a timed-out START with one push registration, after closing the pull socket.
+	bool pushRegistrationOnReconnect_{false};
+	/// Expires while waiting for SAU_MATOCS_REGISTER_CHUNKS_START.
+	Timeout pullStartTimeout_{std::chrono::seconds(0)};
+	/// Limits rescans while waiting for locked chunks to become available.
+	Timeout pullSweepRetryTimeout_{std::chrono::seconds(0)};
+
 	ConnectionMode mode_{ConnectionMode::FREE};  ///< Current mode of the connection to this master.
 	/// Registration status to this MDS.
 	RegistrationStatus registrationStatus_{RegistrationStatus::kUnregistered};
@@ -376,4 +429,5 @@ private:
 	std::string tlsCaCertFile_;  ///< Path to the TLS CA certificate file.
 	int lastHandshakeError_{0};  ///< Last error code from TLS handshake.
 	friend class MasterConnOutputQueueTests;
+	friend class MasterConnSpaceReportTests;
 };

@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -34,9 +35,13 @@
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/hddspacemgr.h"
+#include "chunkserver/master_connection.h"
 #include "common/chunk_version_with_todel_flag.h"
+#include "common/saunafs_version.h"
 #include "common/slice_traits.h"
+#include "protocol/matocs.h"
 #include "unittests/TemporaryDirectory.h"
+#include "unittests/packet.h"
 
 // Existing disk-maintenance entry points; no test-only production API is needed.
 void hddCheckDisks();
@@ -735,6 +740,34 @@ TEST_F(RegistrationSweepTests, DropsReportedAndRemovedAnnouncements) {
 	EXPECT_EQ(bulk.front().id, 3U);
 	EXPECT_TRUE(fromScan);
 	EXPECT_TRUE(gNewChunkReportOriginRuns.empty());
+}
+
+TEST_F(RegistrationSweepTests, ConnectionRetriesWithRetainedCredit) {
+	auto *chunk = addChunk(1, ChunkState::Locked);
+	ASSERT_NE(chunk, nullptr);
+	MasterConn connection("localhost", "9420", "default", nullptr, nullptr);
+	connection.setMode(ConnectionMode::CONNECTED);
+	auto registered = matocs::registerHost::build(SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX,
+	                                             "default");
+	removeHeaderInPlace(registered);
+	connection.onRegistered(registered);
+	ASSERT_EQ(connection.registrationStatus(), RegistrationStatus::kAwaitingPullStart);
+	auto start = matocs::registerChunksStart::build(1, 1);
+	removeHeaderInPlace(start);
+	connection.onRegisterChunksStart(start);
+	EXPECT_EQ(connection.registrationStatus(), RegistrationStatus::kChunksRegistering);
+	hddChunkRelease(chunk);
+	std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+	connection.checkPullRegistration();
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		EXPECT_NE(chunk->registrationEpoch(), 0U);
+	}
+	EXPECT_EQ(connection.registrationStatus(), RegistrationStatus::kChunksRegistering);
+	auto credit = matocs::registerChunksCredit::build(1);
+	removeHeaderInPlace(credit);
+	connection.onRegisterChunksCredit(credit);
+	EXPECT_EQ(connection.registrationStatus(), RegistrationStatus::kChunksRegistered);
 }
 
 TEST_F(RegistrationSweepTests, StartsWithoutPreRegistrationNewChunkQueue) {

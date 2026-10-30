@@ -43,6 +43,7 @@ FilesystemOperationContext &FilesystemOperationContext::operator=(
 	}
 	assert(deferredChangelogEntries_.empty() || !commitConfirmed_);
 
+	chunkMutationCheck_ = std::move(other.chunkMutationCheck_);
 	rwTransaction_ = std::move(other.rwTransaction_);
 	roTransaction_ = std::move(other.roTransaction_);
 	transactionType_ = other.transactionType_;

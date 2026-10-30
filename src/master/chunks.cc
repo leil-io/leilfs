@@ -1452,6 +1452,20 @@ void chunk_increase_version_operation(Chunk *chunk, bool needsLocking,
 	chunk_invalidate_stale_parts(chunk);
 }
 
+bool chunk_get_part_state(matocsserventry *server, uint64_t chunkId, ChunkPartType type,
+                          ChunkPartState &state) {
+	auto *chunk = chunk_find(chunkId);
+	if (chunk == nullptr) { return false; }
+	for (const auto &part : chunk->parts) {
+		if (part.server() == server && part.type == type) {
+			state = {chunk->version, part.version, part.is_valid(), part.is_busy(),
+			         part.is_todel()};
+			return true;
+		}
+	}
+	return false;
+}
+
 /// Share the rule for locking a part on its chunkserver so reply prediction and the lock
 /// operation cannot drift.
 static bool chunk_part_needs_side_lock(const ChunkPart &part) {
@@ -1730,14 +1744,22 @@ uint8_t chunk_plan_change(uint64_t currentChunkId, uint32_t lockId, bool quotaEx
 		return SAUNAFS_ERROR_LOCKED;
 	}
 
-	// Check if the chunk is writable
-	if (!currentChunk->isWritable()) { return SAUNAFS_ERROR_CHUNKLOST; }
+	// Check if the chunk is writable. Report the chunk id along with the failure:
+	// the caller defers the request on the on-demand chunk-location query, which
+	// needs to know which chunk to ask the registering chunkservers about.
+	if (!currentChunk->isWritable()) {
+		plan.targetChunkId = currentChunkId;
+		return SAUNAFS_ERROR_CHUNKLOST;
+	}
 
 	// Check if the chunk would be safe to write with the desired redundancy level
 	ChunkCopiesCalculator calculator(currentChunk->getGoal());
 	for (auto &part : currentChunk->parts) { calculator.addPart(part.type, MediaLabel::kWildcard); }
 	calculator.evalRedundancyLevel();
-	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) { return SAUNAFS_ERROR_NOCHUNKSERVERS; }
+	if (!calculator.isSafeEnoughToWrite(gRedundancyLevel)) {
+		plan.targetChunkId = currentChunkId;
+		return SAUNAFS_ERROR_NOCHUNKSERVERS;
+	}
 
 	return chunk_plan_file_change(
 	    currentChunk, quotaExceeded,
@@ -1946,14 +1968,18 @@ bool chunk_apply_mutation_plan(const ChunkMutationPlan &plan, uint8_t &operation
 /// target chunk ID to the caller in case of modification.
 /// @param minServerVersion The minimum server version required for the chunk creation, used to
 /// check if the operation can be performed in case of creation.
+/// @param beforeMutation Optional plan check, also called for failed plans. A non-OK
+///        result refuses a valid plan before registry changes or chunkserver commands.
 /// @return The status of the operation.
 uint8_t chunk_multi_modify(uint64_t currentChunkId, uint32_t *lockid, uint8_t goal,
                            bool quotaExceeded, uint8_t *operation, uint64_t *targetChunkId,
-                           uint32_t minServerVersion = 0) {
+                           uint32_t minServerVersion, const ChunkMutationCheck &beforeMutation) {
 	const auto plan =
 	    chunk_plan_modify(currentChunkId, *lockid, goal, quotaExceeded, minServerVersion);
 	if (plan.targetChunkId != 0) { *targetChunkId = plan.targetChunkId; }
+	const auto checked = beforeMutation ? beforeMutation(plan) : uint8_t{SAUNAFS_STATUS_OK};
 	if (plan.status != SAUNAFS_STATUS_OK) { return plan.status; }
+	if (checked != SAUNAFS_STATUS_OK) { return checked; }
 
 	assert(chunk_mutation_plan_current(plan));
 	chunk_run_mutation_plan(plan, *operation);
@@ -1978,14 +2004,18 @@ uint8_t chunk_multi_modify(uint64_t currentChunkId, uint32_t *lockid, uint8_t go
 /// performed.
 /// @param targetChunkId Pointer to the target chunk ID after truncation, used to transmit the
 /// target chunk ID to the caller in case of truncation.
+/// @param beforeMutation Optional plan check, also called for failed plans. A non-OK
+///        result refuses a valid plan before registry changes or chunkserver commands.
 /// @return The status of the operation.
 uint8_t chunk_multi_truncate(uint64_t currentChunkId, uint32_t lockid, uint32_t length,
                              uint8_t goal, bool denyTruncatingParityParts, bool quotaExceeded,
-                             uint64_t *targetChunkId) {
+                             uint64_t *targetChunkId, const ChunkMutationCheck &beforeMutation) {
 	const auto plan = chunk_plan_truncate(currentChunkId, lockid, length, goal,
 	                                      denyTruncatingParityParts, quotaExceeded);
 	if (plan.targetChunkId != 0) { *targetChunkId = plan.targetChunkId; }
+	const auto checked = beforeMutation ? beforeMutation(plan) : uint8_t{SAUNAFS_STATUS_OK};
 	if (plan.status != SAUNAFS_STATUS_OK) { return plan.status; }
+	if (checked != SAUNAFS_STATUS_OK) { return checked; }
 
 	uint8_t operation = Chunk::NONE;
 	assert(chunk_mutation_plan_current(plan));
@@ -2421,6 +2451,30 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 			default:
 				break;
 			}
+
+			// A report can be older than reality. SAU_CSTOMA_CHUNK_NEW announcements
+			// carry the version captured when the disk scan first saw the chunk, and
+			// that queue is only drained once registration has completed, so a version
+			// change applied in between leaves the queued announcement stale by up to
+			// a whole registration window.
+			//
+			// A registration packet can also be overtaken by an on-demand query reply.
+			// The reply can start a version operation before the old packet arrives,
+			// leaving the part BUSY at the current version. The operation's terminal
+			// status is authoritative in that case: processing the old report would
+			// replace the operation-owned version and invalidate the part before that
+			// status is handled. A current-version valid part, including a BUSY one,
+			// therefore makes an older report out-of-order news rather than a
+			// correction.
+			if (new_version < c->version && part.version == c->version && part.is_valid()) {
+				// The version is stale, but a disk reload may have changed its flag.
+				// Ask for current state instead of trusting either stale field.
+				if (part.is_todel() != todel) {
+					matocsserv_refresh_chunk_disk_state(ptr, chunkid, chunkType);
+				}
+				return;
+			}
+
 			if (part.version != new_version) {
 				safs_pretty_syslog(LOG_WARNING, "chunk %016" PRIX64 ": master data indicated "
 						"version %08" PRIX32 ", chunkserver reports %08"
@@ -2472,7 +2526,7 @@ void chunk_damaged(matocsserventry *ptr, uint64_t chunkid, ChunkPartType chunk_t
 			return;
 		}
 	}
-	c->parts.push_back(ChunkPart(server_csid, ChunkPart::INVALID, 0, slice_traits::standard::ChunkPartType()));
+	c->parts.push_back(ChunkPart(server_csid, ChunkPart::INVALID, 0, chunk_type));
 	c->updateStats();
 	c->needVersionIncrease = 1;
 }
@@ -2931,6 +2985,9 @@ uint32_t ChunkWorker::getMinChunkserverVersion(Chunk */*c*/, ChunkPartType /*typ
 
 bool ChunkWorker::tryReplication(Chunk *c, ChunkPartType part_to_recover,
 				matocsserventry *destination_server) {
+	// Rebalancing uses cached candidates too; recheck every background destination here.
+	if (!matocsserv_can_receive_replication(destination_server)) { return false; }
+
 	// TODO(msulikowski) Prefer VALID over TDVALID copies.
 	std::vector<matocsserventry *> standard_servers;
 	std::vector<matocsserventry *> all_servers;
@@ -3714,6 +3771,16 @@ bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server) {
 	if (c == nullptr || server == nullptr) { return false; }
 	return std::any_of(c->parts.begin(), c->parts.end(), [&](const ChunkPart &part) {
 		return part.server() == server && part.is_valid() && part.version == c->version;
+	});
+}
+
+bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server,
+                                   ChunkPartType partType) {
+	Chunk *c = chunk_find(chunkid);
+	if (c == nullptr || server == nullptr) { return false; }
+	return std::any_of(c->parts.begin(), c->parts.end(), [&](const ChunkPart &part) {
+		return part.server() == server && part.type == partType && part.is_valid() &&
+		       part.version == c->version;
 	});
 }
 

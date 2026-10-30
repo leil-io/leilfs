@@ -64,6 +64,13 @@ void matoclserv_emit_changelog_sinks(uint64_t version, char *entry, std::size_t 
 /// destructor invariant.
 void matoclserv_publish_committed_changelog(const FilesystemOperationContext &context);
 
+/// Replays requests waiting for chunk-location discovery once, without another wait.
+/// Reads use known locations; mutations must still pass discovery validation.
+/// @param chunkId The chunk whose query was resolved.
+/// @param complete True if all targeted peers replied; false on timeout or when no
+///        query target remained. This does not imply a complete chunk inventory.
+void matoclserv_chunk_locations_resolved(uint64_t chunkId, bool complete);
+
 /// Initializes the network configuration and register the eventloop callbacks.
 /// @return 0 on success, negative value on error
 int matoclserv_network_init();

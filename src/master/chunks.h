@@ -122,6 +122,18 @@ uint8_t chunk_set_next_chunkid(uint64_t nextChunkIdToBeSet);
 #ifdef METARESTORE
 void chunk_dump(void);
 #else
+struct ChunkPartState {
+	uint32_t chunkVersion{};
+	uint32_t partVersion{};
+	bool valid{};
+	bool busy{};
+	bool todel{};
+};
+
+/// Reads a known part's version and flags; false if the chunk or part is absent.
+bool chunk_get_part_state(matocsserventry *server, uint64_t chunkId, ChunkPartType type,
+                          ChunkPartState &state);
+
 /// One stored part named by its chunkserver, the currency between a backend that keeps
 /// locations outside memory and the in-memory chunk table. The csdbentry outlives connections,
 /// so a location stays valid across a reconnect; its eptr says whether the server is live.
@@ -249,10 +261,16 @@ void chunk_report_failed_operation(uint64_t chunkid, uint8_t operation);
 /// made, which only an apply deferred past a KV commit can see.
 bool chunk_apply_mutation_plan(const ChunkMutationPlan &plan, uint8_t &operation);
 
+/// Observes each plan without changing the registry. Returns OK to continue or an error
+/// to veto a valid plan before mutation; a failed plan retains its original error.
+using ChunkMutationCheck = std::function<uint8_t(const ChunkMutationPlan &)>;
+
 uint8_t chunk_multi_modify(uint64_t ochunkid, uint32_t *lockid, uint8_t goal, bool quota_exceeded,
-                           uint8_t *opflag, uint64_t *nchunkid, uint32_t min_server_version);
-uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length,
-		uint8_t goal, bool denyTruncatingParityParts, bool quota_exceeded, uint64_t *nchunkid);
+                           uint8_t *opflag, uint64_t *nchunkid, uint32_t min_server_version,
+                           const ChunkMutationCheck &beforeMutation = {});
+uint8_t chunk_multi_truncate(uint64_t ochunkid, uint32_t lockid, uint32_t length, uint8_t goal,
+                             bool denyTruncatingParityParts, bool quota_exceeded,
+                             uint64_t *nchunkid, const ChunkMutationCheck &beforeMutation = {});
 void chunk_stats(uint32_t *del,uint32_t *repl);
 uint32_t get_chunk_info_serialized_size();
 void chunk_store_info(uint8_t *buff);
@@ -332,6 +350,9 @@ size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64
 /// True when memory holds a valid part of @p chunkid on @p server at the chunk's version, so a
 /// backend can skip re-verifying a copy this process itself created after the server returned.
 bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server);
+/// The same check for one specific part, including operation-owned BUSY copies.
+bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server,
+                                   ChunkPartType partType);
 
 /// Ticks of chunk_jobs_main that one pass over the in-memory chunk table takes, derived from the
 /// hash size and the configured steps per tick; a backend paging its own records paces itself

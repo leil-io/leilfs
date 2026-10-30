@@ -34,8 +34,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <iterator>
 #include <list>
+#include <optional>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 #include "common/counting_sort.h"
@@ -62,8 +65,10 @@
 #include "master/filesystem.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/get_servers_for_new_chunk.h"
+#include "master/matoclserv.h"
 #include "master/metadataserver_hooks.h"
 #include "master/personality.h"
+#include "metrics/metrics.h"
 #include "protocol/SFSCommunication.h"
 #include "protocol/cstoma.h"
 #include "protocol/matocs.h"
@@ -104,6 +109,11 @@ constexpr double kBytesPerGiB = 1024.0 * 1024.0 * 1024.0;
 // Minimum allowed register timeout (ms)
 constexpr uint32_t kMinRegisterTimeoutMs = 10;
 
+// How often deferred chunk queries are examined for expiry. Matches the
+// smallest accepted ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS so that the configured
+// value is honored as the maximum it is documented to be.
+constexpr uint64_t kPendingChunkQueriesCheckPeriod_ms = 100;
+
 // Keep-alive timeout divisor
 constexpr uint32_t kDefaultKeepAliveTimeoutDivisor = 3;
 
@@ -112,8 +122,38 @@ constexpr uint32_t kSpacePktUsedTotal = 16;           // usedspace(8) + totalspa
 constexpr uint32_t kSpacePktWithToDelSpace = 32;      // + todelusedspace(8) + todeltotalspace(8)
 constexpr uint32_t kSpacePktWithCountsAndToDel = 40;  // + chunkscount(4) + todelchunkscount(4)
 
+// Record visits and part checks allowed per peer in one scheduler invocation.
+constexpr std::size_t kDiskStateRefreshPeerQuantum = 64;
+// Cooperative time budget shared by all peers in one refresh-processing invocation.
+constexpr auto kDiskStateRefreshTimeBudget = std::chrono::milliseconds(2);
+// Cooldown before querying again for pending parts omitted from a reply.
+constexpr auto kDiskStateRefreshRetryDelay = std::chrono::seconds(1);
+
+struct PendingDiskStateRefresh {
+	// Part types still needing a fresh disk-state report.
+	std::vector<ChunkPartType> parts;
+	// In-flight query generation; zero when no query is outstanding.
+	uint64_t generation{0};
+	// Reply timeout for the current in-flight query.
+	SteadyTimePoint deadline{};
+	// Earliest next query time after a reply omitted pending parts.
+	SteadyTimePoint notBefore{};
+	// Next part to validate when resuming a work-limited scheduler slice.
+	std::size_t nextPart{0};
+	// Previous/next IDs in this connection's circular pending queue.
+	// ID-based links remain valid when the owning map rehashes.
+	uint64_t previousPendingId{0};
+	uint64_t nextPendingId{0};
+};
+
+// Only the small active-peer list needs separately allocated stable positions.
+static std::list<matocsserventry *> gDiskStateRefreshServers;
+
 struct matocsserventry {
 	matocsserventry() : inputPacket(kMaxPacketSize) {}
+	~matocsserventry() {
+		if (diskStateRefreshPosition) { gDiskStateRefreshServers.erase(*diskStateRefreshPosition); }
+	}
 
 	ChunkserverConnectionMode mode;
 	int sock;
@@ -149,6 +189,52 @@ struct matocsserventry {
 
 	csdbentry *csdb; /*!< Pointer to database entry for chunkserver. */
 
+	/// True once this connection finished its registration handshake: for the
+	/// old push protocol at SAU_CSTOMA_REGISTER_SPACE, for the pull protocol
+	/// at SAU_CSTOMA_REGISTER_CHUNKS_END.
+	/// Note: the chunkserver's disks may still be scanning at that point, with
+	/// chunks arriving later through the CHUNK_NEW stream, so this must not be
+	/// used to decide whether the chunkserver could host still-unknown chunks.
+	bool chunkRegistrationComplete{false};
+
+	/// True when this connection registers through the master-driven (pull)
+	/// protocol (SAU_MATOCS_REGISTER_CHUNKS_START was sent to it).
+	bool pullRegistration{false};
+	/// True after REGISTER_SPACE arrived before any chunks, proving the stream
+	/// follows pull ordering rather than a forced or fallback push stream.
+	bool pullRegistrationConfirmed{false};
+
+	// Bulk size negotiated for this connection at registration start.
+	uint32_t pullBulkSize{0};
+	/// Opening credits held until pull ordering is confirmed by REGISTER_SPACE.
+	uint32_t pullInitialCreditsPending{0};
+
+	/// Credit grants withheld because the global registration budget
+	/// (CHUNK_REGISTRATION_CHUNKS_PER_SECOND) was exhausted; paid out by
+	/// matocsserv_pull_registration_budget_tick.
+	uint32_t pullCreditsOwed{0};
+
+	/// True once a registration bulk has arrived in the current registration.
+	/// Tells the two protocols apart when they disagree: a pull chunkserver
+	/// sends its space report before any chunks, a push one after them all.
+	/// Cleared when a registration begins, so it describes that registration
+	/// rather than everything the connection has ever carried.
+	bool registrationChunksSeen{false};
+
+	// Separate from client location queries and discarded with this connection.
+	std::unordered_map<uint64_t, PendingDiskStateRefresh> diskStateRefreshes;
+
+	// The map owns the circular queue; its emptiness determines whether head is valid.
+	uint64_t diskStateRefreshHead{0};
+
+	// Sent in deadline order, so timeouts never wait behind a large unsent backlog.
+	// At most 128 entries: ordered linear removal avoids per-record iterator storage.
+	std::vector<uint64_t> diskStateRefreshOutstanding;
+
+	// Tracks active-peer membership and enables O(1) removal on deactivation
+	// or disconnect. One handle per connection, not per pending chunk.
+	std::optional<std::list<matocsserventry *>::iterator> diskStateRefreshPosition;
+
 	static bool lessUsedAndLoaded(matocsserventry *first, matocsserventry *second) {
 		double first_load_penalty = gLoadFactorPenalty * (double)first->load_factor / 100.;
 		double second_load_penalty = gLoadFactorPenalty * (double)second->load_factor / 100.;
@@ -160,6 +246,58 @@ struct matocsserventry {
 	}
 };
 
+namespace matocsserv_test {
+
+matocsserventry *create_connection(csdbentry &entry, uint32_t version) {
+	auto server = std::make_unique<matocsserventry>();
+	server->mode = ChunkserverConnectionMode::CONNECTED;
+	server->sock = -1;
+	server->pdescpos = -1;
+	server->version = version;
+	server->timeout = kDefaultChunkserverTimeoutMs;
+	server->csdb = &entry;
+	server->registrationState.begin(false, version);
+	entry.eptr = server.release();
+	return entry.eptr;
+}
+
+void destroy_connection(matocsserventry *server) {
+	server->csdb->eptr = nullptr;
+	delete server;
+}
+
+std::vector<std::vector<uint8_t>> take_output_packets(matocsserventry *server) {
+	std::vector<std::vector<uint8_t>> packets;
+	for (auto &packet : server->outputPackets) { packets.push_back(std::move(packet.packet)); }
+	server->outputPackets.clear();
+	return packets;
+}
+
+void rehash_disk_state_refreshes(matocsserventry *server) {
+	server->diskStateRefreshes.rehash(server->diskStateRefreshes.bucket_count() * 2 + 1);
+}
+
+void fill_output_packets(matocsserventry *server) {
+	for (std::size_t count = 0; count < kDiskStateRefreshOutputLimit; ++count) {
+		server->outputPackets.emplace_back(PacketHeader{ANTOAN_NOP, 0});
+	}
+}
+
+void expire_disk_state_refresh(matocsserventry *server, uint64_t chunkId, SteadyTimePoint now) {
+	auto &refresh = server->diskStateRefreshes.at(chunkId);
+	refresh.deadline = now;
+	auto &outstanding = server->diskStateRefreshOutstanding;
+	const auto position = std::find(outstanding.begin(), outstanding.end(), chunkId);
+	sassert(position != outstanding.end());
+	std::rotate(outstanding.begin(), position, std::next(position));
+}
+
+std::size_t pending_disk_state_refreshes(const matocsserventry *server) {
+	return server->diskStateRefreshes.size();
+}
+
+}  // namespace matocsserv_test
+
 static std::list<std::unique_ptr<matocsserventry>> matocsservList;
 static int lsock;
 static int32_t lsockpdescpos;
@@ -167,6 +305,94 @@ static int32_t lsockpdescpos;
 // from config
 static std::string gListenHost;
 static std::string gListenPort;
+
+/// on-demand chunk-location queries
+
+// Defaults for the ON_DEMAND_CHUNK_QUERY_* configuration entries
+constexpr uint32_t kDefaultOnDemandChunkQueryTimeout_ms = 2000;
+constexpr uint32_t kDefaultOnDemandChunkQueryLimit = 10000;
+// Safety limit for client operations deferred by those queries
+constexpr uint32_t kMaxOnDemandChunkQueryWaiters = 100000;
+
+static uint32_t gOnDemandChunkQueryTimeout_ms = kDefaultOnDemandChunkQueryTimeout_ms;
+static uint32_t gOnDemandChunkQueryLimit = kDefaultOnDemandChunkQueryLimit;
+
+/// A chunk id being resolved by an on-demand chunk-location query.
+struct PendingChunkQuery {
+	Timeout deadline;
+	// Nonce shared by all packets in one query attempt.
+	uint64_t generation = 0;
+	/// Number of queried chunkservers which have not answered yet.
+	/// The waiters are resolved when it reaches zero or the deadline expires.
+	uint32_t outstandingReplies = 0;
+	/// Restricts this attempt to peers whose inventories are incomplete.
+	bool registeringOnly = false;
+};
+
+/// Chunk ids currently being resolved by on-demand queries.
+static std::unordered_map<uint64_t, PendingChunkQuery> gPendingChunkQueries;
+static uint64_t gChunkQueryConnectionGeneration = 1;
+
+// Avoid a warning per request while the query cap remains saturated.
+static bool gOnDemandChunkQueryLimitWarningEmitted = false;
+
+static void matocsserv_update_pending_chunk_query_gauge() {
+	metrics::Gauge::set(metrics::Gauge::Master::CHUNK_LOCATION_QUERY_PENDING,
+	                    static_cast<double>(gPendingChunkQueries.size()));
+}
+
+/// Chunk ids queued this event-loop iteration; flushed in size-limited
+/// SAU_MATOCS_QUERY_CHUNKS packets grouped by generation per eligible chunkserver.
+static std::vector<uint64_t> gChunkQueryIdsToSend;
+
+// Generation zero is reserved for queries that have not yet been sent.
+static uint64_t gNextChunkQueryGeneration = 1;
+
+static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr);
+static void matocsserv_resolve_chunk_query(uint64_t chunkId, bool complete);
+
+static uint64_t matocsserv_new_chunk_query_generation() {
+	const uint64_t generation = gNextChunkQueryGeneration++;
+	if (gNextChunkQueryGeneration == 0) { gNextChunkQueryGeneration = 1; }
+	return generation;
+}
+
+static void matocsserv_assign_unassigned_query_generations() {
+	uint64_t generation = 0;
+	for (auto &entry : gPendingChunkQueries) {
+		auto &query = entry.second;
+		if (query.generation != 0) { continue; }
+		if (generation == 0) { generation = matocsserv_new_chunk_query_generation(); }
+		query.generation = generation;
+	}
+}
+
+/* master-driven (pull) chunk registration */
+
+// Defaults for the CHUNK_REGISTRATION_* configuration entries
+constexpr uint32_t kDefaultChunkRegistrationBulkSize = 1000;
+constexpr uint32_t kDefaultChunkRegistrationWindow = 4;
+constexpr uint32_t kDefaultChunkRegistrationChunksPerSecond = 500000;
+
+/// Chunks per registration bulk, dictated to pull-mode chunkservers.
+static uint32_t gChunkRegistrationBulkSize = kDefaultChunkRegistrationBulkSize;
+/// Bulks a pull-mode chunkserver may have in flight.
+static uint32_t gChunkRegistrationWindow = kDefaultChunkRegistrationWindow;
+/// Global registration ingest budget, chunks per second; 0 disables pacing.
+/// This is the DOS guard for a mass reconnect (e.g. after a failover).
+static uint32_t gChunkRegistrationChunksPerSecond = kDefaultChunkRegistrationChunksPerSecond;
+
+uint32_t matocsserv_limit_chunk_registration_window(uint32_t bulkSize, uint32_t requestedWindow) {
+	sassert(bulkSize > 0 && bulkSize <= kMaxChunkRegistrationInFlightChunks);
+	sassert(requestedWindow > 0);
+	return std::min(requestedWindow, kMaxChunkRegistrationInFlightChunks / bulkSize);
+}
+
+/// Budget accounting for the current second.
+static uint64_t gRegistrationBudgetSecond = 0;
+static uint64_t gRegistrationChunksThisSecond = 0;
+static std::list<std::unique_ptr<matocsserventry>>::iterator gRegistrationBudgetCursor =
+    matocsservList.end();
 
 void matocsserv_getserverdata(const matocsserventry *eptr, ChunkserverListEntry &result) {
 	if (eptr) { result = *eptr; }
@@ -495,6 +721,11 @@ std::vector<std::pair<matocsserventry *, ChunkPartType>> matocsserv_getservers_f
 	return ret;
 }
 
+bool matocsserv_can_receive_replication(const matocsserventry *eptr) {
+	return eptr->mode != ChunkserverConnectionMode::KILL &&
+	       (!eptr->pullRegistration || eptr->chunkRegistrationComplete);
+}
+
 void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunkserver_version,
 		uint16_t replication_write_limit, const IpCounter &ip_counter, std::vector<matocsserventry *> &servers,
 		int &total_matching, int &returned_matching, int &temporarily_unavailable) {
@@ -521,7 +752,10 @@ void matocsserv_getservers_lessrepl(const MediaLabel &label, uint32_t min_chunks
 			matchesRequestedLabel = true;
 		}
 
-		if (eptr->wrepcounter < replication_write_limit) {
+		// A missing registry entry is not proof of absence until the pull inventory arrives.
+		// Count deferred peers like busy peers, preserving label and fallback decisions.
+		if (eptr->wrepcounter < replication_write_limit &&
+		    matocsserv_can_receive_replication(eptr.get())) {
 			servers.push_back(eptr.get());
 			if (matchesRequestedLabel) {
 				++returned_matching;
@@ -1044,6 +1278,54 @@ void matocsserv_send_register_host_response(matocsserventry *eptr) {
 	matocs::registerHost::serialize(outPacket.packet, SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX,
 	                                gClusterId);
 	eptr->outputPackets.push_back(std::move(outPacket));
+
+	// Identity-registered connections deliberately send no inventory. For a regular
+	// pull-capable connection, start the inventory stream only after the host response.
+	if (!gChunkOperations->requestsChunkserverIdentity() &&
+	    eptr->version >= kFirstVersionWithPullChunkRegistration) {
+		eptr->pullRegistration = true;
+
+		// With a budget configured, clamp each bulk to one budget window.
+		// Keep the negotiated size for the session, including across reloads.
+		eptr->pullBulkSize =
+		    gChunkRegistrationChunksPerSecond == 0
+		        ? gChunkRegistrationBulkSize
+		        : std::min(gChunkRegistrationBulkSize, gChunkRegistrationChunksPerSecond);
+
+		// Defer budgeted opening credits until REGISTER_SPACE confirms pull
+		// ordering, so forced-push streams cannot consume them.
+		// Without a budget, grant the opening window immediately.
+		const uint32_t initialCredits =
+		    gChunkRegistrationChunksPerSecond == 0 ? gChunkRegistrationWindow : 0;
+		if (initialCredits == 0) { eptr->pullInitialCreditsPending = gChunkRegistrationWindow; }
+
+		OutputPacket startPacket;
+		matocs::registerChunksStart::serialize(startPacket.packet, eptr->pullBulkSize,
+		                                       initialCredits);
+		eptr->outputPackets.push_back(std::move(startPacket));
+
+		// Registration is now in progress; hold background metadata dumps.
+		gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
+	}
+
+	// Ask the newly registered chunkserver about all pending location queries.
+	if (matocsserv_can_answer_chunk_queries(eptr) && !gPendingChunkQueries.empty()) {
+		matocsserv_assign_unassigned_query_generations();
+		std::unordered_map<uint64_t, std::vector<uint64_t>> idsByGeneration;
+		for (auto &[chunkId, query] : gPendingChunkQueries) {
+			idsByGeneration[query.generation].push_back(chunkId);
+			++query.outstandingReplies;
+		}
+
+		// Keep query generations separate and split each group to fit the packet limit.
+		for (const auto &[generation, chunkIds] : idsByGeneration) {
+			for (const auto &idGroup : matocsserv_split_chunk_query_ids(chunkIds)) {
+				OutputPacket outPacket;
+				matocs::queryChunks::serialize(outPacket.packet, generation, idGroup);
+				eptr->outputPackets.push_back(std::move(outPacket));
+			}
+		}
+	}
 }
 
 void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t servip,
@@ -1125,6 +1407,16 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 		return;
 	}
 
+	// Initialize chunk-registration tracking after accepting the host.
+	++gChunkQueryConnectionGeneration;
+	eptr->registrationChunksSeen = false;
+	eptr->chunkRegistrationComplete = false;
+	eptr->pullRegistration = false;
+	eptr->pullRegistrationConfirmed = false;
+	eptr->pullBulkSize = 0;
+	eptr->pullInitialCreditsPending = 0;
+	eptr->pullCreditsOwed = 0;
+
 	if (eptr->registrationState.identityPending()) {
 		safs::log_info("requesting chunkserver identity from {}:{}", eptr->serviceStrIp,
 		               eptr->servport);
@@ -1137,11 +1429,11 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	matocsserv_send_register_host_response(eptr);
 }
 
-void register_space(matocsserventry* eptr) {
+static void matocsserv_log_registration_space(const matocsserventry *eptr) {
 	double us = (double)(eptr->usedspace) / kBytesPerGiB;
 	double ts = (double)(eptr->totalspace) / kBytesPerGiB;
 	safs::log_info(
-	    "chunkserver register end (packet version: 5) - ip: {}, port: {}, usedspace: {} ({:.2f} GiB), totalspace: {} ({:.2f} GiB)",
+	    "chunkserver registration space report received - ip: {}, port: {}, usedspace: {} ({:.2f} GiB), totalspace: {} ({:.2f} GiB)",
 	    eptr->serviceStrIp, eptr->servport, eptr->usedspace, us, eptr->totalspace, ts);
 }
 
@@ -1167,6 +1459,569 @@ void matocsserv_space(matocsserventry *eptr, const uint8_t *data, uint32_t lengt
 		eptr->todeltotalspace = get64bit(&data);
 		if (length == kSpacePktWithCountsAndToDel) { get32bit(&data, eptr->todelchunkscount); }
 	}
+}
+
+/// True when this connection can answer on-demand chunk queries. Registration
+/// completion is intentionally irrelevant because disk scans may report chunks
+/// after REGISTER_SPACE.
+static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr) {
+	return eptr->mode == ChunkserverConnectionMode::CONNECTED && eptr->csdb != nullptr &&
+	       !eptr->registrationState.identityPending() &&
+	       eptr->version >= kFirstVersionWithChunkLocationQuery;
+}
+
+bool ChunkMutationDiscovery::requiresQuery(const ChunkMutationPlan &plan, bool inventoryIncomplete,
+                                           uint64_t currentConnectionGeneration) {
+	const bool missingLocations =
+	    plan.status == SAUNAFS_ERROR_CHUNKLOST || plan.status == SAUNAFS_ERROR_NOCHUNKSERVERS;
+	const bool versionMove =
+	    plan.targetChunkId == plan.chunkId && plan.targetVersion > plan.chunkVersion;
+	if (!inventoryIncomplete || plan.chunkId == 0 || (!missingLocations && !versionMove)) {
+		return false;
+	}
+	if (complete && chunkId == plan.chunkId && version == plan.chunkVersion &&
+	    connectionGeneration == currentConnectionGeneration) {
+		return false;
+	}
+	*this = {plan.chunkId, plan.chunkVersion, currentConnectionGeneration, false};
+	return true;
+}
+
+uint8_t matocsserv_check_mutation_discovery(const ChunkMutationPlan &plan,
+                                            ChunkMutationDiscovery &discovery) {
+	if (gChunkOperations->requestsChunkserverIdentity()) { return SAUNAFS_STATUS_OK; }
+
+	bool inventoryIncomplete = false;
+	for (const auto &entry : matocsservList) {
+		if (entry->mode != ChunkserverConnectionMode::CONNECTED || entry->csdb == nullptr ||
+		    entry->chunkRegistrationComplete) {
+			continue;
+		}
+		inventoryIncomplete = true;
+		// A legacy or handshaking peer cannot confirm its unreported copies yet.
+		if (!matocsserv_can_answer_chunk_queries(entry.get())) { discovery.complete = false; }
+	}
+	return discovery.requiresQuery(plan, inventoryIncomplete, gChunkQueryConnectionGeneration)
+	           ? SAUNAFS_ERROR_NOCHUNKSERVERS
+			   : SAUNAFS_STATUS_OK;
+}
+
+void matocsserv_refresh_chunk_disk_state(matocsserventry *server, uint64_t chunkId,
+                                         ChunkPartType partType) {
+	if (!matocsserv_can_answer_chunk_queries(server)) {
+		// Old peers cannot refresh in place; their next inventory restores disk state.
+		if (server->mode == ChunkserverConnectionMode::CONNECTED) {
+			matocsserv_request_disconnect(server);
+		}
+		return;
+	}
+
+	auto [iter, inserted] = server->diskStateRefreshes.try_emplace(chunkId);
+	auto &refresh = iter->second;
+
+	if (inserted) {
+		if (server->diskStateRefreshes.size() == 1) {
+			server->diskStateRefreshHead = chunkId;
+			refresh.previousPendingId = refresh.nextPendingId = chunkId;
+		} else {
+			auto &head = server->diskStateRefreshes.at(server->diskStateRefreshHead);
+			auto &tail = server->diskStateRefreshes.at(head.previousPendingId);
+			refresh.previousPendingId = head.previousPendingId;
+			refresh.nextPendingId = server->diskStateRefreshHead;
+			tail.nextPendingId = chunkId;
+			head.previousPendingId = chunkId;
+		}
+		if (!server->diskStateRefreshPosition) {
+			server->diskStateRefreshPosition =
+			    gDiskStateRefreshServers.insert(gDiskStateRefreshServers.end(), server);
+		}
+	}
+
+	if (std::find(refresh.parts.begin(), refresh.parts.end(), partType) == refresh.parts.end()) {
+		refresh.parts.push_back(partType);
+	}
+}
+
+static void matocsserv_deactivate_disk_state_refreshes(matocsserventry *server) {
+	if (server->diskStateRefreshPosition) {
+		gDiskStateRefreshServers.erase(*server->diskStateRefreshPosition);
+		server->diskStateRefreshPosition.reset();
+	}
+}
+
+static void matocsserv_erase_disk_state_refresh(matocsserventry *server, uint64_t chunkId) {
+	auto iter = server->diskStateRefreshes.find(chunkId);
+	sassert(iter != server->diskStateRefreshes.end());
+	auto &refresh = iter->second;
+
+	// Unlink while the record and its neighbors are still in the map.
+	if (server->diskStateRefreshes.size() == 1) {
+		server->diskStateRefreshHead = 0;
+	} else {
+		auto &previous = server->diskStateRefreshes.at(refresh.previousPendingId);
+		auto &next = server->diskStateRefreshes.at(refresh.nextPendingId);
+		previous.nextPendingId = refresh.nextPendingId;
+		next.previousPendingId = refresh.previousPendingId;
+
+		if (server->diskStateRefreshHead == chunkId) {
+			server->diskStateRefreshHead = refresh.nextPendingId;
+		}
+	}
+
+	if (refresh.generation != 0) { std::erase(server->diskStateRefreshOutstanding, chunkId); }
+	server->diskStateRefreshes.erase(iter);
+
+	// An empty backlog no longer needs a turn in the active-peer scheduler.
+	if (server->diskStateRefreshes.empty()) { matocsserv_deactivate_disk_state_refreshes(server); }
+}
+
+// The clock budget is cooperative: a single registry lookup cannot be preempted.
+// The independent work budget makes the backlog bound deterministic and testable.
+std::size_t matocsserv_process_disk_state_refreshes(std::chrono::microseconds timeBudget,
+                                                    SteadyTimePoint now) {
+	ActiveLoopWatchdog watchdog(timeBudget);
+	watchdog.start();
+
+	std::size_t work = 0;
+	const auto exhausted = [&] {
+		return timeBudget <= std::chrono::microseconds::zero() ||
+		       work >= kDiskStateRefreshWorkLimit || watchdog.expired();
+	};
+
+	std::size_t serversLeft = gDiskStateRefreshServers.size();
+	while (serversLeft-- > 0 && !gDiskStateRefreshServers.empty() && !exhausted()) {
+		// Rotate first so a budget-limited invocation leaves the next peer at the front.
+		auto *server = gDiskStateRefreshServers.front();
+		gDiskStateRefreshServers.splice(gDiskStateRefreshServers.end(), gDiskStateRefreshServers,
+		                                *server->diskStateRefreshPosition);
+		++work;
+
+		if (!matocsserv_can_answer_chunk_queries(server)) {
+			matocsserv_deactivate_disk_state_refreshes(server);
+			continue;
+		}
+
+		// Check the earliest reply deadline before visiting a potentially large unsent backlog.
+		if (!server->diskStateRefreshOutstanding.empty()) {
+			const auto oldestId = server->diskStateRefreshOutstanding.front();
+			const auto &oldest = server->diskStateRefreshes.at(oldestId);
+			if (oldest.deadline <= now) {
+				matocsserv_request_disconnect(server);
+				matocsserv_deactivate_disk_state_refreshes(server);
+				continue;
+			}
+		}
+
+		std::vector<uint64_t> chunkIds;
+		uint64_t generation = 0;
+
+		const auto peerStart = work;
+		std::size_t recordsLeft = server->diskStateRefreshes.size();
+		const auto peerExhausted = [&] {
+			return exhausted() || work - peerStart >= kDiskStateRefreshPeerQuantum;
+		};
+
+		while (recordsLeft-- > 0 && !server->diskStateRefreshes.empty() && !peerExhausted()) {
+			// Advance before validation: the current record may be removed below.
+			const auto chunkId = server->diskStateRefreshHead;
+			auto &refresh = server->diskStateRefreshes.at(chunkId);
+			server->diskStateRefreshHead = refresh.nextPendingId;
+			++work;
+
+			// Resume part validation too: one ID can contain multiple EC part types.
+			while (refresh.nextPart < refresh.parts.size() && !peerExhausted()) {
+				++work;
+				if (chunk_server_holds_valid_part(chunkId, server,
+				                                  refresh.parts[refresh.nextPart])) {
+					++refresh.nextPart;
+				} else {
+					// Validate the replacement at the same index on the next iteration.
+					refresh.parts[refresh.nextPart] = refresh.parts.back();
+					refresh.parts.pop_back();
+				}
+			}
+
+			if (refresh.parts.empty()) {
+				matocsserv_erase_disk_state_refresh(server, chunkId);
+				continue;
+			}
+
+			if (refresh.nextPart != refresh.parts.size()) { continue; }
+			refresh.nextPart = 0;
+
+			// Keep waiting/retry records queued, and send only when the peer has capacity.
+			if (refresh.generation != 0 || refresh.notBefore > now) { continue; }
+			if (server->diskStateRefreshOutstanding.size() >= kDiskStateRefreshOutstandingLimit ||
+			    server->outputPackets.size() >= kDiskStateRefreshOutputLimit) {
+				continue;
+			}
+
+			if (generation == 0) { generation = matocsserv_new_chunk_query_generation(); }
+			refresh.generation = generation;
+			refresh.deadline = now + std::chrono::milliseconds(server->timeout);
+			server->diskStateRefreshOutstanding.push_back(chunkId);
+			chunkIds.push_back(chunkId);
+		}
+
+		// Serialize the selected IDs as this peer's query batch.
+		for (const auto &group : matocsserv_split_chunk_query_ids(chunkIds)) {
+			OutputPacket packet;
+			matocs::queryChunks::serialize(packet.packet, generation, group);
+			server->outputPackets.push_back(std::move(packet));
+		}
+	}
+
+	return work;
+}
+
+static void matocsserv_disk_state_refreshes_check() {
+	matocsserv_process_disk_state_refreshes(kDiskStateRefreshTimeBudget, SteadyClock::now());
+}
+
+std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
+    const std::vector<uint64_t> &chunkIds) {
+	if (chunkIds.empty()) { return {}; }
+
+	// Measured off the serializer rather than assumed, so a change to the
+	// packet's framing cannot silently push it back over the receiver's limit.
+	static const std::size_t maxIdsPerPacket = [] {
+		MessageBuffer empty;
+		matocs::queryChunks::serialize(empty, 1, std::vector<uint64_t>{});
+		MessageBuffer single;
+		matocs::queryChunks::serialize(single, 1, std::vector<uint64_t>{0});
+
+		const std::size_t overhead = empty.size();
+		const std::size_t perId = single.size() - overhead;
+		massert(perId > 0 && overhead + perId <= kMaxMasterToChunkserverPacketSize,
+		        "a single-id chunk query does not fit the chunkserver packet limit");
+		return (kMaxMasterToChunkserverPacketSize - overhead) / perId;
+	}();
+
+	std::vector<std::vector<uint64_t>> groups;
+	groups.reserve((chunkIds.size() + maxIdsPerPacket - 1) / maxIdsPerPacket);
+
+	for (std::size_t offset = 0; offset < chunkIds.size(); offset += maxIdsPerPacket) {
+		const std::size_t count = std::min(maxIdsPerPacket, chunkIds.size() - offset);
+		const auto begin = chunkIds.begin() + static_cast<std::ptrdiff_t>(offset);
+		groups.emplace_back(begin, begin + static_cast<std::ptrdiff_t>(count));
+	}
+
+	return groups;
+}
+
+/// Completes the on-demand query for \p chunkId and wakes its waiters.
+/// @param complete True when all targeted peers replied; false on timeout or when
+///        no target remained. Passed to waiters as query completion, not inventory completion.
+static void matocsserv_resolve_chunk_query(uint64_t chunkId, bool complete) {
+	gPendingChunkQueries.erase(chunkId);
+	if (gOnDemandChunkQueryLimit == 0 ||
+	    gPendingChunkQueries.size() < gOnDemandChunkQueryLimit) {
+		gOnDemandChunkQueryLimitWarningEmitted = false;
+	}
+	matocsserv_update_pending_chunk_query_gauge();
+	matoclserv_chunk_locations_resolved(chunkId, complete);
+}
+
+uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit() {
+	return kMaxOnDemandChunkQueryWaiters;
+}
+
+bool matocsserv_query_chunk_location(uint64_t chunkId, bool registeringOnly) {
+	if (gPendingChunkQueries.find(chunkId) != gPendingChunkQueries.end()) {
+		// Already being queried; the caller can wait for the same resolution
+		return true;
+	}
+
+	if (gPendingChunkQueries.size() >= gOnDemandChunkQueryLimit) {
+		if (gOnDemandChunkQueryLimit != 0) {
+			if (!gOnDemandChunkQueryLimitWarningEmitted) {
+				safs::log_warn(
+				    "on-demand chunk-location query limit reached ({}); returning new requests "
+				    "without starting another query",
+				    gOnDemandChunkQueryLimit);
+				gOnDemandChunkQueryLimitWarningEmitted = true;
+			}
+			metrics::Counter::increment(
+			    metrics::Counter::Master::CHUNK_LOCATION_QUERY_LIMIT_REJECTED);
+		}
+		return false;
+	}
+
+	bool anyTarget = false;
+	for (const auto &entry : matocsservList) {
+		if (matocsserv_can_answer_chunk_queries(entry.get()) &&
+		    (!registeringOnly || !entry->chunkRegistrationComplete)) {
+			anyTarget = true;
+			break;
+		}
+	}
+	if (!anyTarget) { return false; }
+
+	gPendingChunkQueries.emplace(
+	    chunkId, PendingChunkQuery{
+	                 .deadline = Timeout(std::chrono::milliseconds(gOnDemandChunkQueryTimeout_ms)),
+	                 .outstandingReplies = 0,
+	                 .registeringOnly = registeringOnly});
+	gChunkQueryIdsToSend.push_back(chunkId);
+	matocsserv_update_pending_chunk_query_gauge();
+
+	return true;
+}
+
+/// Flushes the chunk-location queries accumulated during this event-loop
+/// iteration in size-limited SAU_MATOCS_QUERY_CHUNKS packets per eligible chunkserver.
+void matocsserv_flush_chunk_queries() {
+	if (gChunkQueryIdsToSend.empty()) { return; }
+
+	std::vector<uint64_t> chunkIds;
+	chunkIds.swap(gChunkQueryIdsToSend);
+	matocsserv_assign_unassigned_query_generations();
+
+	std::unordered_map<uint64_t, std::vector<uint64_t>> idsByGeneration;
+	for (const auto chunkId : chunkIds) {
+		auto queryIter = gPendingChunkQueries.find(chunkId);
+		if (queryIter != gPendingChunkQueries.end()) {
+			idsByGeneration[queryIter->second.generation].push_back(chunkId);
+		}
+	}
+
+	for (auto &entry : matocsservList) {
+		auto *eptr = entry.get();
+		if (!matocsserv_can_answer_chunk_queries(eptr)) { continue; }
+
+		for (const auto &[generation, generationChunkIds] : idsByGeneration) {
+			std::vector<uint64_t> idsForPeer;
+			for (const auto chunkId : generationChunkIds) {
+				auto &query = gPendingChunkQueries.at(chunkId);
+				// Completed inventories already supplied their copies. Mutation discovery
+				// needs only the peers whose replicas may still be unreported.
+				if (query.registeringOnly && eptr->chunkRegistrationComplete) { continue; }
+				idsForPeer.push_back(chunkId);
+				++query.outstandingReplies;
+			}
+			for (const auto &idGroup : matocsserv_split_chunk_query_ids(idsForPeer)) {
+				OutputPacket outPacket;
+				matocs::queryChunks::serialize(outPacket.packet, generation, idGroup);
+				eptr->outputPackets.push_back(std::move(outPacket));
+			}
+		}
+	}
+
+	for (const auto &generationEntry : idsByGeneration) {
+		for (const auto chunkId : generationEntry.second) {
+			auto queryIter = gPendingChunkQueries.find(chunkId);
+			if (queryIter == gPendingChunkQueries.end()) { continue; }
+
+			if (queryIter->second.outstandingReplies == 0) {
+				// No peer was targeted: candidates became ineligible or finished registration.
+				matocsserv_resolve_chunk_query(chunkId, false);
+			}
+		}
+	}
+}
+
+/// Resolves the waiters of queries whose deadline expired (e.g. a queried
+/// chunkserver disconnected before answering). Runs once per second.
+void matocsserv_pending_chunk_queries_check() {
+	if (gPendingChunkQueries.empty()) { return; }
+
+	std::vector<uint64_t> expiredChunkIds;
+	for (const auto &[chunkId, query] : gPendingChunkQueries) {
+		if (query.deadline.expired()) { expiredChunkIds.push_back(chunkId); }
+	}
+
+	for (const auto chunkId : expiredChunkIds) { matocsserv_resolve_chunk_query(chunkId, false); }
+	if (!expiredChunkIds.empty()) {
+		metrics::Counter::increment(metrics::Counter::Master::CHUNK_LOCATION_QUERY_TIMEOUT,
+		                            expiredChunkIds.size());
+	}
+}
+
+void matocsserv_sau_query_chunks(matocsserventry *eptr, const std::vector<uint8_t> &data,
+                                 SteadyTimePoint now) {
+	if (eptr->csdb == nullptr) {
+		safs::log_info(
+		    "SAU_CSTOMA_QUERY_CHUNKS - possible for registered "
+		    "connections only (ip: {}, port {})",
+		    eptr->serviceStrIp, eptr->servport);
+		eptr->mode = ChunkserverConnectionMode::KILL;
+		return;
+	}
+
+	uint64_t generation{};
+	std::vector<uint64_t> queriedChunkIds;
+	std::vector<ChunkWithVersionAndType> foundChunks;
+	cstoma::queryChunks::deserialize(data, generation, queriedChunkIds, foundChunks);
+
+	// Acknowledge only found parts; outstanding-ID removal scans at most 128 entries.
+	for (const auto &chunk : foundChunks) {
+		auto refreshIter = eptr->diskStateRefreshes.find(chunk.id);
+		if (refreshIter == eptr->diskStateRefreshes.end() || generation == 0 ||
+		    refreshIter->second.generation != generation) {
+			continue;
+		}
+		std::erase(refreshIter->second.parts, chunk.type);
+		refreshIter->second.nextPart = 0;
+		if (refreshIter->second.parts.empty()) {
+			matocsserv_erase_disk_state_refresh(eptr, chunk.id);
+		}
+	}
+
+	for (const auto chunkId : queriedChunkIds) {
+		auto refreshIter = eptr->diskStateRefreshes.find(chunkId);
+		if (refreshIter != eptr->diskStateRefreshes.end() && generation != 0 &&
+		    refreshIter->second.generation == generation) {
+			// Missing types may be locked, even if other parts of this chunk were found.
+			auto &refresh = refreshIter->second;
+			refresh.generation = 0;
+			refresh.nextPart = 0;
+			std::erase(eptr->diskStateRefreshOutstanding, chunkId);
+			refresh.notBefore = now + kDiskStateRefreshRetryDelay;
+		}
+	}
+
+	// generation identifies the query attempt used to account for replies, not
+	// the lifetime of the location fact. A late positive answer still describes
+	// a copy the chunkserver has and must be retained for the next attempt.
+	if (!foundChunks.empty()) {
+		// Register the found copies exactly like a registration bulk would.
+		// Clear matching refreshes first: an older, conflicting reply can enqueue another.
+		gChunkOperations->serverHasChunks(eptr, foundChunks);
+	}
+
+	for (const auto chunkId : queriedChunkIds) {
+		auto queryIter = gPendingChunkQueries.find(chunkId);
+		if (queryIter == gPendingChunkQueries.end() || queryIter->second.generation != generation) {
+			continue;  // already resolved, timed out, or from another attempt
+		}
+
+		if (queryIter->second.outstandingReplies > 0) { --queryIter->second.outstandingReplies; }
+		if (queryIter->second.outstandingReplies == 0) {
+			matocsserv_resolve_chunk_query(chunkId, true);
+		}
+	}
+}
+
+/// Sends a pull-registration credit grant releasing \p credits more bulks.
+static void matocsserv_grant_pull_credits(matocsserventry *eptr, uint32_t credits) {
+	OutputPacket outPacket;
+	matocs::registerChunksCredit::serialize(outPacket.packet, credits);
+	eptr->outputPackets.push_back(std::move(outPacket));
+}
+
+/// Rolls the per-second registration budget window forward.
+static void matocsserv_refresh_registration_budget() {
+	const uint64_t nowSecond = eventloop_time();
+	if (nowSecond != gRegistrationBudgetSecond) {
+		gRegistrationBudgetSecond = nowSecond;
+		gRegistrationChunksThisSecond = 0;
+	}
+}
+
+/// Attempts one whole-bulk credit reservation. A budgeted reservation is
+/// charged exactly once, when its credit is sent; received chunk counts never
+/// affect the accounting.
+static bool matocsserv_try_grant_pull_credit(matocsserventry *eptr) {
+	if (gChunkRegistrationChunksPerSecond == 0) {
+		matocsserv_grant_pull_credits(eptr, 1);
+		return true;
+	}
+
+	matocsserv_refresh_registration_budget();
+	const uint64_t bulkSize = eptr->pullBulkSize;
+	if (bulkSize == 0) { return false; }
+
+	// Existing sessions retain their negotiated size across reloads. If a
+	// reload lowers the configured budget below that size, allow one such
+	// reservation at the start of a window rather than deadlocking it.
+	if (bulkSize > gChunkRegistrationChunksPerSecond) {
+		if (gRegistrationChunksThisSecond != 0) { return false; }
+	} else if (gRegistrationChunksThisSecond > gChunkRegistrationChunksPerSecond - bulkSize) {
+		return false;
+	}
+
+	gRegistrationChunksThisSecond += bulkSize;
+	matocsserv_grant_pull_credits(eptr, 1);
+	return true;
+}
+
+/// Regrants a credit for a processed pull-registration bulk. Budgeted grants
+/// are queued so the round-robin tick, rather than the fastest chunkserver,
+/// decides which connection consumes the next reservation.
+static void matocsserv_regrant_pull_credit(matocsserventry *eptr) {
+	if (gChunkRegistrationChunksPerSecond == 0) {
+		matocsserv_grant_pull_credits(eptr, 1);
+	} else {
+		++eptr->pullCreditsOwed;
+	}
+}
+
+static void matocsserv_update_registration_metrics() {
+#ifdef HAVE_PROMETHEUS
+	std::size_t activeRegistrations = 0;
+	for (const auto &entry : matocsservList) {
+		const auto *eptr = entry.get();
+		if (eptr->pullRegistration && !eptr->chunkRegistrationComplete) {
+			++activeRegistrations;
+		}
+	}
+	metrics::Gauge::set(metrics::Gauge::Master::CHUNK_REGISTRATION_ACTIVE,
+	                    static_cast<double>(activeRegistrations));
+	const double budgetUtilization = gChunkRegistrationChunksPerSecond == 0
+	                                     ? 0.0
+	                                     : static_cast<double>(gRegistrationChunksThisSecond) /
+	                                           gChunkRegistrationChunksPerSecond;
+	metrics::Gauge::set(metrics::Gauge::Master::CHUNK_REGISTRATION_BUDGET_UTILIZATION,
+	                    budgetUtilization);
+#endif
+}
+
+/// Runs every event-loop iteration and pays withheld credits in round-robin
+/// order until the current whole-bulk budget is exhausted.
+void matocsserv_pull_registration_budget_tick() {
+	matocsserv_refresh_registration_budget();
+	if (matocsservList.empty()) {
+		matocsserv_update_registration_metrics();
+		return;
+	}
+
+	auto start = matocsservList.begin();
+	if (gRegistrationBudgetCursor != matocsservList.end()) {
+		start = std::next(gRegistrationBudgetCursor);
+		if (start == matocsservList.end()) { start = matocsservList.begin(); }
+	}
+
+	auto current = start;
+	auto lastGranted = matocsservList.end();
+	const std::size_t serverCount = matocsservList.size();
+	for (std::size_t scanned = 0; scanned < serverCount; ++scanned) {
+		auto *eptr = current->get();
+		if (eptr->pullCreditsOwed > 0 && eptr->mode != ChunkserverConnectionMode::KILL &&
+		    matocsserv_try_grant_pull_credit(eptr)) {
+			--eptr->pullCreditsOwed;
+			lastGranted = current;
+		}
+
+		++current;
+		if (current == matocsservList.end()) { current = matocsservList.begin(); }
+	}
+
+	if (lastGranted != matocsservList.end()) { gRegistrationBudgetCursor = lastGranted; }
+	matocsserv_update_registration_metrics();
+}
+
+void matocsserv_sau_register_chunks_end(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	uint64_t chunkCount{};
+	cstoma::registerChunksEnd::deserialize(data, chunkCount);
+
+	eptr->chunkRegistrationComplete = true;
+	eptr->pullRegistrationConfirmed = false;
+	eptr->pullInitialCreditsPending = 0;
+	eptr->pullCreditsOwed = 0;
+
+	safs::log_info(
+	    "chunkserver finished master-driven chunk registration - ip: {}, port: {}, chunks: {}",
+	    eptr->serviceStrIp, eptr->servport, chunkCount);
 }
 
 void matocsserv_sau_register_host(matocsserventry *eptr, const std::vector<uint8_t> &data) {
@@ -1199,6 +2054,15 @@ void matocsserv_sau_register_chunks(matocsserventry *eptr, const std::vector<uin
 
 	// Chunks registration is in progress, so we reset the timeout
 	gTimeoutSinceLastChunkRegistration = Timeout(kTimeoutForChunkRegistration);
+
+	eptr->registrationChunksSeen = true;
+
+	// Pull-mode registration: release the next bulk only after REGISTER_SPACE
+	// confirmed pull ordering. A forced-push stream sends chunks first and must
+	// not consume the shared pull budget while the master waits for its tail.
+	if (eptr->pullRegistrationConfirmed && !eptr->chunkRegistrationComplete) {
+		matocsserv_regrant_pull_credit(eptr);
+	}
 }
 
 void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint8_t>& data) {
@@ -1231,7 +2095,30 @@ void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint
 			}
 		}
 	}
-	register_space(eptr);
+
+	// Pull sends REGISTER_SPACE before chunks and ends with REGISTER_CHUNKS_END.
+	// Push sends space after chunks. Chunks preceding this report indicate
+	// forced push or a START-timeout fallback, even if pull mode was expected.
+	// Complete push registration and clear owed credits to avoid wasting
+	// the shared registration budget on a stream that ignores them.
+	if (!eptr->pullRegistration || eptr->registrationChunksSeen) {
+		eptr->chunkRegistrationComplete = true;
+		eptr->pullRegistration = false;
+		eptr->pullRegistrationConfirmed = false;
+		eptr->pullInitialCreditsPending = 0;
+		eptr->pullCreditsOwed = 0;
+	} else {
+		// A pull chunkserver sends REGISTER_SPACE before waiting for its first
+		// credit. Only now can the budgeted opening window be made payable.
+		metrics::Counter::increment(eptr->pullInitialCreditsPending == 0
+		                                ? metrics::Counter::Master::CHUNK_REGISTRATION_UNPACED_START
+		                                : metrics::Counter::Master::CHUNK_REGISTRATION_PACED_START);
+		eptr->pullRegistrationConfirmed = true;
+		eptr->pullCreditsOwed += eptr->pullInitialCreditsPending;
+		eptr->pullInitialCreditsPending = 0;
+	}
+
+	matocsserv_log_registration_space(eptr);
 }
 
 /// The identity reply the master requested at host registration; the host response follows.
@@ -1476,6 +2363,12 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 		case SAU_CSTOMA_CHUNKSERVER_ID:
 			matocsserv_sau_chunkserver_id(eptr, data);
 			break;
+		case SAU_CSTOMA_QUERY_CHUNKS:
+			matocsserv_sau_query_chunks(eptr, data);
+			break;
+		case SAU_CSTOMA_REGISTER_CHUNKS_END:
+			matocsserv_sau_register_chunks_end(eptr, data);
+			break;
 		case SAU_CSTOMA_STATUS:
 			matocsserv_sau_status(eptr, data);
 			break;
@@ -1512,7 +2405,13 @@ void matocsserv_term() {
 		}
 	}
 
+	gRegistrationBudgetCursor = matocsservList.end();
 	matocsservList.clear();
+	gPendingChunkQueries.clear();
+	gChunkQueryIdsToSend.clear();
+	gOnDemandChunkQueryLimitWarningEmitted = false;
+	matocsserv_update_pending_chunk_query_gauge();
+	matocsserv_update_registration_metrics();
 }
 
 void matocsserv_read(matocsserventry *eptr) {
@@ -1760,6 +2659,11 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 
 			matocsserv_replication_disconnected(eptr);
 
+			if (gRegistrationBudgetCursor == entriesIterator) {
+				gRegistrationBudgetCursor = matocsservList.end();
+			}
+
+			++gChunkQueryConnectionGeneration;
 			gChunkOperations->serverDisconnected(eptr, eptr->label);
 
 			if (eptr->csdb) { csdb_lost_connection(eptr->servip, eptr->servport); }
@@ -1775,12 +2679,45 @@ void matocsserv_serve(const std::vector<pollfd> &pdesc) {
 	}
 }
 
+/// Reads the on-demand chunk-location query configuration (also on reload)
+static void matocsserv_reload_chunk_query_cfg() {
+	gOnDemandChunkQueryTimeout_ms = cfg_get_minvalue<uint32_t>(
+	    "ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS", kDefaultOnDemandChunkQueryTimeout_ms, 100);
+	gOnDemandChunkQueryLimit =
+	    cfg_getuint32("ON_DEMAND_CHUNK_QUERY_LIMIT", kDefaultOnDemandChunkQueryLimit);
+	gChunkRegistrationBulkSize = cfg_get_minmaxvalue<uint32_t>(
+	    "CHUNK_REGISTRATION_BULK_SIZE", kDefaultChunkRegistrationBulkSize, 1, 100000);
+	const auto configuredWindow =
+	    cfg_get_minvalue<uint32_t>("CHUNK_REGISTRATION_WINDOW", kDefaultChunkRegistrationWindow, 1);
+	gChunkRegistrationWindow =
+	    matocsserv_limit_chunk_registration_window(gChunkRegistrationBulkSize, configuredWindow);
+	if (gChunkRegistrationWindow != configuredWindow) {
+		safs::log_warn(
+		    "CHUNK_REGISTRATION_WINDOW={} with CHUNK_REGISTRATION_BULK_SIZE={} would admit "
+		    "{} chunks per chunkserver; clamping the window to {} to keep at most {} in flight",
+		    configuredWindow, gChunkRegistrationBulkSize,
+		    static_cast<uint64_t>(configuredWindow) * gChunkRegistrationBulkSize,
+		    gChunkRegistrationWindow, kMaxChunkRegistrationInFlightChunks);
+	}
+	gChunkRegistrationChunksPerSecond = cfg_getuint32("CHUNK_REGISTRATION_CHUNKS_PER_SECOND",
+	                                                  kDefaultChunkRegistrationChunksPerSecond);
+	if (gChunkRegistrationChunksPerSecond == 0) {
+		safs::log_warn(
+		    "CHUNK_REGISTRATION_CHUNKS_PER_SECOND=0 disables global pull-registration pacing; "
+		    "each new chunkserver may have up to {} chunks in flight (window {} x bulk {}). "
+		    "Set a non-zero budget before a large simultaneous reconnect",
+		    static_cast<uint64_t>(gChunkRegistrationWindow) * gChunkRegistrationBulkSize,
+		    gChunkRegistrationWindow, gChunkRegistrationBulkSize);
+	}
+}
+
 void matocsserv_reload() {
 	std::string oldListenHost = gListenHost;
 	std::string oldListenPort = gListenPort;
 	gListenHost = cfg_getstring("MATOCS_LISTEN_HOST","*");
 	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT","9420");
 	gLoadFactorPenalty = cfg_get_minmaxvalue<double>("LOAD_FACTOR_PENALTY", 0., 0., 0.5);
+	matocsserv_reload_chunk_query_cfg();
 
 	auto previousValue = gPrioritizeDataParts;
 	gPrioritizeDataParts =
@@ -1855,6 +2792,7 @@ int matocsserv_init() {
 	gListenPort = cfg_getstring("MATOCS_LISTEN_PORT","9420");
 	gLoadFactorPenalty = cfg_get_minmaxvalue<double>("LOAD_FACTOR_PENALTY", 0., 0., 0.5);
 	gPrioritizeDataParts = static_cast<bool>(cfg_getuint32("PRIORITIZE_DATA_PARTS", 1));
+	matocsserv_reload_chunk_query_cfg();
 
 	lsock = tcpsocket();
 	if (lsock < 0) {
@@ -1883,5 +2821,15 @@ int matocsserv_init() {
 	eventloop_reloadregister(matocsserv_reload);
 	eventloop_destructregister(matocsserv_term);
 	eventloop_pollregister(matocsserv_desc, matocsserv_serve);
+	eventloop_eachloopregister(matocsserv_flush_chunk_queries);
+	eventloop_eachloopregister(matocsserv_pull_registration_budget_tick);
+	// Checked at the granularity of the smallest configurable query timeout:
+	// a one-second timer would let a 100 ms deadline overrun by an order of
+	// magnitude, while ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS is documented as a
+	// maximum. The check returns immediately when nothing is pending.
+	eventloop_timeregister_ms(kPendingChunkQueriesCheckPeriod_ms,
+	                          matocsserv_pending_chunk_queries_check);
+	// Short continuations drain large backlogs without monopolizing an event-loop turn.
+	eventloop_timeregister_ms(10, matocsserv_disk_state_refreshes_check);
 	return 0;
 }
