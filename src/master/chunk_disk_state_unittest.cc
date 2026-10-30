@@ -461,14 +461,25 @@ TEST_F(ChunkDiskStateTest, SnapshotRejectsUnknownChunkOrPart) {
 	    chunk_get_part_state(server, kChunkId, slice_traits::ec::ChunkPartType(2, 1, 0), state));
 }
 
-TEST_F(ChunkDiskStateTest, UnansweredRefreshDisconnectsInsteadOfQueueingRetries) {
+TEST_F(ChunkDiskStateTest, UnansweredRefreshRetriesWithoutDisconnecting) {
 	report(kVersion - 1, true);
-	query();
+	const auto firstGeneration = query();
 	Access::expire(server, kChunkId);
 	Access::tick();
-	EXPECT_TRUE(Access::disconnectRequested(server));
+	EXPECT_FALSE(Access::disconnectRequested(server));
 	EXPECT_TRUE(Access::takePackets(server).empty());
+	EXPECT_EQ(Access::pendingRefreshes(server), 1U);
 	expectState(kVersion, false, false);
+
+	// Keep the conflict, but leave a cooldown before sending another query.
+	Access::advanceTime(999);
+	expectIdle(1);
+	Access::advanceTime(1);
+	const auto retryGeneration = query();
+	EXPECT_NE(retryGeneration, firstGeneration);
+	reply(retryGeneration, {found(kVersion, true)});
+	expectState(kVersion, false, true);
+	expectIdle();
 }
 
 TEST_F(ChunkDiskStateTest, ReconnectionDoesNotInheritPendingRefresh) {
@@ -480,16 +491,68 @@ TEST_F(ChunkDiskStateTest, ReconnectionDoesNotInheritPendingRefresh) {
 	expectIdle();
 }
 
-TEST_F(ChunkDiskStateTest, OldPeerReconnectsInsteadOfReceivingUnsupportedQuery) {
+TEST_F(ChunkDiskStateTest, OldPeerMarksStaleToDeleteWithoutDisconnecting) {
 	Access::disconnect(server);
 	server = Access::connect(entry, kFirstVersionWithChunkLocationQuery - 1);
 	report(kVersion - 1, true);
 
-	EXPECT_TRUE(Access::disconnectRequested(server));
-	Access::tick();
-	EXPECT_TRUE(Access::takePackets(server).empty());
-	EXPECT_EQ(Access::pendingRefreshes(server), 0U);
+	// Without fresh queries, retaining the newer version and evacuating is safer
+	// than dropping every copy on this connection to rebuild its inventory.
+	expectState(kVersion, false, true);
+	expectIdle();
+}
+
+TEST_F(ChunkDiskStateTest, OldPeerDoesNotClearToDeleteFromAStaleReport) {
+	Access::disconnect(server);
+	server = Access::connect(entry, kFirstVersionWithChunkLocationQuery - 1);
+	report(kVersion, true);
+	report(kVersion - 1, false);
+
+	expectState(kVersion, false, true);
+	expectIdle();
+}
+
+TEST_F(ChunkDiskStateTest, OldPeerPreservesBusyVersionWhenMarkingToDelete) {
+	Access::disconnect(server);
+	server = Access::connect(entry, kFirstVersionWithChunkLocationQuery - 1);
+	startVersionChange();
+	report(kVersion, true);
+
+	expectState(kVersion + 1, true, true);
+	expectIdle();
+	chunk_got_setversion_status(server, kChunkId, type, SAUNAFS_STATUS_OK);
+	expectState(kVersion + 1, false, true);
+}
+
+TEST_F(ChunkDiskStateTest, OldPeerCurrentReportCanClearConservativeToDelete) {
+	Access::disconnect(server);
+	server = Access::connect(entry, kFirstVersionWithChunkLocationQuery - 1);
+	report(kVersion - 1, true);
+	expectState(kVersion, false, true);
+
+	// A current-version report can confirm that the operator restored the disk.
+	report(kVersion, false);
 	expectState(kVersion, false, false);
+	expectIdle();
+}
+
+TEST_F(ChunkDiskStateTest, LateReplyDoesNotCancelAnotherRefreshAttempt) {
+	report(kVersion - 1, true);
+	const auto expiredGeneration = query();
+	Access::expire(server, kChunkId);
+	Access::tick();
+	EXPECT_FALSE(Access::disconnectRequested(server));
+	Access::advanceTime(1000);
+	const auto currentGeneration = query();
+	ASSERT_NE(currentGeneration, expiredGeneration);
+
+	// Late reports still describe real copies, but cannot acknowledge a newer query.
+	reply(expiredGeneration, {found(kVersion, true)});
+	expectState(kVersion, false, true);
+	expectIdle(1);
+	reply(currentGeneration, {found(kVersion, false)});
+	expectState(kVersion, false, false);
+	expectIdle();
 }
 
 TEST_F(ChunkDiskStateTest, LargeBacklogBoundsWorkPerInvocation) {
@@ -643,9 +706,23 @@ TEST_F(ChunkDiskStateTest, OutOfOrderRepliesPreserveEarliestOutstandingDeadline)
 	answerQuery(later, {200});
 	Access::advanceTime(59'000);
 	Access::tick();
-	EXPECT_TRUE(Access::disconnectRequested(server));
+	EXPECT_FALSE(Access::disconnectRequested(server));
 	EXPECT_TRUE(Access::takePackets(server).empty());
 	EXPECT_EQ(Access::pendingRefreshes(server), 2U);
+
+	// Only the earlier request has finished its retry cooldown after one second.
+	Access::advanceTime(1000);
+	Access::tick();
+	const auto earlierRetry = takeQuery();
+	ASSERT_EQ(earlierRetry.ids, (std::vector<uint64_t>{101}));
+	answerQuery(earlierRetry, earlierRetry.ids);
+
+	Access::advanceTime(1000);
+	Access::tick();
+	const auto laterRetry = takeQuery();
+	ASSERT_EQ(laterRetry.ids, (std::vector<uint64_t>{201}));
+	answerQuery(laterRetry, laterRetry.ids);
+	expectIdle();
 }
 
 TEST_F(ChunkDiskStateTest, BusyPeerDoesNotStarveOtherChunkservers) {
@@ -675,10 +752,13 @@ TEST_F(ChunkDiskStateTest, BusyPeerDoesNotStarveOtherChunkservers) {
 	server = nullptr;
 	Access::advanceTime(60'000);
 	Access::tick();
-	EXPECT_TRUE(Access::disconnectRequested(second));
-	EXPECT_TRUE(Access::disconnectRequested(third));
+	EXPECT_LE(Access::lastWork(), kDiskStateRefreshWorkLimit);
+	EXPECT_FALSE(Access::disconnectRequested(second));
+	EXPECT_FALSE(Access::disconnectRequested(third));
 	EXPECT_TRUE(Access::takePackets(second).empty());
 	EXPECT_TRUE(Access::takePackets(third).empty());
+	EXPECT_EQ(Access::pendingRefreshes(second), 10'000U);
+	EXPECT_EQ(Access::pendingRefreshes(third), 10'000U);
 }
 
 TEST_F(ChunkDiskStateTest, PeerRotationResumesAfterGlobalBudgetIsExhausted) {

@@ -217,7 +217,8 @@ bool matocsserv_query_chunk_location(uint64_t chunkId, bool registeringOnly = fa
 
 /// Reconciles a stale report's conflicting disk flag without changing the known version.
 /// Queries only this connection; parts temporarily locked by workers are retried.
-void matocsserv_refresh_chunk_disk_state(matocsserventry *server, uint64_t chunkId,
+/// @return True if a refresh was queued; false if the peer cannot answer queries.
+bool matocsserv_refresh_chunk_disk_state(matocsserventry *server, uint64_t chunkId,
                                          ChunkPartType partType);
 
 /// Maximum peer visits, pending-key visits and part checks combined per invocation.
