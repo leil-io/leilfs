@@ -171,7 +171,7 @@ void fs_term(void) {
 		// Remove the lock to say that the server has gently stopped and saved its metadata.
 		fs_unlock();
 	} else if (gMetadata != nullptr && !gSaveMetadataAtExit) {
-		// We will leave the lockfile present to indicate, that our metadata.sfs file should not be
+		// We will leave the lockfile present to indicate, that our metadata.leil file should not be
 		// loaded (it is not up to date -- some changelogs need to be applied). Write a message
 		// which tells that the lockfile is not left because of a crash, but because we have been
 		// asked to stop without saving metadata. Include information about version of metadata
@@ -179,7 +179,7 @@ void fs_term(void) {
 		auto message = "quick_stop: " + std::to_string(gMetadata->metadataVersion) + "\n";
 		gMetadataLockfile->writeMessage(message);
 	} else {
-		// We will leave the lockfile present to indicate, that our metadata.sfs file should not be
+		// We will leave the lockfile present to indicate, that our metadata.leil file should not be
 		// loaded (it is not up to date, because we didn't manage to download the most recent).
 		// Write a message which tells that the lockfile is not left because of a crash, but because
 		// we have been asked to stop before loading metadata. Don't overwrite 'quick_stop' though!
