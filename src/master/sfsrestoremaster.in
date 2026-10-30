@@ -109,7 +109,7 @@ select_readable_config() {
 }
 
 # True if $1 looks like an initialized data directory rather than an empty
-# one freshly created by package install/upgrade (metadata.sfs.empty is
+# one freshly created by package install/upgrade (metadata.leil.empty is
 # always installed into the default data dir regardless, so bare directory
 # existence can't tell the two apart). Mirrors the filenames master and
 # metalogger look for at startup, plus the ".1" rotated backup left behind
@@ -117,8 +117,14 @@ select_readable_config() {
 # hasKnownMetadata() in src/master/metadata_backend_common.h.
 has_known_metadata() {
 	local dir="$1"
-	[ -f "$dir/metadata.sfs" ] || [ -f "$dir/metadata.mfs" ] || [ -f "$dir/metadata_ml.sfs" ] \
-		|| [ -f "$dir/metadata.sfs.1" ] || [ -f "$dir/metadata_ml.sfs.1" ]
+	local ext
+	[ -f "$dir/metadata.mfs" ] && return 0
+	# Pre-rebrand names too, which a daemon keeps using where they are the only ones
+	for ext in leil sfs; do
+		[ -f "$dir/metadata.$ext" ] || [ -f "$dir/metadata_ml.$ext" ] \
+			|| [ -f "$dir/metadata.$ext.1" ] || [ -f "$dir/metadata_ml.$ext.1" ] && return 0
+	done
+	return 1
 }
 
 # Picks $1 unless it's still the compiled-in default (i.e. the config file
@@ -188,8 +194,25 @@ ma_data_path=$(get_config_option "$ma_config" DATA_PATH "@DATA_PATH@")
 ml_data_path=$(select_data_dir "$ml_data_path" "@DATA_PATH_LEGACY@")
 ma_data_path=$(select_data_dir "$ma_data_path" "@DATA_PATH_LEGACY@")
 
-ma_meta_file="$ma_data_path/metadata.sfs"
-ml_meta_file="$ml_data_path/metadata_ml.sfs.back"
+# The data file extension the daemon with files $2... uses in $1: "sfs" where that directory only
+# has their pre-rebrand names, "leil" otherwise, as the daemons choose it (see legacy_data_files).
+data_file_extension() {
+	local dir="$1" family name
+	local legacy=0
+	shift
+	for family in "$@"; do
+		for name in "$dir/$family".leil "$dir/$family".leil.*; do
+			[ -e "$name" ] && [ "${name%.empty}" = "$name" ] && { echo leil; return; }
+		done
+		for name in "$dir/$family".sfs "$dir/$family".sfs.*; do
+			[ -e "$name" ] && [ "${name%.empty}" = "$name" ] && legacy=1
+		done
+	done
+	[ $legacy = 1 ] && echo sfs || echo leil
+}
+
+ma_meta_file="$ma_data_path/metadata.$(data_file_extension "$ma_data_path" metadata changelog sessions)"
+ml_meta_file="$ml_data_path/metadata_ml.$(data_file_extension "$ml_data_path" metadata_ml changelog_ml sessions_ml).back"
 
 if [ ! -r "$ml_meta_file" ]; then
 	panic "Can't find metadata backup at $ml_meta_file"

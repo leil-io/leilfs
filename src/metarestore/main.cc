@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "common/cwrap.h"
+#include "common/legacy_data_files.h"
 #include "common/rotate_files.h"
 #include "common/setup.h"
 #include "master/changelog.h"
@@ -58,9 +59,12 @@
 
 int changelog_checkname(const char *fname) {
 	const char *ptr = fname;
+	// Both the current and the pre-rebrand names: master and metalogger choose theirs apart
 	std::string testName[] = {
-		kChangelogFilename,
-		kChangelogMlFilename
+		"changelog.leil",
+		"changelog_ml.leil",
+		legacy_data_files::legacyName("changelog.leil"),
+		legacy_data_files::legacyName("changelog_ml.leil")
 	};
 
 	for (const std::string& s : testName) {
@@ -127,6 +131,18 @@ void usage(const char* appname) {
 			"-f   - force loading all changelogs\n", appname, appname, appname, appname, appname);
 }
 
+/*! \brief The data file @p name in @p path, or its pre-rebrand name if only that exists,
+ * where the master still uses that name.
+ */
+std::string existingDataFile(const std::string &path, const std::string &name) {
+	const std::string legacy = legacy_data_files::legacyName(name);
+	if (access((path + "/" + name).c_str(), F_OK) != 0 &&
+	    access((path + "/" + legacy).c_str(), F_OK) == 0) {
+		return legacy;
+	}
+	return name;
+}
+
 /*! \brief Prints version of metadata that can be read from disk
  * by a master server in auto recovery mode.
  *
@@ -142,7 +158,7 @@ void meta_version_on_disk(std::string path) {
 
 	try {
 		metadata_version =
-		    gMetadataBackend->getVersion(path + "/" + kMetadataFilename);
+		    gMetadataBackend->getVersion(path + "/" + existingDataFile(path, kMetadataFilename));
 		// check if it is a new installation
 		if (metadata_version == 0) {
 			printf("1\n");
@@ -158,7 +174,7 @@ void meta_version_on_disk(std::string path) {
 
 	bool oldExists = false;
 	for (const std::string& s : changelogs) {
-		std::string fullFileName = path + "/" + s;
+		std::string fullFileName = path + "/" + existingDataFile(path, s);
 		try {
 			if (fs::exists(fullFileName)) {
 				oldExists = true;
@@ -316,16 +332,20 @@ int main(int argc,char **argv) {
 		// All candidates from the least to the most preferred one
 		// We still load metadata.sfs.back for scenarios where metaretore
 		// is started during migration to saunafs version with new naming scheme.
-		std::string candidates[] {
-			std::string(kMetadataMlFilename) + ".back.1",
-			std::string(kMetadataFilename) + ".back.1",
-			std::string(kMetadataMlFilename) + ".1",
-			std::string(kMetadataFilename) + ".1",
-			kMetadataMlFilename,
-			kMetadataFilename};
+		std::vector<std::string> candidates;
+		for (std::string name : {std::string(kMetadataMlFilename) + ".back.1",
+		                         std::string(kMetadataFilename) + ".back.1",
+		                         std::string(kMetadataMlFilename) + ".1",
+		                         std::string(kMetadataFilename) + ".1",
+		                         std::string(kMetadataMlFilename),
+		                         std::string(kMetadataFilename)}) {
+			// A pre-rebrand file, where its daemon still uses that name, before the current one
+			candidates.push_back(legacy_data_files::legacyName(name));
+			candidates.push_back(name);
+		}
 		std::string bestmetadata;
 		uint64_t bestversion = 0;
-		for (auto candidate : candidates) {
+		for (const auto &candidate : candidates) {
 			std::string metadata_candidate = std::string(datapath) + "/" + candidate;
 			if (access(metadata_candidate.c_str(), F_OK) != 0) {
 				continue;
@@ -345,6 +365,10 @@ int main(int argc,char **argv) {
 			return 1;
 		}
 		metadata = bestmetadata;
+		// Restored under the names the master uses there, as it would itself
+		if (legacy_data_files::usesLegacyNames(datapath, {"metadata", "changelog", "sessions"})) {
+			useLegacyDataFileNames();
+		}
 		metaout =  datapath + "/" + kMetadataFilename;
 		safs_pretty_syslog(LOG_INFO, "file %s will be used to restore the most recent metadata",
 				metadata.c_str());

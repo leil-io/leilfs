@@ -3,7 +3,9 @@
 SAUNAFS_URAFT_OK=0
 SAUNAFS_URAFT_ERROR=1
 SAUNAFS_DATA_DIR="@DATA_PATH@"
-METADATA_LOCK="@DATA_PATH@/metadata.sfs.lock"
+METADATA_LOCK="@DATA_PATH@/metadata.leil.lock"
+# Its pre-rebrand name, used by a master whose data files still have those names
+METADATA_LOCK_LEGACY="@DATA_PATH@/metadata.sfs.lock"
 SAUNAFS_URAFT_CONFIG="@ETC_PATH@/leil-uraft.cfg"
 # Same filename as SAUNAFS_URAFT_CONFIG, but under the pre-rebrand directory:
 # covers installations that already adopted the "leil-uraft.cfg" name before
@@ -33,7 +35,7 @@ select_existing_config() {
 }
 
 # True if $1 looks like an initialized data directory rather than an empty
-# one freshly created by package install/upgrade (metadata.sfs.empty is
+# one freshly created by package install/upgrade (metadata.leil.empty is
 # always installed into the default data dir regardless, so bare directory
 # existence can't tell the two apart). Mirrors the filenames master/metarestore
 # look for at startup, plus the ".1" rotated backup left behind by a
@@ -41,8 +43,14 @@ select_existing_config() {
 # hasKnownMetadata() in src/master/metadata_backend_common.h.
 has_known_metadata() {
 	local dir="$1"
-	[ -f "$dir/metadata.sfs" ] || [ -f "$dir/metadata.mfs" ] || [ -f "$dir/metadata_ml.sfs" ] \
-		|| [ -f "$dir/metadata.sfs.1" ] || [ -f "$dir/metadata_ml.sfs.1" ]
+	local ext
+	[ -f "$dir/metadata.mfs" ] && return 0
+	# Pre-rebrand names too, which a daemon keeps using where they are the only ones
+	for ext in leil sfs; do
+		[ -f "$dir/metadata.$ext" ] || [ -f "$dir/metadata_ml.$ext" ] \
+			|| [ -f "$dir/metadata.$ext.1" ] || [ -f "$dir/metadata_ml.$ext.1" ] && return 0
+	done
+	return 1
 }
 
 # Picks $1 unless it has no metadata yet and $2 (the pre-rebrand data dir)
@@ -66,7 +74,8 @@ SAUNAFS_MASTER_CONFIG=$(select_existing_config "$SAUNAFS_MASTER_CONFIG" "$SAUNAF
 # fallback mirrors the daemon's own guard of only kicking in when nothing
 # overrode the default path.
 SAUNAFS_DATA_DIR=$(select_data_dir "$SAUNAFS_DATA_DIR" "@DATA_PATH_LEGACY@")
-METADATA_LOCK="${SAUNAFS_DATA_DIR}/metadata.sfs.lock"
+METADATA_LOCK="${SAUNAFS_DATA_DIR}/metadata.leil.lock"
+METADATA_LOCK_LEGACY="${SAUNAFS_DATA_DIR}/metadata.sfs.lock"
 
 print_missing_config() {
 	local missing_path="$1"
@@ -113,7 +122,8 @@ load_config() {
 	else
 		SAUNAFS_DATA_DIR="${configured_data_dir}"
 	fi
-	METADATA_LOCK="${SAUNAFS_DATA_DIR}/metadata.sfs.lock"
+	METADATA_LOCK="${SAUNAFS_DATA_DIR}/metadata.leil.lock"
+	METADATA_LOCK_LEGACY="${SAUNAFS_DATA_DIR}/metadata.sfs.lock"
 
 	if [[ $ipaddr == "" || $netmask == "" || $iface == "" ]] ; then
 		echo "Configuration file $SAUNAFS_URAFT_CONFIG does not contain valid network information."
@@ -245,6 +255,7 @@ saunafs_promote() {
 		log "metadata is on disk instead of ram"
 		saunafs_master stop
 		unlink "${METADATA_LOCK}"
+		rm -f "${METADATA_LOCK_LEGACY}"
 		saunafs_master -o initial-personality=master \
 					-o auto-recovery \
 					-o defer-metadata-dump \
@@ -272,18 +283,22 @@ saunafs_cleanup_dirty_state() {
 
 	log "Attempting to clean up dirty metadata state"
 
-	# Remove temporary metadata file created during metadata dump, if it exists
-	if [[ -f "${SAUNAFS_DATA_DIR}/metadata.sfs.tmp" ]]; then
-		# Check if temporary metadata file is stale (no process holding it).
-		# This could represent a leftover from a crashed operation during metadata dump.
-		if ! fuser "${SAUNAFS_DATA_DIR}/metadata.sfs.tmp" &>/dev/null; then
-			log "Removing ${SAUNAFS_DATA_DIR}/metadata.sfs.tmp"
-			rm -f "${SAUNAFS_DATA_DIR}/metadata.sfs.tmp" || {
-				log "Failed to remove metadata.sfs.tmp"
-				return $SAUNAFS_URAFT_ERROR
-			}
+	# Remove temporary metadata file created during metadata dump, if it exists, also under its
+	# pre-rebrand name, which a master keeps using where its data files still have those names
+	local tmp_file
+	for tmp_file in metadata.leil.tmp metadata.sfs.tmp; do
+		if [[ -f "${SAUNAFS_DATA_DIR}/${tmp_file}" ]]; then
+			# Check if temporary metadata file is stale (no process holding it).
+			# This could represent a leftover from a crashed operation during metadata dump.
+			if ! fuser "${SAUNAFS_DATA_DIR}/${tmp_file}" &>/dev/null; then
+				log "Removing ${SAUNAFS_DATA_DIR}/${tmp_file}"
+				rm -f "${SAUNAFS_DATA_DIR}/${tmp_file}" || {
+					log "Failed to remove ${tmp_file}"
+					return $SAUNAFS_URAFT_ERROR
+				}
+			fi
 		fi
-	fi
+	done
 
 	log "Cleanup dirty metadata completed successfully"
 	return $SAUNAFS_URAFT_OK
