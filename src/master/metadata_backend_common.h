@@ -68,6 +68,15 @@ inline void useLegacyDataFileNames() {
 	kStatsFilename             = "stats.sfs";
 }
 
+/// Picks the data file names of a master or shadow whose data directory is @p dir: the
+/// pre-rebrand ones unless it has some of its files under the new names. Everything reading or
+/// writing a master's data files decides with this, so that they all agree on the names.
+inline void useMasterDataFileNames(const std::string &dir) {
+	if (legacy_data_files::usesLegacyNames(dir, {"metadata", "changelog", "sessions", "stats"})) {
+		useLegacyDataFileNames();
+	}
+}
+
 /// True if `dir` looks like an initialized data directory rather than an
 /// empty one freshly created by package install/upgrade (metadata.leil.empty
 /// is always installed into the default data dir regardless of state, so
