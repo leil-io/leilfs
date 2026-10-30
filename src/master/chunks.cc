@@ -2452,25 +2452,16 @@ void chunk_server_has_chunk(matocsserventry *ptr, uint64_t chunkid, uint32_t ver
 				break;
 			}
 
-			// A report can be older than reality. SAU_CSTOMA_CHUNK_NEW announcements
-			// carry the version captured when the disk scan first saw the chunk, and
-			// that queue is only drained once registration has completed, so a version
-			// change applied in between leaves the queued announcement stale by up to
-			// a whole registration window.
-			//
-			// A registration packet can also be overtaken by an on-demand query reply.
-			// The reply can start a version operation before the old packet arrives,
-			// leaving the part BUSY at the current version. The operation's terminal
-			// status is authoritative in that case: processing the old report would
-			// replace the operation-owned version and invalidate the part before that
-			// status is handled. A current-version valid part, including a BUSY one,
-			// therefore makes an older report out-of-order news rather than a
-			// correction.
+			// Queued announcements and registration bulks may predate a version change,
+			// including one triggered by an on-demand query. Preserve the known current
+			// version and leave BUSY state for the operation's completion to clear.
 			if (new_version < c->version && part.version == c->version && part.is_valid()) {
-				// The version is stale, but a disk reload may have changed its flag.
-				// Ask for current state instead of trusting either stale field.
-				if (part.is_todel() != todel) {
-					matocsserv_refresh_chunk_disk_state(ptr, chunkid, chunkType);
+				// Refresh conflicting disk flags when possible. Without query support,
+				// allow stale reports to set to-delete, but never clear it.
+				if (part.is_todel() != todel &&
+				    !matocsserv_refresh_chunk_disk_state(ptr, chunkid, chunkType) && todel) {
+					part.mark_todel();
+					c->updateStats();
 				}
 				return;
 			}
