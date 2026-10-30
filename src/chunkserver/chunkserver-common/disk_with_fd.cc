@@ -246,7 +246,13 @@ void FDDisk::createLockFile(bool isLockNeeded, const std::string &lockFilename,
 		lock.l_type = F_WRLCK;
 		lock.l_whence = SEEK_SET;
 
-		if (::fcntl(lockFD, F_OFD_SETLK, &lock) < 0) {
+		int lockResult = ::fcntl(lockFD, F_OFD_SETLK, &lock);
+		if (lockResult < 0 && errno == EINVAL) {
+			// Kernels without OFD locks (e.g. WSL1) reject the request; take a
+			// per-process lock instead, as lockf did.
+			lockResult = ::fcntl(lockFD, F_SETLK, &lock);
+		}
+		if (lockResult < 0) {
 			const int err = errno;
 			if (err == EAGAIN || err == EACCES) {
 				close(lockFD);
