@@ -107,9 +107,7 @@ inline int session_manager_init() {
 
 /// Keeps the pre-rebrand data file names (*.sfs) unless the data directory has the new ones
 inline int data_file_names_init() {
-	if (legacy_data_files::usesLegacyNames(".", {"metadata", "changelog", "sessions", "stats"})) {
-		useLegacyDataFileNames();
-	}
+	useMasterDataFileNames(".");
 	return 0;
 }
 
