@@ -156,7 +156,7 @@ public:
 
 	// Master-driven (pull) chunk registration
 
-	/// Handles SAU_MATOCS_REGISTER_CHUNKS_START: begins the pull sweep.
+	/// Begins the pull sweep, or acknowledges a completed push with END.
 	void onRegisterChunksStart(const std::vector<uint8_t> &data);
 
 	/// Handles SAU_MATOCS_REGISTER_CHUNKS_CREDIT: releases more bulks.
@@ -313,6 +313,8 @@ public:
 			sendInventory_ = true;
 			// A new socket may reach another metadata server behind the configured address.
 			seedId_ = 0;
+			pullStartReceived_ = false;
+			registrationChunksSent_ = 0;
 		}
 		mode_ = newMode;
 
@@ -403,7 +405,8 @@ private:
 
 	uint32_t pullBulkSize_{0};    ///< Chunks per bulk, dictated by the master.
 	uint32_t pullCredits_{0};     ///< Bulks the master is ready to accept.
-	uint64_t pullChunksSent_{0};  ///< Chunks reported in this pull session.
+	uint64_t registrationChunksSent_{0};  ///< Chunks reported by this socket's push or pull sweep.
+	bool pullStartReceived_{false};      ///< This socket confirmed support for REGISTER_CHUNKS_END.
 	/// Retry a timed-out START with one push registration, after closing the pull socket.
 	bool pushRegistrationOnReconnect_{false};
 	/// Expires while waiting for SAU_MATOCS_REGISTER_CHUNKS_START.
