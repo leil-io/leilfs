@@ -91,7 +91,7 @@ if(ENABLE_CCACHE AND CCACHE_FOUND)
   message(STATUS "Using ccache")
 endif()
 
-set(DEFAULT_MIN_VERSION "5.13.0")
+set(DEFAULT_MIN_VERSION "5.14.0")
 
 include(GNUInstallDirs)
 
