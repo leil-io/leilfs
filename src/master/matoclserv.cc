@@ -4500,11 +4500,11 @@ static void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader heade
 		return;
 	}
 
-	// Defer when the client-visible locations cannot serve the read. Replicated
+	// During registration, defer when the visible locations cannot serve the read. Replicated
 	// chunks are unreadable when allChunkCopies is empty; EC chunks may expose
 	// some parts but still have no full copy, so both checks are required.
 	bool chunkUnreadable = false;
-	if (allowDefer && chunkid > 0) {
+	if (allowDefer && chunkid > 0 && matocsserv_has_incomplete_chunk_registration()) {
 		uint8_t fullCopies = 0;
 		chunkUnreadable =
 		    allChunkCopies.empty() ||
