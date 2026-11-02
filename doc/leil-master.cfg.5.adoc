@@ -246,11 +246,14 @@ chunkservers will be picked for operations less frequently. (default is 0,
 correct values are in range from 0 to 0.5)
 
 *ON_DEMAND_CHUNK_QUERY_TIMEOUT_MS*:: Maximum time in milliseconds to wait for
-on-demand chunk-location replies (default is 2000, minimum is 100). Reads of
-unreadable chunks use the locations available when the query finishes or times
-out. During inventory recovery, in-place version-changing writes and truncates
-also query unreported replicas before starting their mutation. These mutations
-require successful discovery; an expired query does not authorize a version change.
+on-demand chunk-location replies (default is 2000, minimum is 100). While chunk
+registration is incomplete, reads of unreadable chunks use the locations
+available when the query finishes or times out. Once all connected inventories
+finish registering, new requests use known locations without starting or joining
+discovery queries. During inventory recovery, in-place version-changing writes
+and truncates also query unreported replicas before starting their mutation.
+These mutations require successful discovery; an expired query does not authorize
+a version change.
 
 *ON_DEMAND_CHUNK_QUERY_LIMIT*:: Maximum number of chunk ids being resolved by
 on-demand queries at the same time (default is 10000). Setting it to 0 disables

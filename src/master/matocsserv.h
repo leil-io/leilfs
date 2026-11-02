@@ -210,11 +210,14 @@ matocsserventry *matocsserv_test_connection(csdbentry *entry, uint32_t ip, uint1
                                             uint32_t version);
 void matocsserv_test_connection_free(matocsserventry *eptr);
 
-/// Coalesces location queries and broadcasts to eligible chunkservers. Read queries
-/// also include completed inventories, since disk scans may reveal more chunks.
+/// True if a connected inventory-sending peer has not completed registration.
+bool matocsserv_has_incomplete_chunk_registration();
+
+/// Coalesces client discovery while a connected inventory remains incomplete.
+/// Reads include completed peers; mutation discovery can restrict targets.
 /// @param chunkId Chunk whose locations should be discovered.
 /// @param registeringOnly Restrict new attempts to peers with incomplete inventories.
-///        An existing attempt for this chunk is joined without changing its targets.
+///        During registration, existing attempts are joined without changing targets.
 /// @return True to defer the client reply until matoclserv_chunk_locations_resolved()
 /// runs after all answers or timeout; false if no query can start.
 bool matocsserv_query_chunk_location(uint64_t chunkId, bool registeringOnly = false);
