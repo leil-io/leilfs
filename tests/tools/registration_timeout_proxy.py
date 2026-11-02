@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Exercise START-timeout fallback on the wire.
 
-Forward early REGISTER_SPACE, drop START/credits, and hold the target report
-and fallback tail until the shell test finishes checking credits and repair.
+Forward early REGISTER_SPACE and drop the first connection's START to trigger
+fallback. Forward START on later connections, while holding the target report
+and push tail until the shell test finishes checking credits and repair.
 """
 
 import argparse
@@ -25,7 +26,7 @@ from registration_space_proxy import (
 SAU_CSTOMA_REGISTER_CHUNKS = 1000 + 101
 
 
-def proxy_connection(chunkserver, master, args):
+def proxy_connection(chunkserver, master, args, fallback):
     # Markers survive reconnects; held packets and accounting are per socket.
     held = []
     saw_chunks = False
@@ -60,7 +61,10 @@ def proxy_connection(chunkserver, master, args):
             packet_type, payload, wire = packet
             if source is master:
                 if packet_type == SAU_MATOCS_REGISTER_CHUNKS_START:
-                    # Force timeout; a successful push retry must not need START either.
+                    # The first socket times out. On the push retry, START confirms
+                    # support for END without launching another inventory sweep.
+                    if fallback:
+                        chunkserver.sendall(wire)
                     continue
                 if packet_type == SAU_MATOCS_REGISTER_CHUNKS_CREDIT:
                     # Opening credits are legitimate; regrants after a push bulk are not.
@@ -118,10 +122,12 @@ def main():
         listener.listen(1)
         signal(args.ready_marker)
         # The fix reconnects for push fallback, so keep accepting replacement sockets.
+        connections = 0
         while True:
             chunkserver, _ = listener.accept()
+            connections += 1
             with chunkserver, socket.create_connection((args.host, args.master_port)) as master:
-                proxy_connection(chunkserver, master, args)
+                proxy_connection(chunkserver, master, args, fallback=connections > 1)
 
 
 if __name__ == "__main__":
