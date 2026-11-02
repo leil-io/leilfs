@@ -496,7 +496,7 @@ void MasterConn::onRegistered(const uint8_t *data, uint32_t length) {
 			forceMetadataDownload();
 		}
 	} else {
-		spdlog::info("Unknown register response: #{}", responseVersion);
+		safs::log_info("Unknown register response: #{}", responseVersion);
 	}
 }
 #endif
