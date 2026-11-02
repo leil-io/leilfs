@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <deque>
+#include <optional>
 #include <unordered_set>
 
 #include "chunkserver-common/chunk_map.h"
@@ -58,11 +59,21 @@ struct RegistrationSweepState {
 	std::size_t bucket{0};
 	std::size_t bucketCount{0};
 	bool cursorDone{false};
+	/// Next entry in this bucket; insertion, removal, and rehash hooks keep it valid.
+	std::optional<ChunkMap::local_iterator> bucketPosition;
 	std::deque<ChunkWithType> pending;
 	std::unordered_set<ChunkWithType, KeyOperations, KeyOperations> pendingKeys;
 
 	void enqueue(ChunkWithType key) {
 		if (pendingKeys.insert(key).second) { pending.push_back(key); }
+	}
+
+	void restartAfterRehash(std::size_t newBucketCount) {
+		if (!cursorDone && bucketCount != newBucketCount) {
+			bucketCount = newBucketCount;
+			bucket = 0;
+			bucketPosition.reset();
+		}
 	}
 };
 
@@ -73,12 +84,20 @@ inline void hddNoteChunkForRegistration(ChunkWithType key) {
 	auto &sweep = gRegistrationSweepState;
 	if (!sweep.active) { return; }
 	// Notice rehashes immediately, even if another resize precedes the next credit.
-	if (!sweep.cursorDone && sweep.bucketCount != gChunksMap.bucket_count()) {
-		sweep.bucketCount = gChunksMap.bucket_count();
-		sweep.bucket = 0;
+	sweep.restartAfterRehash(gChunksMap.bucket_count());
+	// Insertion can precede a saved position even in the current bucket.
+	if (sweep.cursorDone || gChunksMap.bucket(key) <= sweep.bucket) { sweep.enqueue(key); }
+}
+
+/// Call before erasing a registry entry, under gChunksMapMutex.
+inline void hddNoteChunkRemovalForRegistration(ChunkWithType key) {
+	auto &sweep = gRegistrationSweepState;
+	if (!sweep.active) { return; }
+	sweep.restartAfterRehash(gChunksMap.bucket_count());
+	if (sweep.bucketPosition && *sweep.bucketPosition != gChunksMap.end(sweep.bucket) &&
+	    KeyOperations{}((*sweep.bucketPosition)->first, key)) {
+		++*sweep.bucketPosition;
 	}
-	// Only changes behind the cursor need extra tracking; do not copy the inventory.
-	if (sweep.cursorDone || gChunksMap.bucket(key) < sweep.bucket) { sweep.enqueue(key); }
 }
 
 /// Number of chunks per ChunkPartType currently present in gChunksMap.

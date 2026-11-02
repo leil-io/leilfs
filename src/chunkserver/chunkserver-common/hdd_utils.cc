@@ -126,6 +126,7 @@ void hddRemoveChunkFromContainers(IChunk *chunk) {
 		disk->setNeedRefresh(true);
 	}
 
+	hddNoteChunkRemovalForRegistration(chunkIter->first);
 	hddForgetPresentChunkType(chunkIter->first.type);
 	gChunksMap.erase(chunkIter);
 }

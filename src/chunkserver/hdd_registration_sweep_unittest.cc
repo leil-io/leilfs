@@ -50,6 +50,8 @@ protected:
 			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 			ASSERT_TRUE(gChunksMap.empty());
 			ASSERT_TRUE(gPresentChunkTypes.empty());
+			// Each case controls its own table size, including sparse-table tests.
+			gChunksMap.rehash(0);
 		}
 		std::lock_guard masterReportsLockGuard(gMasterReportsLock);
 		ASSERT_TRUE(gNewChunks.empty());
@@ -302,6 +304,189 @@ TEST_F(RegistrationSweepTrackingTests, LockedRetriesDoNotRevisitReportedChunks) 
 	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
 }
 
+TEST_F(RegistrationSweepTrackingTests, RehashRestartHasBoundedVisitWork) {
+	constexpr std::size_t kReportedChunks = 4 * kDefaultChunkBulkSize;
+	std::vector<EpochCountingChunk *> reported;
+	for (uint64_t id = 1; id <= kReportedChunks; ++id) {
+		auto *chunk = addTrackedChunk(id);
+		ASSERT_NE(chunk, nullptr);
+		reported.push_back(chunk);
+	}
+	auto *locked = addTrackedChunk(kReportedChunks + 1, ChunkState::Locked);
+	ASSERT_NE(locked, nullptr);
+
+	// Report the available inventory, leaving the walk unfinished at its last bulk.
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	std::vector<ChunkWithVersionAndType> bulk;
+	ASSERT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, kReportedChunks));
+	ASSERT_EQ(kReportedChunks, bulk.size());
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		ASSERT_FALSE(gRegistrationSweepState.cursorDone);
+		gChunksMap.rehash(gChunksMap.bucket_count() * 2);
+		for (auto *chunk : reported) { chunk->resetEpochReads(); }
+	}
+
+	// Count actual revisits: no large inventory or timing threshold is needed.
+	EXPECT_EQ(RegistrationSweepResult::kYield, hddRegistrationSweepNext(bulk, 1));
+	EXPECT_TRUE(bulk.empty());
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		uint64_t reads = 0;
+		for (auto *chunk : reported) { reads += chunk->epochReads(); }
+		EXPECT_GT(reads, 0U);
+		EXPECT_LE(reads, kDefaultChunkBulkSize);
+	}
+
+	// Bounded retries must still reach the end without reporting old entries again.
+	for (std::size_t call = 0; call < 4 * kReportedChunks; ++call) {
+		const auto result = hddRegistrationSweepNext(bulk, 1);
+		EXPECT_TRUE(result == RegistrationSweepResult::kYield ||
+		            result == RegistrationSweepResult::kRetry);
+		EXPECT_TRUE(bulk.empty());
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		if (gRegistrationSweepState.cursorDone) { break; }
+	}
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		ASSERT_TRUE(gRegistrationSweepState.cursorDone);
+	}
+	hddChunkRelease(locked);
+	ASSERT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
+	ASSERT_EQ(1U, bulk.size());
+	EXPECT_EQ(kReportedChunks + 1, bulk.front().id);
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
+}
+
+TEST_F(RegistrationSweepTrackingTests, SparseRegistryYieldsWhileSkippingEmptyBuckets) {
+	std::size_t bucketCount;
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		gChunksMap.rehash(4 * kDefaultChunkBulkSize);
+		bucketCount = gChunksMap.bucket_count();
+	}
+	// A high bucket forces work even though the registry contains only one chunk.
+	ASSERT_NE(addTrackedChunk(bucketCount - 1), nullptr);
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	std::vector<ChunkWithVersionAndType> bulk;
+	EXPECT_EQ(RegistrationSweepResult::kYield, hddRegistrationSweepNext(bulk, 1));
+	EXPECT_TRUE(bulk.empty());
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		EXPECT_GT(gRegistrationSweepState.bucket, 0U);
+		EXPECT_LE(gRegistrationSweepState.bucket, kDefaultChunkBulkSize);
+	}
+
+	for (std::size_t call = 0; call < bucketCount; ++call) {
+		if (hddRegistrationSweepNext(bulk, 1) == RegistrationSweepResult::kBulkReady) { break; }
+	}
+	ASSERT_EQ(1U, bulk.size());
+	EXPECT_EQ(bucketCount - 1, bulk.front().id);
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
+}
+
+TEST_F(RegistrationSweepTrackingTests, CollisionBucketResumesAfterYield) {
+	constexpr std::size_t kChunks = 2 * kDefaultChunkBulkSize + 1;
+	std::size_t bucketCount;
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		gChunksMap.reserve(kChunks);
+		bucketCount = gChunksMap.bucket_count();
+	}
+	std::vector<EpochCountingChunk *> chunks;
+	for (std::size_t index = 0; index < kChunks; ++index) {
+		// Hashing uses the ID, so these distinct keys all land in bucket 1.
+		auto *chunk = addTrackedChunk(1 + index * bucketCount, ChunkState::Locked);
+		ASSERT_NE(chunk, nullptr);
+		chunks.push_back(chunk);
+	}
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	std::vector<ChunkWithVersionAndType> bulk;
+	EXPECT_EQ(RegistrationSweepResult::kYield, hddRegistrationSweepNext(bulk, 1));
+	EXPECT_TRUE(bulk.empty());
+	uint64_t reads = 0;
+	for (auto *chunk : chunks) { reads += chunk->epochReads(); }
+	EXPECT_LE(reads, kDefaultChunkBulkSize);
+
+	// Resume inside the same bucket, then recover its earlier locked entries.
+	for (auto *chunk : chunks) { hddChunkRelease(chunk); }
+	std::set<uint64_t> reported;
+	for (std::size_t call = 0; call < 4 * kChunks; ++call) {
+		for (auto *chunk : chunks) { chunk->resetEpochReads(); }
+		const auto result = hddRegistrationSweepNext(bulk, 7);
+		reads = 0;
+		for (auto *chunk : chunks) { reads += chunk->epochReads(); }
+		EXPECT_LE(reads, kDefaultChunkBulkSize);
+		for (const auto &chunk : bulk) { EXPECT_TRUE(reported.insert(chunk.id).second); }
+		if (result == RegistrationSweepResult::kComplete) { break; }
+		EXPECT_TRUE(result == RegistrationSweepResult::kYield ||
+		            result == RegistrationSweepResult::kBulkReady);
+	}
+	EXPECT_EQ(kChunks, reported.size());
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
+}
+
+TEST_F(RegistrationSweepTrackingTests, RemovalAtSavedPositionKeepsCursorValid) {
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		gChunksMap.reserve(3);
+	}
+	const auto bucketCount = hddGetChunkRegistryBucketCount();
+	std::set<uint64_t> expected{1, 1 + bucketCount, 1 + 2 * bucketCount};
+	for (const auto id : expected) { ASSERT_NE(addTrackedChunk(id), nullptr); }
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	std::vector<ChunkWithVersionAndType> bulk;
+	ASSERT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
+	ASSERT_EQ(1U, bulk.size());
+	std::set<uint64_t> reported{bulk.front().id};
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		auto &sweep = gRegistrationSweepState;
+		ASSERT_TRUE(sweep.bucketPosition.has_value());
+		ASSERT_NE(*sweep.bucketPosition, gChunksMap.end(sweep.bucket));
+		auto *removed = (*sweep.bucketPosition)->second.get();
+		expected.erase(removed->id());
+		hddRemoveChunkFromContainers(removed);
+	}
+
+	for (unsigned call = 0; call < 4; ++call) {
+		const auto result = hddRegistrationSweepNext(bulk, 1);
+		for (const auto &chunk : bulk) { EXPECT_TRUE(reported.insert(chunk.id).second); }
+		if (result == RegistrationSweepResult::kComplete) { break; }
+		EXPECT_EQ(RegistrationSweepResult::kBulkReady, result);
+	}
+	EXPECT_EQ(expected, reported);
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
+}
+
+TEST_F(RegistrationSweepTrackingTests, InsertionIntoCurrentBucketIsNotLost) {
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		gChunksMap.reserve(3);
+	}
+	const auto bucketCount = hddGetChunkRegistryBucketCount();
+	ASSERT_NE(addTrackedChunk(1), nullptr);
+	ASSERT_NE(addTrackedChunk(1 + bucketCount), nullptr);
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	std::vector<ChunkWithVersionAndType> bulk;
+	ASSERT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
+	ASSERT_EQ(1U, bulk.size());
+	std::set<uint64_t> reported{bulk.front().id};
+
+	// Inserting at the head of this bucket must not bypass the saved cursor.
+	ASSERT_NE(addTrackedChunk(1 + 2 * bucketCount), nullptr);
+	ASSERT_EQ(bucketCount, hddGetChunkRegistryBucketCount());
+	for (unsigned call = 0; call < 4; ++call) {
+		const auto result = hddRegistrationSweepNext(bulk, 1);
+		for (const auto &chunk : bulk) { EXPECT_TRUE(reported.insert(chunk.id).second); }
+		if (result == RegistrationSweepResult::kComplete) { break; }
+		EXPECT_EQ(RegistrationSweepResult::kBulkReady, result);
+	}
+	const std::set<uint64_t> expected{1, 1 + bucketCount, 1 + 2 * bucketCount};
+	EXPECT_EQ(expected, reported);
+	EXPECT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
+}
+
 TEST_F(RegistrationSweepTrackingTests, PicksUpInsertionsAfterCursorWithoutRehash) {
 	auto *locked = addTrackedChunk(1, ChunkState::Locked);
 	ASSERT_NE(locked, nullptr);
@@ -409,6 +594,10 @@ TEST_F(RegistrationSweepTrackingTests, LockedBacklogHasBoundedRetryWork) {
 	}
 	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
 	std::vector<ChunkWithVersionAndType> bulk;
+	for (std::size_t call = 0; call < kLockedChunks; ++call) {
+		if (hddRegistrationSweepNext(bulk, 1) != RegistrationSweepResult::kYield) { break; }
+		ASSERT_TRUE(bulk.empty());
+	}
 	ASSERT_EQ(RegistrationSweepResult::kRetry, hddRegistrationSweepNext(bulk, 1));
 	{
 		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
