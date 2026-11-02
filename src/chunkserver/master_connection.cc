@@ -266,28 +266,19 @@ void MasterConn::onRegistered(const std::vector<uint8_t> &data) {
 }
 
 void MasterConn::pushRegisterChunks() {
-	// No sweep runs on this path, but the epoch must still advance. It is read
-	// on every drain of the new-chunk queue, whichever way this connection
-	// registered, and marks left by a pull session earlier in this process
-	// would otherwise read as "already reported to this master" and suppress
-	// announcements it was never told about.
+	// Advance the registration epoch so old pull-session marks cannot suppress
+	// new-chunk announcements after push registration.
 	hddRegistrationSweepBegin(RegistrationSweepMode::kPush);
 
-	uint64_t pushedChunks = 0;
+	registrationChunksSent_ = 0;
 	hddForeachChunkInBulks(
-	    [this, &pushedChunks](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
+	    [this](const std::vector<ChunkWithVersionAndType> &chunksBulk) {
 		    createAttachedPacket(cstoma::registerChunks::build(chunksBulk));
-		    pushedChunks += chunksBulk.size();
+		    registrationChunksSent_ += chunksBulk.size();
 	    },
 	    gChunkBulkSize.load(std::memory_order_relaxed));
 
 	sendRegistrationTail();
-
-	// A pull-capable master also gets an explicit END, whether push was forced
-	// or selected for the fresh connection after a START timeout.
-	if (version_ >= kFirstVersionWithPullChunkRegistration) {
-		createAttachedPacket(cstoma::registerChunksEnd::build(pushedChunks));
-	}
 
 	registrationStatus_ = RegistrationStatus::kChunksRegistered;
 }
@@ -344,16 +335,27 @@ void MasterConn::onRegisterChunksStart(const std::vector<uint8_t> &data) {
 	uint32_t initialCredits{};
 	matocs::registerChunksStart::deserialize(data, bulkSize, initialCredits);
 
-	if (registrationStatus_ != RegistrationStatus::kAwaitingPullStart) {
+	const bool completedPush = sendInventory_ &&
+	                           registrationStatus_ == RegistrationStatus::kChunksRegistered &&
+	                           !pullStartReceived_;
+	if (registrationStatus_ != RegistrationStatus::kAwaitingPullStart && !completedPush) {
 		safs::log_warn(
 		    "MasterConn: unexpected REGISTER_CHUNKS_START in registration status {}, ignoring",
 		    static_cast<int>(registrationStatus_));
 		return;
 	}
 
+	pullStartReceived_ = true;
+	if (completedPush) {
+		// START proves this peer understands END, even if push already finished.
+		// This also completes empty push inventories without starting another sweep.
+		createAttachedPacket(cstoma::registerChunksEnd::build(registrationChunksSent_));
+		return;
+	}
+
 	pullBulkSize_ = std::clamp(bulkSize, kMinChunkBulkSize, kMaxChunkBulkSize);
 	pullCredits_ = initialCredits;
-	pullChunksSent_ = 0;
+	registrationChunksSent_ = 0;
 	pullSweepRetryTimeout_ = Timeout(std::chrono::seconds(0));
 	registrationStatus_ = RegistrationStatus::kChunksRegistering;
 
@@ -385,12 +387,12 @@ void MasterConn::pumpPullRegistration() {
 	while (pullCredits_ > 0) {
 		switch (hddRegistrationSweepNext(bulk, pullBulkSize_)) {
 		case RegistrationSweepResult::kComplete:
-			createAttachedPacket(cstoma::registerChunksEnd::build(pullChunksSent_));
+			createAttachedPacket(cstoma::registerChunksEnd::build(registrationChunksSent_));
 			registrationStatus_ = RegistrationStatus::kChunksRegistered;
 			safs::log_info(
 			    "MasterConn: master-driven chunk registration complete ({} chunks, "
 			    "registry buckets {})",
-			    pullChunksSent_, hddGetChunkRegistryBucketCount());
+			    registrationChunksSent_, hddGetChunkRegistryBucketCount());
 			return;
 		case RegistrationSweepResult::kYield:
 			// Resume cursor work next turn without the locked-chunk retry delay.
@@ -403,7 +405,7 @@ void MasterConn::pumpPullRegistration() {
 			break;
 		}
 
-		pullChunksSent_ += bulk.size();
+		registrationChunksSent_ += bulk.size();
 		--pullCredits_;
 		createAttachedPacket(cstoma::registerChunks::build(bulk));
 	}

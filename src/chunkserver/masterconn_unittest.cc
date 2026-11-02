@@ -95,8 +95,8 @@ protected:
 		connection.onRegistered(response);
 	}
 
-	void startPull(MasterConn &connection) {
-		auto start = matocs::registerChunksStart::build(1, 0);
+	void startPull(MasterConn &connection, uint32_t credits = 0) {
+		auto start = matocs::registerChunksStart::build(1, credits);
 		removeHeaderInPlace(start);
 		connection.onRegisterChunksStart(start);
 	}
@@ -123,6 +123,23 @@ protected:
 		auto packet = std::move(queue.front().packet);
 		queue.pop();
 		return packet;
+	}
+
+	void expectRegistrationTail(MasterConn &connection) {
+		verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_SPACE);
+		verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_LABEL);
+		verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CONFIG);
+		EXPECT_TRUE(connection.isOutputQueueEmpty());
+	}
+
+	void expectRegistrationEnd(MasterConn &connection, uint64_t expectedChunks) {
+		auto packet = pop(connection);
+		verifyHeader(packet, SAU_CSTOMA_REGISTER_CHUNKS_END);
+		removeHeaderInPlace(packet);
+		uint64_t chunks = 0;
+		cstoma::registerChunksEnd::deserialize(packet, chunks);
+		EXPECT_EQ(expectedChunks, chunks);
+		EXPECT_TRUE(connection.isOutputQueueEmpty());
 	}
 
 	void expectSpaceUpdate(MasterConn &connection) {
@@ -479,17 +496,95 @@ TEST_F(MasterConnSpaceReportTests, TimeoutFallbackUsesPushForOnlyTheNextRegistra
 	registerHost(connection);
 	ASSERT_TRUE(connection.isRegistered());
 	EXPECT_TRUE(connection.sendsInventory());
-	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_SPACE);
-	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_LABEL);
-	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CONFIG);
-	verifyHeader(pop(connection), SAU_CSTOMA_REGISTER_CHUNKS_END);
-	EXPECT_TRUE(connection.isOutputQueueEmpty());
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationTail(connection));
+
+	// The new socket may reach a master without pull support at the same version.
+	// Send END only if this socket receives START, even after the push has finished.
+	startPull(connection);
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationEnd(connection, 0));
 
 	connection.setMode(ConnectionMode::KILL);
 	connection.setMode(ConnectionMode::CONNECTED);
 	registerHost(connection);
 	EXPECT_EQ(RegistrationStatus::kAwaitingPullStart, connection.registrationStatus());
 	EXPECT_FALSE(connection.isRegistered());
+}
+
+TEST_F(MasterConnSpaceReportTests, ForcedPushWaitsForStartBeforeSendingEnd) {
+	gForcePushRegistration = true;
+	auto &connection = addConnection();
+	registerHost(connection);
+	ASSERT_TRUE(connection.isRegistered());
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationTail(connection));
+
+	// Empty push inventories still need END when a current master sends START.
+	startPull(connection);
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationEnd(connection, 0));
+	EXPECT_TRUE(connection.isRegistered());
+	startPull(connection);
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+}
+
+TEST_F(MasterConnHddReportTests, ForcedPushReportsChunkCountAfterLateStart) {
+	for (uint64_t id : {701, 702, 703}) { ASSERT_NO_FATAL_FAILURE(addChunk(id)); }
+	gForcePushRegistration = true;
+	auto &connection = addConnection();
+	registerHost(connection);
+	ASSERT_TRUE(connection.isRegistered());
+
+	auto packet = pop(connection);
+	verifyHeader(packet, SAU_CSTOMA_REGISTER_CHUNKS);
+	removeHeaderInPlace(packet);
+	std::vector<ChunkWithVersionAndType> chunks;
+	cstoma::registerChunks::deserialize(packet, chunks);
+	ASSERT_EQ(3U, chunks.size());
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationTail(connection));
+
+	// START acknowledges the completed push; it must not start another sweep.
+	startPull(connection);
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationEnd(connection, chunks.size()));
+	EXPECT_TRUE(connection.isRegistered());
+}
+
+TEST_F(MasterConnSpaceReportTests, ReconnectRequiresStartAgainAfterForcedPush) {
+	gForcePushRegistration = true;
+	auto &connection = addConnection();
+	registerHost(connection);
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationTail(connection));
+	startPull(connection);
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationEnd(connection, 0));
+
+	// A replacement socket must confirm support independently of the old peer.
+	connection.setMode(ConnectionMode::KILL);
+	connection.setMode(ConnectionMode::CONNECTED);
+	registerHost(connection);
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationTail(connection));
+	startPull(connection);
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationEnd(connection, 0));
+}
+
+TEST_F(MasterConnSpaceReportTests, CompletedPullIgnoresDuplicateStart) {
+	auto &connection = addConnection();
+	registerHost(connection);
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationTail(connection));
+	startPull(connection, 1);
+	ASSERT_TRUE(connection.isRegistered());
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationEnd(connection, 0));
+
+	startPull(connection, 1);
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
+}
+
+TEST_F(MasterConnSpaceReportTests, IdentityRegistrationDoesNotAcknowledgePullStart) {
+	auto &connection = addConnection();
+	connection.setSendInventory(false);
+	registerHost(connection);
+	ASSERT_TRUE(connection.isRegistered());
+	ASSERT_NO_FATAL_FAILURE(expectRegistrationTail(connection));
+
+	startPull(connection, 1);
+	EXPECT_TRUE(connection.isRegistered());
+	EXPECT_TRUE(connection.isOutputQueueEmpty());
 }
 
 TEST_F(MasterConnSpaceReportTests, IdentityRegistrationOverridesTimeoutFallback) {

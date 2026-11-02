@@ -1,6 +1,6 @@
 timeout_set '1 minute'
 
-# Suppress START after early REGISTER_SPACE to trigger push fallback.
+# Suppress START on the first connection to trigger push fallback.
 # Hold the inventory tail: push bulks must not renew pull credits or enable
 # repair of existing, unreported replicas.
 
