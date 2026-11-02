@@ -434,6 +434,7 @@ void hddSendDataToMaster(IDisk *disk, SendDataToMasterMode mode) {
 		if (chunk->state() == ChunkState::Available) {
 			gOpenChunks.purge(chunk->metaFD());
 			chunk->owner()->chunks().remove(chunk);
+			hddNoteChunkRemovalForRegistration(chunkToKey(*chunk));
 			hddForgetPresentChunkType(chunk->type());
 			gChunksMap.erase(chunkToKey(*chunk));
 		} else if (chunk->state() == ChunkState::Locked) {
@@ -709,44 +710,48 @@ RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAnd
 	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 	auto &sweep = gRegistrationSweepState;
 
-	// When the bulk fills, keep its bucket selected for remaining entries,
-	// including EC parts that share a chunk ID.
+	// Retain a position within collision buckets as well as the bucket index.
+	// Both entry visits and empty-bucket skips must yield on large registries.
+	const auto workLimit = std::max(bulkSize, std::size_t{kDefaultChunkBulkSize});
+	std::size_t visited = 0;
+	std::size_t emptyBuckets = 0;
 	const std::size_t bucketCount = gChunksMap.bucket_count();
 
 	// Restart an unfinished walk after rehash; session marks prevent duplicates.
 	// After the walk, pending keys and mutation notifications cover changes.
-	if (!sweep.cursorDone && bucketCount != sweep.bucketCount) {
-		sweep.bucketCount = bucketCount;
-		sweep.bucket = 0;
-	}
+	sweep.restartAfterRehash(bucketCount);
 
-	while (!sweep.cursorDone && bulk.size() < bulkSize) {
+	while (!sweep.cursorDone && bulk.size() < bulkSize && visited < workLimit &&
+	       emptyBuckets < workLimit) {
 		if (sweep.bucket >= bucketCount) {
 			sweep.cursorDone = true;
 			break;
 		}
-		for (auto bucketIter = gChunksMap.begin(sweep.bucket);
-		     bucketIter != gChunksMap.end(sweep.bucket); ++bucketIter) {
-			IChunk *chunk = bucketIter->second.get();
-			if (chunk->registrationEpoch() == gRegistrationSweepEpoch) { continue; }
-			if (chunk->state() != ChunkState::Available) {
-				if (chunk->state() == ChunkState::Locked) { sweep.enqueue(bucketIter->first); }
-				continue;
-			}
-			addChunkToBulk(chunk, gRegistrationSweepEpoch);
-			if (bulk.size() == bulkSize) { break; }
+		if (!sweep.bucketPosition) { sweep.bucketPosition = gChunksMap.begin(sweep.bucket); }
+		if (*sweep.bucketPosition == gChunksMap.end(sweep.bucket)) {
+			if (gChunksMap.begin(sweep.bucket) == gChunksMap.end(sweep.bucket)) { ++emptyBuckets; }
+			++sweep.bucket;
+			sweep.bucketPosition.reset();
+			continue;
 		}
-		if (bulk.size() == bulkSize) { break; }
-		++sweep.bucket;
+		const auto bucketIter = (*sweep.bucketPosition)++;
+		++visited;
+		IChunk *chunk = bucketIter->second.get();
+		if (chunk->registrationEpoch() == gRegistrationSweepEpoch) { continue; }
+		if (chunk->state() != ChunkState::Available) {
+			if (chunk->state() == ChunkState::Locked) { sweep.enqueue(bucketIter->first); }
+			continue;
+		}
+		addChunkToBulk(chunk, gRegistrationSweepEpoch);
 	}
 
 	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }
+	if (!sweep.cursorDone) { return RegistrationSweepResult::kYield; }
 
 	// Revisit each pending key at most once per call, rotating locked entries.
 	// Bound examined keys as well as output: a large locked backlog must yield.
-	const auto retryLimit =
-	    std::min(sweep.pending.size(), std::max(bulkSize, std::size_t{kDefaultChunkBulkSize}));
-	for (std::size_t visited = 0; visited < retryLimit && bulk.size() < bulkSize; ++visited) {
+	const auto retryLimit = std::min(sweep.pending.size(), workLimit - visited);
+	for (std::size_t retry = 0; retry < retryLimit && bulk.size() < bulkSize; ++retry) {
 		const auto key = sweep.pending.front();
 		sweep.pending.pop_front();
 		sweep.pendingKeys.erase(key);
