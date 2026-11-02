@@ -189,12 +189,8 @@ struct matocsserventry {
 
 	csdbentry *csdb; /*!< Pointer to database entry for chunkserver. */
 
-	/// True once this connection finished its registration handshake: for the
-	/// old push protocol at SAU_CSTOMA_REGISTER_SPACE, for the pull protocol
-	/// at SAU_CSTOMA_REGISTER_CHUNKS_END.
-	/// Note: the chunkserver's disks may still be scanning at that point, with
-	/// chunks arriving later through the CHUNK_NEW stream, so this must not be
-	/// used to decide whether the chunkserver could host still-unknown chunks.
+	/// Inventory completion: SPACE for push, END for pull. This bounds the client
+	/// discovery window; disk scans may still announce chunks afterward.
 	bool chunkRegistrationComplete{false};
 
 	/// True when this connection registers through the master-driven (pull)
@@ -1484,13 +1480,20 @@ void matocsserv_space(matocsserventry *eptr, const uint8_t *data, uint32_t lengt
 	}
 }
 
-/// True when this connection can answer on-demand chunk queries. Registration
-/// completion is intentionally irrelevant because disk scans may report chunks
-/// after REGISTER_SPACE.
+/// Protocol eligibility for client discovery and targeted disk-state refreshes.
+/// Registration completion does not remove query support.
 static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr) {
 	return eptr->mode == ChunkserverConnectionMode::CONNECTED && eptr->csdb != nullptr &&
 	       !eptr->registrationState.identityPending() &&
 	       eptr->version >= kFirstVersionWithChunkLocationQuery;
+}
+
+bool matocsserv_has_incomplete_chunk_registration() {
+	if (gChunkOperations->requestsChunkserverIdentity()) { return false; }
+	return std::any_of(matocsservList.begin(), matocsservList.end(), [](const auto &entry) {
+		return entry->mode == ChunkserverConnectionMode::CONNECTED && entry->csdb != nullptr &&
+		       !entry->chunkRegistrationComplete;
+	});
 }
 
 bool ChunkMutationDiscovery::requiresQuery(const ChunkMutationPlan &plan, bool inventoryIncomplete,
@@ -1753,6 +1756,8 @@ uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit() {
 }
 
 bool matocsserv_query_chunk_location(uint64_t chunkId, bool registeringOnly) {
+	if (!matocsserv_has_incomplete_chunk_registration()) { return false; }
+
 	if (gPendingChunkQueries.find(chunkId) != gPendingChunkQueries.end()) {
 		// Already being queried; the caller can wait for the same resolution
 		return true;
@@ -1801,6 +1806,15 @@ void matocsserv_flush_chunk_queries() {
 
 	std::vector<uint64_t> chunkIds;
 	chunkIds.swap(gChunkQueryIdsToSend);
+	if (!matocsserv_has_incomplete_chunk_registration()) {
+		// Registration may finish after enqueueing but before this event-loop flush.
+		for (const auto chunkId : chunkIds) {
+			if (gPendingChunkQueries.contains(chunkId)) {
+				matocsserv_resolve_chunk_query(chunkId, false);
+			}
+		}
+		return;
+	}
 	matocsserv_assign_unassigned_query_generations();
 
 	std::unordered_map<uint64_t, std::vector<uint64_t>> idsByGeneration;
