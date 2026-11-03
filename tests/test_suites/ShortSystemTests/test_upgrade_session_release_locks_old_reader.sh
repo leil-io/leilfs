@@ -41,8 +41,7 @@ get_changes "${info[master0_data_path]}" > "${TEMP_DIR}/cleanup-changelog"
 assert_success "${reader}" -m "${TEMP_DIR}/released-checkpoint" \
 	-o "${TEMP_DIR}/restored.sfs" "${TEMP_DIR}/cleanup-changelog" \
 	> "${TEMP_DIR}/released-reader.log" 2>&1
-assert_success python3 "${SOURCE_DIR}/tests/tools/session_lock_image.py" \
-	"${TEMP_DIR}/restored.sfs" > "${TEMP_DIR}/restored-locks"
+session_lock_image "${TEMP_DIR}/restored.sfs" "${TEMP_DIR}/restored-locks"
 assert_files_equal "${TEMP_DIR}/expected-locks" "${TEMP_DIR}/restored-locks"
 
 # Replay a crash just after orphan purge, before later cleanup can hide a stranded lock.
@@ -55,8 +54,7 @@ assert_success awk -F: -v boundary="${cleanup_boundary}" -v inode="${orphan_inod
 assert_success "${reader}" -m "${TEMP_DIR}/released-checkpoint" \
 	-o "${TEMP_DIR}/prefix-restored.sfs" "${TEMP_DIR}/cleanup-prefix" \
 	> "${TEMP_DIR}/prefix-reader.log" 2>&1
-assert_success python3 "${SOURCE_DIR}/tests/tools/session_lock_image.py" \
-	"${TEMP_DIR}/prefix-restored.sfs" > "${TEMP_DIR}/prefix-locks"
+session_lock_image "${TEMP_DIR}/prefix-restored.sfs" "${TEMP_DIR}/prefix-locks"
 assert_equals 0 "$(awk -v inode="${orphan_inode}" \
 	'$3 == inode {count++} END {print count+0}' "${TEMP_DIR}/prefix-locks")"
 cleanup_session_locks

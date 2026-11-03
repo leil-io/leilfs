@@ -29,6 +29,14 @@ session_lock_count() {
 	awk 'NF {count++} END {print count+0}' <<< "${output}"
 }
 
+session_lock_image() {
+	local metadata="${1}" destination="${2}"
+	assert_success sfsmetadump "${metadata}" > "${destination}.dump"
+	assert_success awk '/^# section header: FLCK 1[.]0 / {found=1}
+		/^(flock|posix) (active|pending) / {print} END {exit !found}' \
+		"${destination}.dump" > "${destination}"
+}
+
 session_lock_dump() {
 	local server="${1}" destination="${2}"
 	if [[ "${server}" == "$(saunafs_current_master_id)" ]]; then
@@ -38,8 +46,7 @@ session_lock_dump() {
 		assert_success saunafs_admin_shadow "${server}" save-metadata \
 			"--timeout=$(timeout_rescale_seconds 30)"
 	fi
-	assert_success python3 "${SOURCE_DIR}/tests/tools/session_lock_image.py" \
-		"${info[master${server}_data_path]}/metadata.sfs" > "${destination}"
+	session_lock_image "${info[master${server}_data_path]}/metadata.sfs" "${destination}"
 }
 
 session_lock_shadow_matches() {

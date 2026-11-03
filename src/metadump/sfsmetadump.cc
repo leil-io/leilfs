@@ -20,17 +20,23 @@
 
 #include "common/platform.h"
 
+#include <fmt/format.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+
+#include <algorithm>
 #include <cstdint>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "common/datapack.h"
 #include "common/type_defs.h"
 #include "master/filesystem_node_types.h"
 #include "protocol/SFSCommunication.h"
+#include "protocol/lock_info.h"
 
 #define STR_AUX(x) #x
 #define STR(x) STR_AUX(x)
@@ -429,6 +435,52 @@ int fs_load(FILE *fd) {
 	return 0;
 }
 
+int fs_loadlocks(FILE *file, uint64_t remaining) try {
+	std::vector<uint8_t> record(serializedSize(safs_locks::Info{}));
+	std::vector<std::string> rows;
+
+	// Master stores flock active/pending, then POSIX active/pending, as counted Info records.
+	for (const auto *kind : {"flock", "posix"}) {
+		for (bool pending : {false, true}) {
+			uint64_t count;
+			uint8_t countBuffer[sizeof(count)];
+			if (remaining < sizeof(countBuffer) ||
+			    fread(countBuffer, 1, sizeof(countBuffer), file) != sizeof(countBuffer)) {
+				return -1;
+			}
+			deserialize(countBuffer, sizeof(countBuffer), count);
+			remaining -= sizeof(countBuffer);
+			if (count > remaining / record.size()) { return -1; }
+
+			// Keep pending positions visible while normalizing unordered inode-map iteration.
+			std::map<inode_t, uint64_t> positions;
+			for (uint64_t index = 0; index < count; ++index) {
+				if (fread(record.data(), 1, record.size(), file) != record.size()) { return -1; }
+				safs_locks::Info entry;
+				if (deserialize(record, entry) != 0) { return -1; }
+				// Added persisted fields must require an explicit printer update.
+				[[maybe_unused]] const auto &[version, inode, owner, session, type, start, end] =
+				    entry;
+				if (entry.version != 0 ||
+				    (entry.type != safs_locks::kShared && entry.type != safs_locks::kExclusive)) {
+					return -1;
+				}
+				const auto position = pending ? positions[entry.inode]++ : 0;
+				rows.push_back(fmt::format(
+				    "{} {} {} {} {} {} {} {} {}", kind, pending ? "pending" : "active", entry.inode,
+				    position, entry.owner, entry.sessionid, entry.type, entry.start, entry.end));
+				remaining -= record.size();
+			}
+		}
+	}
+
+	// A malformed section must not publish a partial lock-state snapshot.
+	if (remaining != 0) { return -1; }
+	std::ranges::sort(rows);
+	for (const auto &row : rows) { puts(row.c_str()); }
+	return 0;
+} catch (const IncorrectDeserializationException &) { return -1; }
+
 int fs_load_2x(FILE *fd, bool loadLockIds) {
 	inode_t maxnodeid;
 	uint64_t version;
@@ -482,6 +534,11 @@ int fs_load_2x(FILE *fd, bool loadLockIds) {
 		} else if (memcmp(hdr, "FREE 1.0", kSectionNameSize) == 0) {
 			if (fs_loadfree(fd, sleng)<0) {
 				printf("error reading metadata (FREE 1.0)\n");
+				return -1;
+			}
+		} else if (memcmp(hdr, "FLCK 1.0", kSectionNameSize) == 0) {
+			if (fs_loadlocks(fd, sleng) < 0) {
+				printf("error reading metadata (FLCK 1.0)\n");
 				return -1;
 			}
 		} else if (memcmp(hdr, "CHNK 1.0", kSectionNameSize) == 0) {
