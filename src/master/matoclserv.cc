@@ -46,10 +46,13 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 #include "common/charts.h"
 #include "common/chunk_type_with_address.h"
@@ -6743,24 +6746,71 @@ void matoclserv_broadcast_metadata_checksum_recalculated(uint8_t status) {
 	}
 }
 
-void matocl_locks_release(const FsContext &context, const FilesystemOperationContext &fsOpContext,
-                          inode_t inode, uint32_t sessionId) {
-	std::vector<FileLocks::Owner> applied;
+// Existing inodes use owner releases; vanished inodes keep historical CLRLCK cleanup.
+using SessionLockOwners = std::set<std::pair<safs_locks::Type, uint64_t>>;
+// Lock replies are answered only after their cleanup batch commits.
+using SessionLockWakeUps = std::vector<std::pair<FileLocks::Owner, safs_locks::Type>>;
 
-	gFSOperations->locksClearSession(context, fsOpContext, (uint8_t)safs_locks::Type::kFlock, inode,
-	                                 sessionId, applied);
+static uint8_t matocl_session_lock_owners(const FsContext &context,
+                                          const FilesystemOperationContext &fsOpContext,
+                                          inode_t inode, uint32_t sessionId,
+                                          SessionLockOwners &owners) {
+	// Gather both queues before releasing anything: a pending-only owner must also disappear.
+	constexpr uint64_t pageSize = SAU_CLTOMA_MANAGE_LOCKS_LIST_LIMIT;
+	for (const auto type : {safs_locks::Type::kFlock, safs_locks::Type::kPosix}) {
+		for (const bool pending : {false, true}) {
+			for (uint64_t offset = 0;; offset += pageSize) {
+				std::vector<safs_locks::Info> page;
+				const auto status =
+				    gFSOperations->locksListInode(context, fsOpContext, static_cast<uint8_t>(type),
+				                                  pending, inode, offset, pageSize, page);
+				if (status != SAUNAFS_STATUS_OK) { return status; }
+				for (const auto &lock : page) {
+					if (lock.sessionid == sessionId) { owners.emplace(type, lock.owner); }
+				}
+				if (page.size() < pageSize) { break; }
+			}
+		}
+	}
+	return SAUNAFS_STATUS_OK;
+}
 
-	for (auto candidate : applied) {
-		matoclserv_lock_wake_up(candidate.sessionid, candidate.msgid, safs_locks::Type::kFlock);
+static uint8_t matocl_locks_release(const FsContext &context,
+                                    const FilesystemOperationContext &fsOpContext, inode_t inode,
+                                    uint32_t sessionId, const SessionLockOwners &owners,
+                                    SessionLockWakeUps &wakeUps) {
+	// The reserved sweep can purge an inode without removing its session's cached open entry.
+	// FLCK would log a failed lookup that released readers cannot replay, so check first.
+	if (gFSOperations->nodeOperations()->idToNode(fsOpContext, inode) == kNodeNotFound) {
+		for (const auto type : {safs_locks::Type::kFlock, safs_locks::Type::kPosix}) {
+			std::vector<FileLocks::Owner> applied;
+			const auto status = gFSOperations->locksClearSession(
+			    context, fsOpContext, static_cast<uint8_t>(type), inode, sessionId, applied);
+			if (status != SAUNAFS_STATUS_OK) { return status; }
+			for (const auto &waiter : applied) { wakeUps.emplace_back(waiter, type); }
+		}
+		return SAUNAFS_STATUS_OK;
 	}
 
-	applied.clear();
-	gFSOperations->locksClearSession(context, fsOpContext, (uint8_t)safs_locks::Type::kPosix, inode,
-	                                 sessionId, applied);
+	// The set fixes order by kind, then owner. The normal operation records every state change
+	// in the same order old readers replay, including grants and requeued conflicting requests.
+	for (const auto &[type, owner] : owners) {
+		std::vector<FileLocks::Owner> applied;
+		const auto released =
+		    type == safs_locks::Type::kFlock
+		        ? gFSOperations->flockOperation(context, fsOpContext, inode, owner, sessionId, 0, 0,
+		                                        safs_locks::kRelease, false, applied)
+		        : gFSOperations->posixLockOperation(
+		              context, fsOpContext, inode, 0, std::numeric_limits<uint64_t>::max(), owner,
+		              sessionId, 0, 0, safs_locks::kRelease, false, applied);
+		if (released != SAUNAFS_STATUS_OK) { return released; }
 
-	for (auto candidate : applied) {
-		matoclserv_lock_wake_up(candidate.sessionid, candidate.msgid, safs_locks::Type::kPosix);
+		// An owner released later in this pass may have been granted temporarily; it is leaving.
+		for (const auto &waiter : applied) {
+			if (waiter.sessionid != sessionId) { wakeUps.emplace_back(waiter, type); }
+		}
 	}
+	return SAUNAFS_STATUS_OK;
 }
 
 bool matocl_close_files(Session *currentSession) {
@@ -6788,10 +6838,24 @@ bool matocl_close_files(Session *currentSession) {
 	std::vector<inode_t> pendingBatch;
 	std::vector<inode_t> committed;
 	if (contextHasTransaction) { pendingBatch.reserve(kTransactionBatchSize); }
+	SessionLockWakeUps pendingWakeUps;
+	const auto wakeUp = [&pendingWakeUps] {
+		for (const auto &[owner, type] : pendingWakeUps) {
+			matoclserv_lock_wake_up(owner.sessionid, owner.msgid, type);
+		}
+		pendingWakeUps.clear();
+	};
+
+	// Files with unreadable lock queues stay open for a later cleanup pass.
+	std::vector<inode_t> refused;
 
 	// Commits one pending batch for transactional backends.
 	auto flushBatch = [&](bool isFinal) -> bool {
-		if (!fsOpContext.commitTransaction()) { return false; }
+		if (!fsOpContext.commitTransaction()) {
+			pendingWakeUps.clear();
+			return false;
+		}
+		wakeUp();
 
 		if (!isFinal) {
 			committed.insert(committed.end(), pendingBatch.begin(), pendingBatch.end());
@@ -6811,11 +6875,35 @@ bool matocl_close_files(Session *currentSession) {
 	size_t pendingOperations = currentSession->openFilesSet.size();
 
 	for (inode_t openFileInode : currentSession->openFilesSet) {
+		pendingOperations--;
+
+		// An unreadable queue must keep only its file open, without discarding earlier cleanup.
+		SessionLockOwners owners;
+		const auto listStatus = matocl_session_lock_owners(context, fsOpContext, openFileInode,
+		                                                   currentSession->sessionId, owners);
+		if (listStatus != SAUNAFS_STATUS_OK) {
+			safs::log_err("{}: could not list locks for inode {}, session {}: {}", __func__,
+			              openFileInode, currentSession->sessionId,
+			              saunafs_error_string(listStatus));
+			refused.push_back(openFileInode);
+			continue;
+		}
+
+		// Journal owner releases before the file release, so a crash prefix cannot leave this
+		// session's locks on an inode purged by dropping its last open reference.
+		const auto lockStatus = matocl_locks_release(
+		    context, fsOpContext, openFileInode, currentSession->sessionId, owners, pendingWakeUps);
+		if (lockStatus != SAUNAFS_STATUS_OK) {
+			safs::log_err("{}: could not release locks for inode {}, session {}: {}", __func__,
+			              openFileInode, currentSession->sessionId,
+			              saunafs_error_string(lockStatus));
+			pendingWakeUps.clear();
+			anyFailure = true;
+			break;
+		}
 		gFSOperations->release(context, fsOpContext, openFileInode, currentSession->sessionId);
-		matocl_locks_release(context, fsOpContext, openFileInode, currentSession->sessionId);
 
 		if (contextHasTransaction) {
-			pendingOperations--;
 			pendingBatch.push_back(openFileInode);
 
 			const bool shouldFlush =
@@ -6830,7 +6918,17 @@ bool matocl_close_files(Session *currentSession) {
 				anyFailure = true;
 				break;
 			}
+		} else {
+			wakeUp();
 		}
+	}
+
+	// A skipped final inode still leaves earlier releases to commit.
+	if (!anyFailure && contextHasTransaction && !pendingBatch.empty() &&
+	    !flushBatch(/*isFinal=*/true)) {
+		safs::log_err("{}: final batch commit failed for session {}", __func__,
+		              currentSession->sessionId);
+		anyFailure = true;
 	}
 
 	if (!anyFailure) {
@@ -6839,7 +6937,9 @@ bool matocl_close_files(Session *currentSession) {
 		for (inode_t inode : committed) { currentSession->openFilesSet.erase(inode); }
 	}
 
-	return !anyFailure;
+	for (inode_t inode : refused) { currentSession->openFilesSet.insert(inode); }
+
+	return !anyFailure && refused.empty();
 }
 
 void matoclserv_session_files(matoclserventry *eptr, [[maybe_unused]] const uint8_t *data,
