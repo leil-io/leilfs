@@ -2619,6 +2619,9 @@ int FilesystemOperationsBase::lockOperation(
 	}
 	status = success ? SAUNAFS_STATUS_OK : SAUNAFS_ERROR_WAITING;
 
+	// A failed nonblocking request must not touch the pending queue or grant other locks.
+	if (!success && nonblocking) { return status; }
+
 	// If lock is exclusive, no further action is required
 	// For shared locks it is required to gather candidates for lock.
 	// The case when it is needed is when the owner had exclusive lock applied to a file range
@@ -2645,6 +2648,14 @@ int FilesystemOperationsBase::flockOperation(const FsContext &context,
 	ChecksumUpdater checksumUpdater(context.ts());
 	int lockResult = lockOperation(context, fsOpContext, gMetadata->flockLocks, inode, 0, 1, owner,
 	                               sessionid, reqid, msgid, oper, nonblocking, applied);
+
+	// Errors leave lock state unchanged. Only blocking WAITING requests are queued,
+	// so journal those alongside successful operations. Replaying a failed nonblocking
+	// request as blocking would create a waiter that does not exist on the master.
+	if (lockResult != SAUNAFS_STATUS_OK && (lockResult != SAUNAFS_ERROR_WAITING || nonblocking)) {
+		return lockResult;
+	}
+
 	if (context.isPersonalityMaster()) {
 		changeLog(fsOpContext, context.ts(),
 		          "FLCK(%" PRIu8 ",%" PRIiNode ",0,1,%" PRIu64 ",%" PRIu32 ",%" PRIu16 ")",
@@ -2665,6 +2676,14 @@ int FilesystemOperationsBase::posixLockOperation(const FsContext &context,
 	ChecksumUpdater checksumUpdater(context.ts());
 	int lockResult = lockOperation(context, fsOpContext, gMetadata->posixLocks, inode, start, end,
 	                               owner, sessionid, reqid, msgid, oper, nonblocking, applied);
+
+	// Errors leave lock state unchanged. Only blocking WAITING requests are queued,
+	// so journal those alongside successful operations. Replaying a failed nonblocking
+	// request as blocking would create a waiter that does not exist on the master.
+	if (lockResult != SAUNAFS_STATUS_OK && (lockResult != SAUNAFS_ERROR_WAITING || nonblocking)) {
+		return lockResult;
+	}
+
 	if (context.isPersonalityMaster()) {
 		changeLog(fsOpContext, context.ts(),
 		          "FLCK(%" PRIu8 ",%" PRIiNode ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu32
