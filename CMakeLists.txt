@@ -59,6 +59,24 @@ option(ENABLE_INODE64           "Enable 64 bits for inode numbers and quantities
 option(ENABLE_FOUNDATIONDB      "Enable FoundationDB experimental support"               OFF)
 option(GENERATE_GIT_INFO "Generate git info from current repository (for version commands)" ON)
 
+# GCC installations outside the system library path need their own C++ runtime
+# when running binaries directly from the build tree (including unit tests).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
+   AND NOT CMAKE_CROSSCOMPILING)
+  execute_process(
+    COMMAND "${CMAKE_CXX_COMPILER}" -print-file-name=libstdc++.so.6
+    OUTPUT_VARIABLE CXX_RUNTIME_LIBRARY
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  if(IS_ABSOLUTE "${CXX_RUNTIME_LIBRARY}" AND EXISTS "${CXX_RUNTIME_LIBRARY}")
+    get_filename_component(CXX_RUNTIME_LIBRARY "${CXX_RUNTIME_LIBRARY}" REALPATH)
+    get_filename_component(CXX_RUNTIME_DIRECTORY "${CXX_RUNTIME_LIBRARY}" DIRECTORY)
+    if(NOT CXX_RUNTIME_DIRECTORY MATCHES "^/(usr/)?lib(32|64|x32)?(/|$)")
+      list(APPEND CMAKE_BUILD_RPATH "${CXX_RUNTIME_DIRECTORY}")
+    endif()
+  endif()
+endif()
+
 # If enabled (default), the file compile_commands.json is generated in the build
 # directory. Tools like clangd and vscode use this file for proper analysis.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ${ENABLE_COMPILE_COMMANDS})
