@@ -254,6 +254,9 @@ discovery queries. During inventory recovery, in-place version-changing writes
 and truncates also query unreported replicas before starting their mutation.
 These mutations require successful discovery; an expired query does not authorize
 a version change.
+Replies that contain temporarily busy parts also leave discovery inconclusive:
+required mutations receive a retryable error and can try again once those parts
+are available. Reads still use the locations available when the query resolves.
 
 *ON_DEMAND_CHUNK_QUERY_LIMIT*:: Maximum number of chunk ids being resolved by
 on-demand queries at the same time (default is 10000). Setting it to 0 disables
