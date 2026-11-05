@@ -237,6 +237,9 @@ struct finfo {
 	inode_t inode;
 	uint8_t mode;
 	void *data;
+	// Release may omit the owner after a failed flock, whose request can stay queued or be
+	// granted. The owner is fixed per open file, so keep the first one for final release.
+	uint64_t flock_owner = 0;
 	uint8_t use_flocks;
 	uint8_t use_posixlocks;
 	std::mutex lock;
@@ -2464,10 +2467,13 @@ void release(inode_t ino, FileInfo *fi) {
 		return;
 	}
 
-	if (fileinfo != NULL){
-		if (fileinfo->use_flocks) {
-			fs_flock_send(ino, fi->lock_owner, 0, safs_locks::kRelease);
+	if (fileinfo != nullptr) {
+		std::optional<uint64_t> flockOwner;
+		{
+			std::lock_guard lock(fileinfo->lock);
+			if (fileinfo->use_flocks) { flockOwner = fileinfo->flock_owner; }
 		}
+		if (flockOwner.has_value()) { fs_flock_send(ino, *flockOwner, 0, safs_locks::kRelease); }
 		remove_file_info(fi);
 	}
 	fs_release(ino);
@@ -3611,7 +3617,10 @@ uint32_t flock_send(Context &ctx, inode_t ino, FileInfo* fi, int op) {
 
 	if (fileinfo != NULL) {
 		std::lock_guard lock(fileinfo->lock);
-		fileinfo->use_flocks = true;
+		if (!fileinfo->use_flocks) {
+			fileinfo->flock_owner = fi->lock_owner;
+			fileinfo->use_flocks = true;
+		}
 	}
 
 	// communicate with master
