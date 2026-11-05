@@ -39,6 +39,7 @@
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/counting_sort.h"
@@ -321,6 +322,8 @@ struct PendingChunkQuery {
 	/// Number of queried chunkservers which have not answered yet.
 	/// The waiters are resolved when it reaches zero or the deadline expires.
 	uint32_t outstandingReplies = 0;
+	/// Any peer reported a part it could not inspect; mutation discovery is inconclusive.
+	bool busyParts = false;
 	/// Restricts this attempt to peers whose inventories are incomplete.
 	bool registeringOnly = false;
 };
@@ -1739,8 +1742,8 @@ std::vector<std::vector<uint64_t>> matocsserv_split_chunk_query_ids(
 }
 
 /// Completes the on-demand query for \p chunkId and wakes its waiters.
-/// @param complete True when all targeted peers replied; false on timeout or when
-///        no target remained. Passed to waiters as query completion, not inventory completion.
+/// @param complete True when all targeted peers replied without busy parts; false
+///        for an inconclusive attempt. This does not indicate inventory completion.
 static void matocsserv_resolve_chunk_query(uint64_t chunkId, bool complete) {
 	gPendingChunkQueries.erase(chunkId);
 	if (gOnDemandChunkQueryLimit == 0 ||
@@ -1891,7 +1894,10 @@ void matocsserv_sau_query_chunks(matocsserventry *eptr, const std::vector<uint8_
 	uint64_t generation{};
 	std::vector<uint64_t> queriedChunkIds;
 	std::vector<ChunkWithVersionAndType> foundChunks;
-	cstoma::queryChunks::deserialize(data, generation, queriedChunkIds, foundChunks);
+	std::vector<ChunkWithType> busyChunks;
+	cstoma::queryChunks::deserialize(data, generation, queriedChunkIds, foundChunks, busyChunks);
+	std::unordered_set<uint64_t> busyIds;
+	for (const auto &chunk : busyChunks) { busyIds.insert(chunk.id); }
 
 	// Acknowledge only found parts; outstanding-ID removal scans at most 128 entries.
 	for (const auto &chunk : foundChunks) {
@@ -1931,9 +1937,12 @@ void matocsserv_sau_query_chunks(matocsserventry *eptr, const std::vector<uint8_
 			continue;  // already resolved, timed out, or from another attempt
 		}
 
+		// Preserve uncertainty from any peer, including partial EC answers. Reads
+		// can use found locations; a required mutation must retry discovery later.
+		queryIter->second.busyParts |= busyIds.contains(chunkId);
 		if (queryIter->second.outstandingReplies > 0) { --queryIter->second.outstandingReplies; }
 		if (queryIter->second.outstandingReplies == 0) {
-			matocsserv_resolve_chunk_query(chunkId, true);
+			matocsserv_resolve_chunk_query(chunkId, !queryIter->second.busyParts);
 		}
 	}
 }

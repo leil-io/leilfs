@@ -47,7 +47,7 @@ struct ChunkMutationDiscovery {
 	uint64_t chunkId = 0;               ///< Chunk requiring discovery; 0 for an ordinary lookup.
 	uint32_t version = 0;               ///< Version whose replica set was queried.
 	uint64_t connectionGeneration = 0;  ///< Invalidated by connection joins and departures.
-	bool complete = false;              ///< All targeted query replies were received.
+	bool complete = false;              ///< All targeted peers replied without busy parts.
 
 	/// Resets the confirmation if required discovery is missing or stale.
 	/// @param plan The proposed write or truncate, including failed plans.
