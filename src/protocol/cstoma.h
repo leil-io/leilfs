@@ -85,10 +85,13 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 // Reply to SAU_MATOCS_QUERY_CHUNKS; echo generation to distinguish attempts.
 // queriedChunkIds echoes all requested IDs, including misses.
 // foundChunks lists available parts, possibly multiple EC parts per ID.
+// busyChunks lists parts whose metadata cannot be read yet; their IDs must
+// not be treated as conclusively absent when authorizing a mutation.
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, queryChunks, SAU_CSTOMA_QUERY_CHUNKS,
                                     0, uint64_t, generation,
                                     std::vector<uint64_t>, queriedChunkIds,
-                                    std::vector<ChunkWithVersionAndType>, foundChunks)
+                                    std::vector<ChunkWithVersionAndType>, foundChunks,
+                                    std::vector<ChunkWithType>, busyChunks)
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerSpace, SAU_CSTOMA_REGISTER_SPACE, 0,
