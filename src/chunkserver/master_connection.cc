@@ -787,6 +787,7 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 	matocs::queryChunks::deserialize(data, generation, chunkIds);
 
 	std::vector<ChunkWithVersionAndType> foundChunks;
+	std::vector<ChunkWithType> busyChunks;
 	{
 		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 		for (const auto chunkId : chunkIds) {
@@ -796,10 +797,14 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 
 				IChunk *chunk = chunkIter->second.get();
 
-				// Read versions only from Available chunks under gChunksMapMutex.
-				// Workers change versions while chunks are Locked; skip busy chunks
-				// without blocking the network event loop.
-				if (chunk->state() != ChunkState::Available) { continue; }
+				// Workers may change metadata while holding a part. Report only its
+				// key until it is released; completed deletion is a genuine miss.
+				if (chunk->state() != ChunkState::Available) {
+					if (chunk->state() != ChunkState::Deleted) {
+						busyChunks.emplace_back(chunkId, chunkType);
+					}
+					continue;
+				}
 
 				const bool markedForDeletion =
 				    chunk->owner() != nullptr && chunk->owner()->isMarkedForDeletion();
@@ -819,7 +824,7 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 	// The master holds client operations back until this answer arrives, so
 	// it must jump any registration backlog in the output queue.
 	createAttachedPriorityPacket(
-	    cstoma::queryChunks::build(generation, chunkIds, foundChunks));
+	    cstoma::queryChunks::build(generation, chunkIds, foundChunks, busyChunks));
 }
 
 void MasterConn::createChunk(const std::vector<uint8_t> &data) {

@@ -436,6 +436,7 @@ enum class SugidClearMode : uint8_t {
 #define SAU_CSTOMA_QUERY_CHUNKS (1000U + 181U)
 /// version==0 generation:64 queriedchunkids:(N * [chunkid:64])
 ///            foundchunks:(M * [chunkid:64 chunkversion:32 chunktype:16])
+///            busychunks:(K * [chunkid:64 chunktype:16])
 
 // 0x04A1
 #define SAU_MATOCS_MAINTENANCE_FENCE (1000U + 185U)

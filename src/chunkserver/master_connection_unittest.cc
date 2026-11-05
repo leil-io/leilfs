@@ -32,14 +32,18 @@
 #include <cstdio>
 #include <latch>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <vector>
 
+#include "chunkserver-common/cmr_disk.h"
+#include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hddspacemgr.h"
 #include "chunkserver/master_connection.h"
 #include "chunkserver/masterconn.h"
+#include "common/slice_traits.h"
 #include "protocol/cstoma.h"
 #include "protocol/matocs.h"
 #include "unittests/mocks/module_mock.h"
@@ -1172,3 +1176,157 @@ TEST_F(MasterConnTlsOutputQueueTests, ClosingSocketDiscardsTlsWriteRetryQueueSel
 	EXPECT_EQ(MessageBuffer{1}, popNextPacket());
 	EXPECT_EQ(ordinary, popNextPacket());
 }
+
+namespace {
+
+class MasterConnQueryTests : public MasterConnOutputQueueTests {
+protected:
+	static constexpr uint64_t kChunkId = 701;
+	static constexpr uint64_t kGeneration = 42;
+	static constexpr uint32_t kVersion = 7;
+	CmrDisk disk_{"/tmp/query-busy-parts/", "/tmp/query-busy-parts/", false, false};
+
+	void SetUp() override {
+		std::lock_guard lock(gChunksMapMutex);
+		ASSERT_TRUE(gChunksMap.empty());
+		ASSERT_TRUE(gPresentChunkTypes.empty());
+	}
+
+	void TearDown() override {
+		std::lock_guard lock(gChunksMapMutex);
+		while (!gChunksMap.empty()) {
+			hddRemoveChunkFromContainers(gChunksMap.begin()->second.get());
+		}
+		EXPECT_TRUE(gPresentChunkTypes.empty());
+	}
+
+	IChunk *addPart(ChunkState state, ChunkPartType type = ChunkPartType()) {
+		auto *chunk =
+		    hddChunkFindOrCreatePlusLock(&disk_, kChunkId, type, disk::ChunkGetMode::kCreateOnly);
+		if (chunk == nullptr) { return nullptr; }
+		{
+			std::lock_guard lock(gChunksMapMutex);
+			chunk->setVersion(kVersion);
+			if (state != ChunkState::Available) { chunk->setState(state); }
+			std::lock_guard testsLock(gTestsMutex);
+			disk_.chunks().insert(chunk);
+		}
+		if (state == ChunkState::Available) { hddChunkRelease(chunk); }
+		return chunk;
+	}
+
+	MessageBuffer query(const std::vector<uint64_t> &ids = {kChunkId}) {
+		auto request = matocs::queryChunks::build(kGeneration, ids);
+		removeHeaderInPlace(request);
+		masterConn_.queryChunks(request);
+		EXPECT_FALSE(masterConn_.isOutputQueueEmpty());
+		if (masterConn_.isOutputQueueEmpty()) { return {}; }
+		auto response = popNextPacket();
+		verifyHeader(response, SAU_CSTOMA_QUERY_CHUNKS);
+		removeHeaderInPlace(response);
+		return response;
+	}
+
+	struct QueryReply {
+		std::vector<ChunkWithVersionAndType> found;
+		std::vector<ChunkWithType> busy;
+	};
+
+	QueryReply decode(const MessageBuffer &response,
+	                  const std::vector<uint64_t> &expectedIds = {kChunkId}) {
+		uint64_t generation = 0;
+		std::vector<uint64_t> ids;
+		QueryReply reply;
+		cstoma::queryChunks::deserialize(response, generation, ids, reply.found, reply.busy);
+		EXPECT_EQ(generation, kGeneration);
+		EXPECT_EQ(ids, expectedIds);
+		return reply;
+	}
+
+	std::vector<ChunkWithVersionAndType> found(const MessageBuffer &response,
+	                                           const std::vector<uint64_t> &expectedIds = {
+	                                               kChunkId}) {
+		return decode(response, expectedIds).found;
+	}
+};
+
+TEST_F(MasterConnQueryTests, AvailablePartReportsItsCurrentVersion) {
+	ASSERT_NE(addPart(ChunkState::Available), nullptr);
+	const auto parts = found(query());
+	ASSERT_EQ(parts.size(), 1U);
+	EXPECT_EQ(parts.front(), ChunkWithVersionAndType(kChunkId, kVersion, ChunkPartType()));
+}
+
+TEST_F(MasterConnQueryTests, MissingIdsAreEchoedWithoutInventingLocations) {
+	const std::vector<uint64_t> ids{kChunkId, kChunkId + 1};
+	EXPECT_TRUE(found(query(ids), ids).empty());
+}
+
+TEST_F(MasterConnQueryTests, BusyPartIsDistinguishableFromAGenuineMiss) {
+	const auto missing = query();
+	auto *part = addPart(ChunkState::Locked);
+	ASSERT_NE(part, nullptr);
+	const auto busy = query();
+
+	// The master must not accept a temporarily locked, unreported copy as absent
+	// when deciding whether discovery permits a version-changing mutation.
+	EXPECT_NE(busy, missing) << "busy and absent parts currently produce identical replies";
+	const auto reply = decode(busy);
+	EXPECT_TRUE(reply.found.empty());
+	ASSERT_EQ(reply.busy.size(), 1U);
+	EXPECT_EQ(reply.busy.front().id, kChunkId);
+	EXPECT_EQ(reply.busy.front().type, ChunkPartType());
+	EXPECT_EQ(part->state(), ChunkState::Locked);
+}
+
+TEST_F(MasterConnQueryTests, MixedEcReplyDistinguishesBusyTypeFromMissingType) {
+	const auto availableType = slice_traits::ec::ChunkPartType(3, 2, 0);
+	const auto busyType = slice_traits::ec::ChunkPartType(3, 2, 1);
+	ASSERT_NE(addPart(ChunkState::Available, availableType), nullptr);
+	const auto missingType = query();
+	ASSERT_NE(addPart(ChunkState::Locked, busyType), nullptr);
+	const auto busy = query();
+
+	// A positive answer for one EC type must not hide uncertainty about another
+	// type of the same chunk ID. Preserve the usable part in that partial reply.
+	EXPECT_NE(busy, missingType) << "a found EC part hides a second, busy part";
+	const auto reply = decode(busy);
+	ASSERT_EQ(reply.found.size(), 1U);
+	EXPECT_EQ(reply.found.front(), ChunkWithVersionAndType(kChunkId, kVersion, availableType));
+	ASSERT_EQ(reply.busy.size(), 1U);
+	EXPECT_EQ(reply.busy.front().id, kChunkId);
+	EXPECT_EQ(reply.busy.front().type, busyType);
+}
+
+TEST_F(MasterConnQueryTests, CompletedDeletionIsAGenuineMiss) {
+	const auto missing = query();
+	ASSERT_NE(addPart(ChunkState::Deleted), nullptr);
+	EXPECT_EQ(query(), missing);
+}
+
+TEST_F(MasterConnQueryTests, PendingDeletionRemainsUnresolved) {
+	ASSERT_NE(addPart(ChunkState::ToBeDeleted), nullptr);
+	const auto reply = decode(query());
+	EXPECT_TRUE(reply.found.empty());
+	ASSERT_EQ(reply.busy.size(), 1U);
+	EXPECT_EQ(reply.busy.front().id, kChunkId);
+	EXPECT_EQ(reply.busy.front().type, ChunkPartType());
+}
+
+TEST_F(MasterConnQueryTests, ReleasedPartReportsItsFreshVersionOnRetry) {
+	auto *part = addPart(ChunkState::Locked);
+	ASSERT_NE(part, nullptr);
+	EXPECT_TRUE(found(query()).empty());
+	{
+		std::lock_guard lock(gChunksMapMutex);
+		part->setVersion(kVersion + 1);
+	}
+	hddChunkRelease(part);
+
+	const auto parts = found(query());
+	ASSERT_EQ(parts.size(), 1U);
+	EXPECT_EQ(parts.front(), ChunkWithVersionAndType(kChunkId, kVersion + 1, ChunkPartType()));
+	EXPECT_TRUE(decode(query()).busy.empty());
+}
+
+}  // namespace
