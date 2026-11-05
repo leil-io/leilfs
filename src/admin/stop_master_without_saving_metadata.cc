@@ -38,7 +38,7 @@ MetadataserverStopWithoutSavingMetadataCommand::supportedOptions() const {
 
 void MetadataserverStopWithoutSavingMetadataCommand::usage() const {
 	std::cerr << name() << " <master ip> <master port>" << std::endl;
-	std::cerr << "    Stop the master server without saving metadata in the metadata.sfs file."
+	std::cerr << "    Stop the master server without saving metadata in the metadata.leil file."
 			<< std::endl;
 	std::cerr << "    Used to quickly migrate a metadata server (works for all personalities)."
 			<< std::endl;

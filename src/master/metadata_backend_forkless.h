@@ -73,7 +73,7 @@ public:
 
 	std::string backendType() override { return "MetadataBackendForkless"; }
 
-	/// Forkless keeps metadata in FDB, not in a downloadable metadata.sfs on the master.
+	/// Forkless keeps metadata in FDB, not in a downloadable metadata.leil on the master.
 	bool supportsMetadataFileDownload() override { return false; }
 
 	/// Metadata files lag behind the changelogs; auto recovery and shadows replay them.
