@@ -39,6 +39,7 @@ swept_reserved_files() {
 assert_eventually_prints 0 swept_reserved_files
 for name in "${lock_cases[@]}"; do session_lock_assert_state "${name}" 1 1; done
 session_lock_shadow_matches
+syslog_next_line=$(($(wc -l < /var/log/syslog) + 1))
 
 departing_session=$(session_lock_rows "${info[matocl]}" flock active \
 	"${lock_inodes[swept-flock]}" | awk '{print $3}')
@@ -53,9 +54,19 @@ for name in "${lock_cases[@]}"; do
 	assert_eventually "grep -q '^write lock:' '${TEMP_DIR}/${name}-waiter.log'"
 	assert_failure grep -Eq 'failed:|Failed to' "${TEMP_DIR}/${name}-waiter.log"
 done
+
+# Closing these FDs sends owner releases for already swept inodes. Drain both mounts
+# before inspecting the final journal and Shadow, so cleanup cannot hide replay errors.
+cleanup_session_locks
+for mount in 0 1; do saunafs_mount_unmount "${mount}"; done
+for name in "${lock_cases[@]}"; do session_lock_assert_state "${name}" 0 0; done
+
 get_changes "${info[master0_data_path]}" > "${TEMP_DIR}/swept-cleanup-changelog"
 assert_failure awk -F: -v boundary="${cleanup_version}" \
 	'$1 > boundary && index($0, "|FLCK(") {found=1} END {exit !found}' \
 	"${TEMP_DIR}/swept-cleanup-changelog"
 session_lock_shadow_matches
-cleanup_session_locks
+replay_log=$(tail -n +"${syslog_next_line}" /var/log/syslog)
+assert_failure grep -Eq \
+	'malformed changelog sent|some changes lost|Waiting for master to produce up-to-date metadata image' \
+	<<< "${replay_log}"
