@@ -93,6 +93,12 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
 endif()
 install(TARGETS slow_chunk_scan DESTINATION ${LIB_SUBDIR})
 
+if(ENABLE_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(chunk_read_gate SHARED chunk_read_gate.cc)
+  target_link_libraries(chunk_read_gate ${CMAKE_DL_LIBS})
+  install(TARGETS chunk_read_gate DESTINATION ${LIB_SUBDIR})
+endif()
+
 add_executable(send_wrapped_length_cs_register send_wrapped_length_cs_register.cc)
 target_link_libraries(send_wrapped_length_cs_register leil-common)
 install(TARGETS send_wrapped_length_cs_register RUNTIME DESTINATION ${BIN_SUBDIR})
