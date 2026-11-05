@@ -208,9 +208,10 @@ protected:
 		Access::reply(server, packet);
 	}
 
-	void reply(uint64_t generation, const std::vector<ChunkWithVersionAndType> &parts) {
-		auto packet =
-		    cstoma::queryChunks::build(generation, std::vector<uint64_t>{kChunkId}, parts, {});
+	void reply(uint64_t generation, const std::vector<ChunkWithVersionAndType> &parts,
+	           const std::vector<ChunkWithType> &busyParts = {}) {
+		auto packet = cstoma::queryChunks::build(generation, std::vector<uint64_t>{kChunkId}, parts,
+		                                         busyParts);
 		removeHeaderInPlace(packet);
 		Access::reply(server, packet);
 	}
@@ -431,6 +432,35 @@ TEST_F(ChunkDiskStateTest, PartialEcResponseKeepsMissingTypePending) {
 	reply(query(), {{kChunkId, common::combineVersionWithTodelFlag(kVersion, true), otherType}});
 	EXPECT_TRUE(Access::part(server, kChunkId, otherType).todel);
 	expectState(kVersion, false, true);
+	expectIdle();
+}
+
+TEST_F(ChunkDiskStateTest, PartialEcReplyTimeoutPreservesTheUnresolvedType) {
+	const auto otherType = slice_traits::ec::ChunkPartType(3, 2, 1);
+	chunk_server_has_chunk(server, kChunkId, kVersion, otherType);
+	report(kVersion - 1, true);
+	chunk_server_has_chunk(server, kChunkId,
+	                       common::combineVersionWithTodelFlag(kVersion - 1, true), otherType);
+
+	// A busy type is unresolved. The refresh path treats the reply
+	// as partial; a later unanswered retry must not turn it into confirmation.
+	reply(query(), {found(kVersion, true)}, {{kChunkId, otherType}});
+	Access::advanceTime(1000);
+	const auto unanswered = query();
+	Access::expire(server, kChunkId);
+	Access::tick();
+	expectIdle(1);
+	const auto pending = Access::part(server, kChunkId, otherType);
+	EXPECT_TRUE(pending.valid);
+	EXPECT_EQ(pending.partVersion, kVersion);
+	EXPECT_FALSE(pending.todel);
+	EXPECT_FALSE(Access::disconnectRequested(server));
+
+	Access::advanceTime(1000);
+	const auto retry = query();
+	EXPECT_NE(retry, unanswered);
+	reply(retry, {{kChunkId, common::combineVersionWithTodelFlag(kVersion, true), otherType}});
+	EXPECT_TRUE(Access::part(server, kChunkId, otherType).todel);
 	expectIdle();
 }
 

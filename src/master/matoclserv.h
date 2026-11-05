@@ -67,8 +67,8 @@ void matoclserv_publish_committed_changelog(const FilesystemOperationContext &co
 /// Replays requests waiting for chunk-location discovery once, without another wait.
 /// Reads use known locations; mutations must still pass discovery validation.
 /// @param chunkId The chunk whose query was resolved.
-/// @param complete True if all targeted peers replied; false on timeout or when no
-///        query target remained. This does not imply a complete chunk inventory.
+/// @param complete True if all targeted peers replied without busy parts; false
+///        for inconclusive discovery. This does not imply a complete inventory.
 void matoclserv_chunk_locations_resolved(uint64_t chunkId, bool complete);
 
 /// Initializes the network configuration and register the eventloop callbacks.

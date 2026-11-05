@@ -37,6 +37,27 @@ def packet(kind, payload):
     return struct.pack("!II", kind, len(payload)) + payload
 
 
+def decode_query_reply(payload):
+    """Read available records without consuming the trailing busy-part list."""
+    if len(payload) < 16:
+        raise RuntimeError("truncated query reply")
+    protocol, _, count = struct.unpack("!IQI", payload[:16])
+    ids_end = 16 + count * 8
+    if len(payload) < ids_end + 4:
+        raise RuntimeError("truncated queried IDs")
+    found_count = struct.unpack_from("!I", payload, ids_end)[0]
+    found_end = ids_end + 4 + found_count * 14
+    if len(payload) < found_end + 4:
+        raise RuntimeError("truncated found parts")
+    busy_count = struct.unpack_from("!I", payload, found_end)[0]
+    if protocol != 0 or len(payload) != found_end + 4 + busy_count * 10:
+        raise RuntimeError("invalid query reply")
+    queried = struct.unpack(f"!{count}Q", payload[16:ids_end])
+    found = list(struct.iter_unpack("!QIH", payload[ids_end + 4:found_end]))
+    # Busy records stay in the forwarded packet but carry no fresh version.
+    return queried, found
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", required=True)
@@ -203,16 +224,9 @@ def main():
                             metrics["last_release_ms"] = elapsed
                             continue
 
-                    # Replies list queried IDs first, followed by the found part records.
+                    # Preserve the full reply, including its unresolved busy parts.
                     if kind == QUERY_RESPONSE:
-                        protocol, _, count = struct.unpack("!IQI", payload[:16])
-                        offset = 16 + count * 8
-                        found_count = struct.unpack("!I", payload[offset:offset + 4])[0]
-                        found = list(struct.iter_unpack("!QIH", payload[offset + 4:]))
-                        if protocol != 0 or len(found) != found_count:
-                            raise RuntimeError("invalid query reply")
-
-                        queried = struct.unpack(f"!{count}Q", payload[16:offset])
+                        queried, found = decode_query_reply(payload)
 
                         # Hold the whole reply when it mentions a target; other replies stay live.
                         if any(chunk_id in targets for chunk_id in queried):
