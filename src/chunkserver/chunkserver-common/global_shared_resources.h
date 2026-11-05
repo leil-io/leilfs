@@ -20,6 +20,10 @@
 
 #include "common/platform.h"
 
+#include <deque>
+#include <optional>
+#include <unordered_set>
+
 #include "chunkserver-common/chunk_map.h"
 #include "chunkserver-common/disk_interface.h"
 #include "chunkserver-common/disk_manager_interface.h"
@@ -27,6 +31,7 @@
 #include "chunkserver-common/iostat.h"
 #include "chunkserver-common/open_chunk.h"
 #include "chunkserver-common/plugin_manager.h"
+#include "slogger/slogger.h"
 
 inline IndexedResourcePool<OpenChunk> gOpenChunks;
 
@@ -47,6 +52,99 @@ inline ChunkMap gChunksMap;
 /// Only guards access to gChunksMap.
 /// Chunk objects stored in the registry have their own separate locks.
 inline std::mutex gChunksMapMutex;
+
+/// Pull-sweep cursor and outstanding keys. Guard every access with gChunksMapMutex.
+struct RegistrationSweepState {
+	bool active{false};
+	std::size_t bucket{0};
+	std::size_t bucketCount{0};
+	bool cursorDone{false};
+	/// Next entry in this bucket; insertion, removal, and rehash hooks keep it valid.
+	std::optional<ChunkMap::local_iterator> bucketPosition;
+	std::deque<ChunkWithType> pending;
+	std::unordered_set<ChunkWithType, KeyOperations, KeyOperations> pendingKeys;
+
+	void enqueue(ChunkWithType key) {
+		if (pendingKeys.insert(key).second) { pending.push_back(key); }
+	}
+
+	void restartAfterRehash(std::size_t newBucketCount) {
+		if (!cursorDone && bucketCount != newBucketCount) {
+			bucketCount = newBucketCount;
+			bucket = 0;
+			bucketPosition.reset();
+		}
+	}
+};
+
+inline RegistrationSweepState gRegistrationSweepState;
+
+/// Call after inserting or invalidating a registry entry, under gChunksMapMutex.
+inline void hddNoteChunkForRegistration(ChunkWithType key) {
+	auto &sweep = gRegistrationSweepState;
+	if (!sweep.active) { return; }
+	// Notice rehashes immediately, even if another resize precedes the next credit.
+	sweep.restartAfterRehash(gChunksMap.bucket_count());
+	// Insertion can precede a saved position even in the current bucket.
+	if (sweep.cursorDone || gChunksMap.bucket(key) <= sweep.bucket) { sweep.enqueue(key); }
+}
+
+/// Call before erasing a registry entry, under gChunksMapMutex.
+inline void hddNoteChunkRemovalForRegistration(ChunkWithType key) {
+	auto &sweep = gRegistrationSweepState;
+	if (!sweep.active) { return; }
+	sweep.restartAfterRehash(gChunksMap.bucket_count());
+	if (sweep.bucketPosition && *sweep.bucketPosition != gChunksMap.end(sweep.bucket) &&
+	    KeyOperations{}((*sweep.bucketPosition)->first, key)) {
+		++*sweep.bucketPosition;
+	}
+}
+
+/// Number of chunks per ChunkPartType currently present in gChunksMap.
+/// Maintained at every gChunksMap insert/erase, under gChunksMapMutex.
+/// Lets id-only lookups (e.g. the master's on-demand chunk-location query)
+/// probe one (id, type) key per hosted type instead of scanning the whole
+/// type space. In practice it holds a handful of entries.
+inline std::map<ChunkPartType, uint64_t> gPresentChunkTypes;
+
+/// Registers one more chunk of \p type. Call under gChunksMapMutex, next to
+/// the gChunksMap insert.
+inline void hddNotePresentChunkType(ChunkPartType type) { ++gPresentChunkTypes[type]; }
+
+/// Unregisters one chunk of \p type. Call under gChunksMapMutex, next to the
+/// gChunksMap erase.
+inline void hddForgetPresentChunkType(ChunkPartType type) {
+	auto typeIterator = gPresentChunkTypes.find(type);
+	if (typeIterator != gPresentChunkTypes.end() && --(typeIterator->second) == 0) {
+		gPresentChunkTypes.erase(typeIterator);
+	}
+}
+
+/// Logs and asserts if gPresentChunkTypes totals differ from gChunksMap.size().
+/// Detects missing type-count updates that can hide chunks from id-only queries.
+/// Acquires gChunksMapMutex; callers must not already hold it.
+inline void hddVerifyPresentChunkTypes() {
+	uint64_t countedChunks = 0;
+	uint64_t registrySize = 0;
+	// Captured in the same locked snapshot as the totals: reading it afterwards
+	// would race with the scan and worker threads mutating the index.
+	std::size_t typeCount = 0;
+	{
+		const std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		for (const auto &[type, count] : gPresentChunkTypes) { countedChunks += count; }
+		registrySize = gChunksMap.size();
+		typeCount = gPresentChunkTypes.size();
+	}
+
+	if (countedChunks != registrySize) {
+		safs::log_err(
+		    "gPresentChunkTypes out of sync with the chunk registry: {} chunks counted across {} "
+		    "types, {} chunks in the registry -- an insert or erase path is missing its "
+		    "hddNotePresentChunkType/hddForgetPresentChunkType call",
+		    countedChunks, typeCount, registrySize);
+		assert(false && "gPresentChunkTypes out of sync with gChunksMap");
+	}
+}
 
 inline const int kOpenRetryCount = 4;
 inline const int kOpenRetry_ms = 5;
@@ -71,9 +169,10 @@ inline std::unique_ptr<IDiskManager> gDiskManager;
 /// Container to reuse free condition variables (guarded by `gChunksMapMutex`)
 inline std::vector<std::unique_ptr<CondVarWithWaitCount>> gFreeCondVars;
 
-/// Active Disks scans in progress.
-/// Note: theoretically it would return a false positive if scans haven't
-/// started yet, but it's a _very_ unlikely situation.
+/// Disk scans that have been scheduled and have not completed yet.
+///
+/// Count a scan before its worker starts so an empty registry cannot be
+/// mistaken for a completed startup scan.
 inline std::atomic_int gScansInProgress(0);
 
 inline std::atomic_bool gStatChunksAtDiskScan{true};

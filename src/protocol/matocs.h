@@ -79,6 +79,18 @@ SAUNAFS_DEFINE_PACKET_VERSION(matocs, maintenanceFence, kDefault, 0)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, maintenanceFence, SAU_MATOCS_MAINTENANCE_FENCE,
                                     kDefault, uint64_t, epoch)
 
+/// Shared master-to-chunkserver packet limit; oversized packets cause
+/// the chunkserver to disconnect.
+constexpr uint32_t kMaxMasterToChunkserverPacketSize = 10000;
+
+// Query hosted parts so client I/O can proceed during registration.
+// Split chunkIds to fit the packet limit; generation identifies the attempt,
+// separating replies from older retries.
+// Answered with SAU_CSTOMA_QUERY_CHUNKS.
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, queryChunks, SAU_MATOCS_QUERY_CHUNKS, 0,
+                                    uint64_t, generation,
+                                    std::vector<uint64_t>, chunkIds)
+
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
