@@ -23,8 +23,11 @@
 #include "common/platform.h"
 
 #include <cstdint>
+#include <expected>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "common/sessions_file.h"
@@ -42,9 +45,6 @@ void matoclserv_set_session_manager(std::unique_ptr<ISessionManager> manager);
 /// Persists all sessions through the active session manager.
 void matoclserv_store_sessions();
 
-/// Persists one session through the active session manager.
-void matoclserv_persist_session(Session *session);
-
 /// Persists or observes session runtime state after a connection disconnects.
 void matoclserv_session_disconnected(Session *session);
 
@@ -58,14 +58,50 @@ int matoclserv_load_sessions();
 /// @return Pointer to the newly created session
 Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId);
 
-/// Returns the session for a given ID.
+/// Finds the session for a given ID.
 /// @param sessionId The session ID to search for
-/// @return Pointer to the session if found, nullptr otherwise
-Session *matoclserv_find_session(uint32_t sessionId);
+/// @return The session, or SAUNAFS_ERROR_BADSESSIONID when it is gone, or SAUNAFS_ERROR_IO when
+///         the session store could not be read
+std::expected<Session *, uint8_t> matoclserv_find_session(uint32_t sessionId);
 
 /// Marks a session as explicitly closed in manager state.
 /// @param sessionId The session ID to mark as closed
 void matoclserv_close_session(uint32_t sessionId);
+
+/// Makes this server the one serving @p session's client (see ISessionManager::attachSession).
+/// @param isNew True for a session being registered, false for a reconnect
+/// @param attempt The client's reconnect request number, 0 when it sends none
+/// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID or SAUNAFS_ERROR_IO
+uint8_t matoclserv_attach_session(Session *session, bool isNew, uint32_t attempt);
+
+/// Releases a session at once, whichever server serves it (see
+/// ISessionManager::releaseSessionNow).
+uint8_t matoclserv_release_session_now(uint32_t sessionId,
+                                       const std::function<bool(Session *)> &onReleased);
+
+/// Decides who answers a granted lock waiter (see ISessionManager::routeLockAnswer).
+/// @return True when the caller answers the waiter itself after the commit.
+bool matoclserv_route_lock_answer(const FilesystemOperationContext &fsOpContext, uint32_t sessionId,
+                                  uint32_t messageId, uint32_t requestId, uint8_t lockType);
+
+/// True when the active backend records lock answers that the server must poll to deliver.
+bool matoclserv_records_lock_answers();
+
+/// Sends the lock answers recorded for @p waiters, sessions waiting here mapped to their
+/// connection's generation, as (session id, attachment generation, message id, request id,
+/// lock type), reading only the sessions in @p only when given (see
+/// ISessionManager::deliverLockAnswers).
+void matoclserv_deliver_recorded_lock_answers(
+    const std::map<uint32_t, uint64_t> &waiters,
+    const std::function<void(uint32_t, uint64_t, uint32_t, uint32_t, uint8_t)> &send,
+    const std::set<uint32_t> *only);
+
+/// Starts checking, in @p fsOpContext's transaction, that this server still serves @p sessionId
+/// under @p generation (see ISessionManager::beginAttachmentCheck).
+/// @return A call returning SAUNAFS_STATUS_OK, or SAUNAFS_ERROR_BADSESSIONID when the
+///         attachment changed
+std::move_only_function<uint8_t()> matoclserv_begin_attachment_check(
+    const FilesystemOperationContext &fsOpContext, uint32_t sessionId, uint64_t generation);
 
 /// Returns the number of open files for a given session.
 /// @param currentSession Pointer to the session

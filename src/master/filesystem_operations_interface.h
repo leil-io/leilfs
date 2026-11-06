@@ -488,8 +488,10 @@ public:
 	///
 	/// For contexts with session data, this operation requires a meta session.
 	/// `path` must be non-empty and must not contain embedded `'\0'` bytes.
+	/// The caller owns the operation transaction and commits staged changes on success.
 	///
 	/// @param context The FS operation context (credentials/session/timestamp).
+	/// @param fsOpContext The caller's filesystem operation and transaction context.
 	/// @param inode Inode expected to be in trash.
 	/// @param path New stored trash path.
 	///
@@ -499,7 +501,8 @@ public:
 	/// @return SAUNAFS_ERROR_EPERM if the session is not a meta session, or inode is outside
 	///         the session-visible namespace.
 	/// @return SAUNAFS_ERROR_ENOENT if inode cannot be resolved as a trash node.
-	virtual uint8_t setTrashPath(const FsContext &context, inode_t inode,
+	virtual uint8_t setTrashPath(const FsContext &context,
+	                             const FilesystemOperationContext &fsOpContext, inode_t inode,
 	                             const std::string &path) = 0;
 
 	/// Schedules setting trash-time on a node (optionally recursively).
@@ -619,9 +622,10 @@ public:
 	///
 	/// On master personalities, a successful restore is recorded as `UNDEL(inode)`. On replay
 	/// personalities, the operation applies that changelog entry and advances metadata state.
-	/// Implementations that need transactions create and commit their operation context internally.
+	/// The caller owns the operation transaction and commits staged changes on success.
 	///
 	/// @param context The FS operation context containing session data and timestamp.
+	/// @param fsOpContext The caller's filesystem operation and transaction context.
 	/// @param inode The inode of the trash file to restore.
 	///
 	/// @return SAUNAFS_STATUS_OK on success.
@@ -632,8 +636,8 @@ public:
 	/// @return SAUNAFS_ERROR_CANTCREATEPATH if the stored path is invalid or cannot be
 	///         reconstructed.
 	/// @return SAUNAFS_ERROR_EEXIST if the destination path already exists.
-	/// @return SAUNAFS_ERROR_IO if a transactional backend cannot commit the restore.
-	virtual uint8_t undel(const FsContext &context, inode_t inode) = 0;
+	virtual uint8_t undel(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                      inode_t inode) = 0;
 
 	/// Prepares a file chunk for client-side writing.
 	///
