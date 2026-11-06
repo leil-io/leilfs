@@ -792,8 +792,21 @@ int do_setpath(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) 
 	EAT(ptr,filename,lv,',');
 	GETPATH(path,pathsize,ptr,filename,lv,')');
 	EAT(ptr,filename,lv,')');
-	return gFSOperations->setTrashPath(FsContext::getForRestore(ts), inode,
-	                                   std::string((const char *)path));
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+	int status = gFSOperations->setTrashPath(FsContext::getForRestore(ts), fsOpContext, inode,
+	                                         std::string((const char *)path));
+
+	// Replay has no client handler to commit its staged changes.
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.commitTransaction()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_settrashtime(const char *filename, uint64_t lv, uint32_t ts, const char *ptr) {
@@ -1054,7 +1067,20 @@ int do_undel(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
 	EAT(ptr,filename,lv,'(');
 	GETINODE(inode,ptr);
 	EAT(ptr,filename,lv,')');
-	return gFSOperations->undel(FsContext::getForRestore(ts), inode);
+
+	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
+	    FilesystemOperationContext::TransactionType::kReadWrite);
+	int status = gFSOperations->undel(FsContext::getForRestore(ts), fsOpContext, inode);
+
+	// Replay has no client handler to commit its staged changes.
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
+		if (!fsOpContext.commitTransaction()) {
+			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
+			status = SAUNAFS_ERROR_IO;
+		}
+	}
+
+	return status;
 }
 
 int do_unlink(const char* filename, uint64_t lv, uint32_t ts, const char* ptr) {
