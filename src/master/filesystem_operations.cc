@@ -828,16 +828,15 @@ std::optional<std::string> FilesystemOperationsBase::getDetachedPath(
 	return std::nullopt;
 }
 
-uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t inode,
-                                               const std::string &path) {
+uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context,
+                                               const FilesystemOperationContext &fsOpContext,
+                                               inode_t inode, const std::string &path) {
 	ChecksumUpdater checksumUpdater(context.ts());
 	FSNode *node;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kOnlyMeta);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &node);
 
@@ -863,15 +862,15 @@ uint8_t FilesystemOperationsBase::setTrashPath(const FsContext &context, inode_t
 	return SAUNAFS_STATUS_OK;
 }
 
-uint8_t FilesystemOperationsBase::undel(const FsContext &context, inode_t inode) {
+uint8_t FilesystemOperationsBase::undel(const FsContext &context,
+                                        const FilesystemOperationContext &fsOpContext,
+                                        inode_t inode) {
 	ChecksumUpdater checksumUpdater(context.ts());
 	FSNode *node;
 	uint8_t status =
 	    nodeOperations_->verifySession(context, OperationMode::kReadWrite, SessionType::kOnlyMeta);
 	if (status != SAUNAFS_STATUS_OK) { return status; }
 
-	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
-	    FilesystemOperationContext::TransactionType::kReadWrite);
 	status = nodeOperations_->getNodeForOperation(context, fsOpContext, ExpectedNodeType::kAny,
 	                                              MODE_MASK_EMPTY, inode, &node);
 
@@ -892,18 +891,9 @@ uint8_t FilesystemOperationsBase::undel(const FsContext &context, inode_t inode)
 		gMetadata->metadataVersion++;
 	}
 
-	if (status == SAUNAFS_STATUS_OK) {
-		if (fsOpContext.hasReadWriteTransaction()) {
-			// MDS: the operation already staged the node; just commit.
-			if (!fsOpContext.commitTransaction()) {
-				safs::log_err("undel: failed to commit transaction for inode {}", inode);
-				status = SAUNAFS_ERROR_IO;
-			}
-		} else {
-			// Signal backends (forkless) persist via updateNode() -> nodeChangedSignal;
-			// in-memory backend no-ops.
-			nodeOperations_->updateNode(fsOpContext, node);
-		}
+	if (status == SAUNAFS_STATUS_OK && !fsOpContext.hasReadWriteTransaction()) {
+		// Signal backends persist via updateNode(); transactional backends already staged the node.
+		nodeOperations_->updateNode(fsOpContext, node);
 	}
 
 	return status;

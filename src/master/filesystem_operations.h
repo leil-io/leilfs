@@ -148,7 +148,8 @@ public:
 
 	/// Updates the stored path string of a trash inode.
 	/// @see IFilesystemOperations::setTrashPath
-	uint8_t setTrashPath(const FsContext &context, inode_t inode, const std::string &path) override;
+	uint8_t setTrashPath(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	                     inode_t inode, const std::string &path) override;
 
 	/// Schedules setting trash-time on a node (optionally recursively).
 	/// @see IFilesystemOperations::setTrashTime
@@ -169,7 +170,8 @@ public:
 
 	/// Restores a file from trash using the path stored with its detached metadata.
 	/// @see IFilesystemOperations::undel
-	uint8_t undel(const FsContext &context, inode_t inode) override;
+	uint8_t undel(const FsContext &context, const FilesystemOperationContext &fsOpContext,
+	              inode_t inode) override;
 
 	/// Prepares a file chunk for client-side writing.
 	/// @see IFilesystemOperations::writeChunk
