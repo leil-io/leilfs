@@ -131,14 +131,10 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 			}
 
 			if (disk->isDamaged()) {
-				if (!currentDisk->isDamaged() &&
-				    disk->scanState() != IDisk::ScanState::kInProgress &&
-				    disk->scanState() != IDisk::ScanState::kTerminate) {
-					gScansInProgress.fetch_add(1, std::memory_order_relaxed);
-				}
 				disk->setScanState(IDisk::ScanState::kNeeded);
 				disk->setScanProgress(0);
 				disk->setIsDamaged(currentDisk->isDamaged());
+				hddScanScheduled(disk.get());
 				disk->setAvailableSpace(0ULL);
 				disk->setTotalSpace(0ULL);
 				disk->setLeaveFreeSpace(disk::gLeaveFree);
@@ -176,7 +172,7 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 	}
 
 	gDisks.push_back(std::move(currentDisk));
-	if (!gDisks.back()->isDamaged()) { gScansInProgress.fetch_add(1, std::memory_order_relaxed); }
+	hddScanScheduled(gDisks.back().get());
 	gResetTester = true;
 
 	return 2;

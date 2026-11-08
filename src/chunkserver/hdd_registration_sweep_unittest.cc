@@ -45,6 +45,10 @@ void hddReportNewChunkToMaster(uint64_t id, uint32_t version, bool todel, ChunkP
 class RegistrationSweepTests : public testing::Test {
 protected:
 	void SetUp() override {
+		{
+			std::lock_guard disksLock(gDisksMutex);
+			ASSERT_TRUE(gScheduledDiskScans.empty());
+		}
 		gScansInProgress.store(0);
 		{
 			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
@@ -140,6 +144,11 @@ protected:
 			if (disk->scanThread().joinable()) { disk->scanThread().join(); }
 			ChunkTrashManager::eraseDisk(disk->metaPath());
 		}
+		{
+			std::lock_guard disksLock(gDisksMutex);
+			for (const auto &disk : gDisks) { hddScanSettled(disk.get()); }
+			EXPECT_TRUE(gScheduledDiskScans.empty());
+		}
 		RegistrationSweepTests::TearDown();
 		gDisks.clear();
 		gDiskManager = std::move(savedDiskManager_);
@@ -195,6 +204,72 @@ TEST_F(RegistrationDiskReloadTests, FlagReloadStillReannouncesAnAlreadyScannedDi
 	hddCheckDisks();
 	EXPECT_EQ(IDisk::ScanState::kWorking, gDisks.front()->scanState());
 	EXPECT_EQ(0, gScansInProgress.load());
+}
+
+TEST_F(RegistrationDiskReloadTests, SchedulingAndSettlementAreIdempotent) {
+	const auto path = directory_.name() + "/";
+	ASSERT_EQ(2, manager().parseCfgLine(path));
+	std::lock_guard disksLock(gDisksMutex);
+	const auto *disk = gDisks.front().get();
+	hddScanScheduled(disk);
+	hddScanScheduled(disk);
+	EXPECT_EQ(1, gScansInProgress.load());
+	hddScanSettled(disk);
+	hddScanSettled(disk);
+	EXPECT_EQ(0, gScansInProgress.load());
+}
+
+TEST_F(RegistrationDiskReloadTests, RemovingDiskBeforeWorkerStartsSettlesTheScan) {
+	const auto path = directory_.name() + "/";
+	ASSERT_EQ(2, manager().parseCfgLine(path));
+	ASSERT_EQ(1, gScansInProgress.load());
+	{
+		std::lock_guard disksLock(gDisksMutex);
+		gDisks.front()->setWasRemovedFromConfig(true);
+	}
+	hddCheckDisks();
+	EXPECT_TRUE(gDisks.empty());
+	EXPECT_EQ(0, gScansInProgress.load());
+	EXPECT_TRUE(gScheduledDiskScans.empty());
+}
+
+TEST_F(RegistrationDiskReloadTests, DamagedReloadDoesNotDoubleCountActiveOrTerminatingScan) {
+	const auto path = directory_.name() + "/";
+	ASSERT_EQ(2, manager().parseCfgLine(path));
+	ASSERT_EQ(1, gScansInProgress.load());
+
+	// Model an already counted worker. Reload must not count it again, whether
+	// it is running or has been asked to terminate. No worker thread is needed
+	// to check the configuration path's accounting decision.
+	for (const auto state : {IDisk::ScanState::kInProgress, IDisk::ScanState::kTerminate}) {
+		SCOPED_TRACE(static_cast<int>(state));
+		{
+			std::lock_guard disksLock(gDisksMutex);
+			gDisks.front()->setScanState(state);
+			gDisks.front()->setIsDamaged(true);
+		}
+		ASSERT_EQ(1, manager().parseCfgLine(path));
+		EXPECT_FALSE(gDisks.front()->isDamaged());
+		EXPECT_EQ(1, gScansInProgress.load());
+		std::lock_guard disksLock(gDisksMutex);
+		EXPECT_EQ(1U, gScheduledDiskScans.count(gDisks.front().get()));
+	}
+}
+
+TEST_F(RegistrationDiskReloadTests, RecoveredDiskIsCountedAfterItsPreviousScanSettles) {
+	const auto path = directory_.name() + "/";
+	ASSERT_EQ(2, manager().parseCfgLine(path));
+	{
+		std::lock_guard disksLock(gDisksMutex);
+		hddScanSettled(gDisks.front().get());
+		gDisks.front()->setScanState(IDisk::ScanState::kWorking);
+		gDisks.front()->setIsDamaged(true);
+	}
+	ASSERT_EQ(0, gScansInProgress.load());
+	ASSERT_EQ(1, manager().parseCfgLine(path));
+	EXPECT_FALSE(gDisks.front()->isDamaged());
+	EXPECT_EQ(IDisk::ScanState::kNeeded, gDisks.front()->scanState());
+	EXPECT_EQ(1, gScansInProgress.load());
 }
 
 class RegistrationSweepTrackingTests : public RegistrationSweepTests {
@@ -902,6 +977,47 @@ TEST_F(RegistrationSweepTests, RehashDoesNotLoseUnreportedChunks) {
 	EXPECT_EQ(hddRegistrationSweepNext(bulk, 1), RegistrationSweepResult::kComplete);
 }
 
+TEST_F(RegistrationSweepTrackingTests, PushReportsDoNotTakeTheRegistryLockAfterPull) {
+	ASSERT_NE(addTrackedChunk(1), nullptr);
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	std::vector<ChunkWithVersionAndType> bulk;
+	ASSERT_EQ(RegistrationSweepResult::kBulkReady, hddRegistrationSweepNext(bulk, 1));
+	ASSERT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(bulk, 1));
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPush);
+	hddReportNewChunkToMaster(1, 1, false, ChunkPartType());
+
+	std::unique_lock chunksMapLock(gChunksMapMutex);
+	auto reports = std::async(std::launch::async, [&bulk] { hddGetNewChunks(bulk, 1); });
+	EXPECT_EQ(std::future_status::ready, reports.wait_for(std::chrono::seconds(1)));
+	// Release before joining so an unnecessary lock fails without hanging the test.
+	chunksMapLock.unlock();
+	reports.get();
+	ASSERT_EQ(1U, bulk.size());
+	EXPECT_EQ(1U, bulk.front().id);
+}
+
+TEST_F(RegistrationSweepTests, DuplicateInsertDoesNotChangeTheTypeIndex) {
+	ASSERT_NE(addChunk(1), nullptr);
+	std::lock_guard chunksMapLock(gChunksMapMutex);
+	const auto type = ChunkPartType();
+	const auto [entry, inserted] = hddRegistryInsert(
+	    makeChunkKey(1, type), std::make_unique<CmrChunk>(1, type, ChunkState::Available));
+	EXPECT_FALSE(inserted);
+	EXPECT_EQ(1U, gChunksMap.size());
+	ASSERT_EQ(1U, gPresentChunkTypes.size());
+	EXPECT_EQ(1U, gPresentChunkTypes.at(type));
+	EXPECT_EQ(1U, entry->second->id());
+}
+
+TEST_F(RegistrationSweepTests, SharedReportQueueSuppressesReportsDuringPull) {
+	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
+	hddEnqueueChunkReport(ChunkWithVersionAndType(1, 1, ChunkPartType()), true);
+	hddEnqueueChunkReport(ChunkWithVersionAndType(2, 1, ChunkPartType()), false);
+	std::lock_guard reportsLock(gMasterReportsLock);
+	EXPECT_TRUE(gNewChunks.empty());
+	EXPECT_TRUE(gNewChunkReportOriginRuns.empty());
+}
+
 TEST_F(RegistrationSweepTests, DropsReportedAndRemovedAnnouncements) {
 	ASSERT_NE(addChunk(1), nullptr);
 	hddRegistrationSweepBegin(RegistrationSweepMode::kPull);
@@ -910,6 +1026,7 @@ TEST_F(RegistrationSweepTests, DropsReportedAndRemovedAnnouncements) {
 	ASSERT_EQ(hddRegistrationSweepNext(swept, 1), RegistrationSweepResult::kBulkReady);
 	ASSERT_EQ(swept.size(), 1U);
 	ASSERT_EQ(swept.front().id, 1U);
+	ASSERT_EQ(RegistrationSweepResult::kComplete, hddRegistrationSweepNext(swept, 1));
 
 	ASSERT_NE(addChunk(3), nullptr);
 

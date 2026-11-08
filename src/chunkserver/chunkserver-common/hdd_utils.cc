@@ -126,9 +126,7 @@ void hddRemoveChunkFromContainers(IChunk *chunk) {
 		disk->setNeedRefresh(true);
 	}
 
-	hddNoteChunkRemovalForRegistration(chunkIter->first);
-	hddForgetPresentChunkType(chunkIter->first.type);
-	gChunksMap.erase(chunkIter);
+	hddRegistryErase(chunkIter);
 }
 
 int chunkWriteCrc(IChunk *chunk) {
@@ -473,15 +471,11 @@ IChunk *hddRecreateChunk(IDisk *disk, IChunk *chunk, uint64_t chunkId,
 	chunk = disk->instantiateNewConcreteChunk(chunkId, type);
 	passert(chunk);
 
-	bool success = gChunksMap
-	                   .insert({makeChunkKey(chunkId, type),
-	                            std::unique_ptr<IChunk>(chunk)})
-	                   .second;
+	bool success =
+	    hddRegistryInsert(makeChunkKey(chunkId, type), std::unique_ptr<IChunk>(chunk)).second;
 	massert(success,
 	        "Cannot insert new chunk to the map as a chunk with "
 	        "its chunkId and chunkPartType already exists");
-	hddNotePresentChunkType(type);
-	hddNoteChunkForRegistration(makeChunkKey(chunkId, type));
 
 	chunk->setCondVar(std::move(waiting));
 

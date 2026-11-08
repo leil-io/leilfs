@@ -60,14 +60,22 @@ protected:
 		{
 			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
 			if (!gChunksMap.contains(makeChunkKey(id, type))) {
-				gChunksMap.emplace(makeChunkKey(id, type),
-				                   std::make_unique<CmrChunk>(id, type, ChunkState::Available));
-				hddNotePresentChunkType(type);
+				hddRegistryInsert(makeChunkKey(id, type),
+				                  std::make_unique<CmrChunk>(id, type, ChunkState::Available));
 			}
 		}
 		hddEnqueueChunkReport(ChunkWithVersionAndType(id, 1, type), fromDiskScan);
 	}
 };
+
+TEST(ChunkRegistrationEntryTests, OwnerlessPartKeepsItsVersionWithoutDeletionFlag) {
+	CmrChunk chunk(1, ChunkPartType(), ChunkState::Available);
+	chunk.setVersion(7);
+	const auto entry = hddChunkRegistrationEntry(chunk);
+	EXPECT_EQ(1U, entry.id);
+	EXPECT_EQ(7U, entry.version);
+	EXPECT_EQ(ChunkPartType(), entry.type);
+}
 
 TEST_F(NewChunkReportQueueTests, PreservesOriginAcrossSeparateBatches) {
 	enqueue(1, false);

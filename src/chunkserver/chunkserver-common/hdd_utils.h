@@ -21,11 +21,14 @@
 #include "common/platform.h"
 
 #include <boost/shared_ptr.hpp>
+#include <atomic>
 #include <cstddef>
 #include <deque>
 #include <mutex>
 
 #include "chunkserver-common/chunk_interface.h"
+#include "chunkserver-common/disk_interface.h"
+#include "common/chunk_version_with_todel_flag.h"
 #include "common/chunk_with_version_and_type.h"
 #include "protocol/chunks_with_type.h"
 
@@ -57,9 +60,15 @@ inline std::atomic_bool gResetTester = false;
 // master reports = damaged chunks, lost chunks, new chunks
 inline std::mutex gMasterReportsLock;
 
+/// Shared sweep state, also read by producers that already hold gChunksMapMutex.
+inline std::atomic_bool gRegistrationSweepActive{false};
+
 /// Appends a chunk report and records its origin in the same critical section.
 inline void hddEnqueueChunkReport(const ChunkWithVersionAndType &chunk, bool fromDiskScan) {
+	if (gRegistrationSweepActive.load(std::memory_order_acquire)) { return; }
 	std::lock_guard lockGuard(gMasterReportsLock);
+	// Registration start clears the queue under this lock after enabling suppression.
+	if (gRegistrationSweepActive.load(std::memory_order_acquire)) { return; }
 	gNewChunks.push_back(chunk);
 	if (gNewChunkReportOriginRuns.empty() ||
 	    gNewChunkReportOriginRuns.back().fromDiskScan != fromDiskScan) {
@@ -67,6 +76,15 @@ inline void hddEnqueueChunkReport(const ChunkWithVersionAndType &chunk, bool fro
 	} else {
 		++gNewChunkReportOriginRuns.back().count;
 	}
+}
+
+/// Snapshot a part while its metadata is protected by the registry or chunk lock.
+inline ChunkWithVersionAndType hddChunkRegistrationEntry(const IChunk &chunk) {
+	const auto *disk = chunk.owner();
+	return {chunk.id(),
+	        common::combineVersionWithTodelFlag(chunk.version(),
+	                                            disk != nullptr && disk->isMarkedForDeletion()),
+	        chunk.type()};
 }
 
 /// Avoid and point out possible deadlocks, by waiting for the specified time to

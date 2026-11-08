@@ -806,12 +806,7 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 					continue;
 				}
 
-				const bool markedForDeletion =
-				    chunk->owner() != nullptr && chunk->owner()->isMarkedForDeletion();
-				foundChunks.emplace_back(
-				    chunkId,
-				    common::combineVersionWithTodelFlag(chunk->version(), markedForDeletion),
-				    chunkType);
+				foundChunks.push_back(hddChunkRegistrationEntry(*chunk));
 
 				// Do not mark query results as swept: no acknowledgement follows
 				// this reply, so the master can discard it after its query

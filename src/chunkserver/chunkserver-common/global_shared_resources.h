@@ -20,13 +20,19 @@
 
 #include "common/platform.h"
 
+#include <atomic>
 #include <deque>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <unordered_set>
+#include <utility>
 
 #include "chunkserver-common/chunk_map.h"
 #include "chunkserver-common/disk_interface.h"
 #include "chunkserver-common/disk_manager_interface.h"
+#include "chunkserver-common/hdd_utils.h"
 #include "chunkserver-common/indexed_resource_pool.h"
 #include "chunkserver-common/iostat.h"
 #include "chunkserver-common/open_chunk.h"
@@ -55,7 +61,6 @@ inline std::mutex gChunksMapMutex;
 
 /// Pull-sweep cursor and outstanding keys. Guard every access with gChunksMapMutex.
 struct RegistrationSweepState {
-	bool active{false};
 	std::size_t bucket{0};
 	std::size_t bucketCount{0};
 	bool cursorDone{false};
@@ -82,7 +87,7 @@ inline RegistrationSweepState gRegistrationSweepState;
 /// Call after inserting or invalidating a registry entry, under gChunksMapMutex.
 inline void hddNoteChunkForRegistration(ChunkWithType key) {
 	auto &sweep = gRegistrationSweepState;
-	if (!sweep.active) { return; }
+	if (!gRegistrationSweepActive.load(std::memory_order_relaxed)) { return; }
 	// Notice rehashes immediately, even if another resize precedes the next credit.
 	sweep.restartAfterRehash(gChunksMap.bucket_count());
 	// Insertion can precede a saved position even in the current bucket.
@@ -92,7 +97,7 @@ inline void hddNoteChunkForRegistration(ChunkWithType key) {
 /// Call before erasing a registry entry, under gChunksMapMutex.
 inline void hddNoteChunkRemovalForRegistration(ChunkWithType key) {
 	auto &sweep = gRegistrationSweepState;
-	if (!sweep.active) { return; }
+	if (!gRegistrationSweepActive.load(std::memory_order_relaxed)) { return; }
 	sweep.restartAfterRehash(gChunksMap.bucket_count());
 	if (sweep.bucketPosition && *sweep.bucketPosition != gChunksMap.end(sweep.bucket) &&
 	    KeyOperations{}((*sweep.bucketPosition)->first, key)) {
@@ -118,6 +123,22 @@ inline void hddForgetPresentChunkType(ChunkPartType type) {
 	if (typeIterator != gPresentChunkTypes.end() && --(typeIterator->second) == 0) {
 		gPresentChunkTypes.erase(typeIterator);
 	}
+}
+
+/// Registry mutation and its indexes form one operation under gChunksMapMutex.
+inline auto hddRegistryInsert(ChunkWithType key, std::unique_ptr<IChunk> chunk) {
+	auto result = gChunksMap.emplace(key, std::move(chunk));
+	if (result.second) {
+		hddNotePresentChunkType(key.type);
+		hddNoteChunkForRegistration(key);
+	}
+	return result;
+}
+
+inline auto hddRegistryErase(ChunkMap::iterator entry) {
+	hddNoteChunkRemovalForRegistration(entry->first);
+	hddForgetPresentChunkType(entry->first.type);
+	return gChunksMap.erase(entry);
 }
 
 /// Logs and asserts if gPresentChunkTypes totals differ from gChunksMap.size().
@@ -174,6 +195,24 @@ inline std::vector<std::unique_ptr<CondVarWithWaitCount>> gFreeCondVars;
 /// Count a scan before its worker starts so an empty registry cannot be
 /// mistaken for a completed startup scan.
 inline std::atomic_int gScansInProgress(0);
+
+/// Scheduled scans, including workers not started yet. Guard with gDisksMutex.
+/// Tracking the disk makes scheduling and settlement idempotent across reloads.
+inline std::unordered_set<const IDisk *> gScheduledDiskScans;
+
+/// Call with gDisksMutex held, after updating the disk's damage state.
+inline void hddScanScheduled(const IDisk *disk) {
+	if (!disk->isDamaged() && gScheduledDiskScans.insert(disk).second) {
+		gScansInProgress.fetch_add(1, std::memory_order_relaxed);
+	}
+}
+
+/// Call with gDisksMutex held when a worker finishes or a scheduled scan is cancelled.
+inline void hddScanSettled(const IDisk *disk) {
+	if (gScheduledDiskScans.erase(disk) != 0) {
+		gScansInProgress.fetch_sub(1, std::memory_order_release);
+	}
+}
 
 inline std::atomic_bool gStatChunksAtDiskScan{true};
 
