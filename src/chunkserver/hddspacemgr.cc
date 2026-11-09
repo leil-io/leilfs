@@ -63,8 +63,10 @@
 #include <deque>
 #include <list>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "chunkserver-common/chunk_interface.h"
@@ -674,6 +676,7 @@ static void hddRegistrationSweepAddChunk(std::vector<ChunkWithVersionAndType> &b
                                          IChunk &chunk) {
 	chunk.setRegistrationEpoch(gRegistrationSweepEpoch);
 	bulk.push_back(hddChunkRegistrationEntry(chunk));
+	gRegistrationSweepState.madeProgress = true;
 }
 
 // All sweep helpers run under gChunksMapMutex.
@@ -744,11 +747,21 @@ static void hddRegistrationSweepRetry(std::vector<ChunkWithVersionAndType> &bulk
 
 static RegistrationSweepResult hddRegistrationSweepFinish() {
 	auto &sweep = gRegistrationSweepState;
-	if (!sweep.pending.empty()) { return RegistrationSweepResult::kRetry; }
-
-	// Include scheduled scans: an empty registry may still await its first
-	// scanned chunk. The caller retains the credit and retries.
+	// Keep serving the bounded queue while scans run. Restarting on every new
+	// scanned chunk would repeatedly walk an increasingly large registry.
 	if (hddScansInProgress()) { return RegistrationSweepResult::kRetry; }
+
+	// Recover keys that did not fit the queue, including locked keys that may
+	// have become available behind the cursor. Pending retries must not prevent
+	// this walk, or a permanently busy queued part could starve overflowed ones.
+	if (sweep.rescanNeeded) {
+		// More locked parts than the pending budget can overflow every pass.
+		// Wait after an idle recovery pass instead of walking them continuously.
+		// The first recovery and passes that report parts still resume promptly.
+		return sweep.recoveryWalk && !sweep.madeProgress ? RegistrationSweepResult::kRetry
+		                                                 : RegistrationSweepResult::kYield;
+	}
+	if (!sweep.pending.empty()) { return RegistrationSweepResult::kRetry; }
 
 	// Registry mutation and completion share this lock, so a new chunk either
 	// belongs to this sweep or queues its normal announcement after completion.
@@ -760,7 +773,21 @@ RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAnd
                                                  std::size_t bulkSize) {
 	bulk.clear();
 	bulk.reserve(bulkSize);
+	// Destroy retired queue storage after releasing the registry mutex.
+	std::optional<RegistrationSweepState> retiredSweep;
 	std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+	// Once scans settle, recover overflow before another pending bulk. Waiting
+	// for the queue to drain could starve older keys while new arrivals refill it.
+	auto &sweep = gRegistrationSweepState;
+	if (sweep.cursorDone && sweep.rescanNeeded && !hddScansInProgress()) {
+		// The full walk recovers every outstanding key. Retire stale queued keys
+		// so arrivals behind the new cursor have room without forcing more walks.
+		retiredSweep.emplace(std::move(sweep));
+		sweep = {};
+		sweep.restartWalk(gChunksMap.bucket_count());
+		sweep.recoveryWalk = true;
+		return RegistrationSweepResult::kYield;
+	}
 	const auto workLimit = std::max(bulkSize, std::size_t{kDefaultChunkBulkSize});
 	const auto visited = hddRegistrationSweepWalk(bulk, bulkSize, workLimit);
 	if (!bulk.empty()) { return RegistrationSweepResult::kBulkReady; }

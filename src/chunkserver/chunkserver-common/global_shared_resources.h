@@ -21,11 +21,9 @@
 #include "common/platform.h"
 
 #include <atomic>
-#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <unordered_set>
 #include <utility>
 
@@ -37,6 +35,7 @@
 #include "chunkserver-common/iostat.h"
 #include "chunkserver-common/open_chunk.h"
 #include "chunkserver-common/plugin_manager.h"
+#include "chunkserver-common/registration_sweep_state.h"
 #include "slogger/slogger.h"
 
 inline IndexedResourcePool<OpenChunk> gOpenChunks;
@@ -58,29 +57,6 @@ inline ChunkMap gChunksMap;
 /// Only guards access to gChunksMap.
 /// Chunk objects stored in the registry have their own separate locks.
 inline std::mutex gChunksMapMutex;
-
-/// Pull-sweep cursor and outstanding keys. Guard every access with gChunksMapMutex.
-struct RegistrationSweepState {
-	std::size_t bucket{0};
-	std::size_t bucketCount{0};
-	bool cursorDone{false};
-	/// Next entry in this bucket; insertion, removal, and rehash hooks keep it valid.
-	std::optional<ChunkMap::local_iterator> bucketPosition;
-	std::deque<ChunkWithType> pending;
-	std::unordered_set<ChunkWithType, KeyOperations, KeyOperations> pendingKeys;
-
-	void enqueue(ChunkWithType key) {
-		if (pendingKeys.insert(key).second) { pending.push_back(key); }
-	}
-
-	void restartAfterRehash(std::size_t newBucketCount) {
-		if (!cursorDone && bucketCount != newBucketCount) {
-			bucketCount = newBucketCount;
-			bucket = 0;
-			bucketPosition.reset();
-		}
-	}
-};
 
 inline RegistrationSweepState gRegistrationSweepState;
 

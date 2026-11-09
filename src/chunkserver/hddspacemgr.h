@@ -79,8 +79,9 @@ enum class RegistrationSweepResult {
 };
 
 /// Collects at most \p bulkSize unreported chunks and marks them for this session.
-/// Bounds registry visits and empty-bucket skips per call. Returns kYield when
-/// more walk work remains, or kRetry when waiting for locked entries or scans.
+/// Bounds registry visits, empty-bucket skips, and auxiliary pending keys. Keys
+/// exceeding the pending budget are recovered by another walk after scans finish.
+/// Returns kYield when more walk work remains, or kRetry for locked entries or scans.
 RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
                                                  std::size_t bulkSize);
 
