@@ -61,6 +61,33 @@ using BulkFunction = std::function<void(std::vector<ChunkWithVersionAndType>&)>;
 /// Executes the callback for each bulk of at most \p bulkSize chunks.
 void hddForeachChunkInBulks(BulkFunction bulkCallback, std::size_t bulkSize);
 
+/// Selects push registration or a pull sweep that resumes across registry changes.
+enum class RegistrationSweepMode {
+	kPush,
+	kPull,
+};
+
+/// Starts a session, invalidates old marks, and discards queued reports.
+/// \p mode enables change tracking and report suppression for pull sweeps.
+void hddRegistrationSweepBegin(RegistrationSweepMode mode);
+
+enum class RegistrationSweepResult {
+	kBulkReady,  ///< A nonempty bulk is ready to send.
+	kRetry,      ///< Locked entries or scans remain; retain the credit.
+	kComplete,   ///< No reportable chunks or pending scans remain.
+	kYield,      ///< Walk budget exhausted; retain the credit and resume next event-loop turn.
+};
+
+/// Collects at most \p bulkSize unreported chunks and marks them for this session.
+/// Bounds registry visits, empty-bucket skips, and auxiliary pending keys. Keys
+/// exceeding the pending budget are recovered by another walk after scans finish.
+/// Returns kYield when more walk work remains, or kRetry for locked entries or scans.
+RegistrationSweepResult hddRegistrationSweepNext(std::vector<ChunkWithVersionAndType> &bulk,
+                                                 std::size_t bulkSize);
+
+/// Returns the registry bucket count for registration progress diagnostics.
+uint64_t hddGetChunkRegistryBucketCount();
+
 int hddGetAndResetSpaceChanged();
 void hddGetTotalSpace(uint64_t *usedSpace, uint64_t *totalSpace,
                       uint32_t *chunkCount, uint64_t *toDelUsedSpace,

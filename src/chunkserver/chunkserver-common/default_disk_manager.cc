@@ -134,6 +134,7 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 				disk->setScanState(IDisk::ScanState::kNeeded);
 				disk->setScanProgress(0);
 				disk->setIsDamaged(currentDisk->isDamaged());
+				hddScanScheduled(disk.get());
 				disk->setAvailableSpace(0ULL);
 				disk->setTotalSpace(0ULL);
 				disk->setLeaveFreeSpace(disk::gLeaveFree);
@@ -154,8 +155,10 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 				if (disk->isMarkedForRemoval() !=
 				        currentDisk->isMarkedForRemoval() ||
 				    disk->isReadOnly() != currentDisk->isReadOnly()) {
-					// important change - chunks need to be send to master again
-					disk->setScanState(IDisk::ScanState::kSendNeeded);
+					// A pending scan is already counted and will report the new flags.
+					if (disk->scanState() != IDisk::ScanState::kNeeded) {
+						disk->setScanState(IDisk::ScanState::kSendNeeded);
+					}
 				}
 			}
 
@@ -169,6 +172,7 @@ int DefaultDiskManager::parseCfgLine(std::string hddCfgLine) {
 	}
 
 	gDisks.push_back(std::move(currentDisk));
+	hddScanScheduled(gDisks.back().get());
 	gResetTester = true;
 
 	return 2;

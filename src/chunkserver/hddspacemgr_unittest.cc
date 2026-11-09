@@ -22,10 +22,13 @@
 #include <sys/poll.h>
 
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <vector>
 
+#include "chunkserver-common/cmr_chunk.h"
 #include "chunkserver-common/cmr_disk.h"
+#include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/bgjobs.h"
 #include "chunkserver/hddspacemgr.h"
@@ -39,14 +42,40 @@ namespace {
 
 class NewChunkReportQueueTests : public testing::Test {
 protected:
-	void SetUp() override { hddDiscardNewChunks(); }
-	void TearDown() override { hddDiscardNewChunks(); }
+	void SetUp() override {
+		hddDiscardNewChunks();
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		ASSERT_TRUE(gChunksMap.empty());
+		ASSERT_TRUE(gPresentChunkTypes.empty());
+	}
+	void TearDown() override {
+		hddDiscardNewChunks();
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		gChunksMap.clear();
+		gPresentChunkTypes.clear();
+	}
 
 	void enqueue(uint64_t id, bool fromDiskScan) {
 		const auto type = ChunkPartType();
+		{
+			std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+			if (!gChunksMap.contains(makeChunkKey(id, type))) {
+				hddRegistryInsert(makeChunkKey(id, type),
+				                  std::make_unique<CmrChunk>(id, type, ChunkState::Available));
+			}
+		}
 		hddEnqueueChunkReport(ChunkWithVersionAndType(id, 1, type), fromDiskScan);
 	}
 };
+
+TEST(ChunkRegistrationEntryTests, OwnerlessPartKeepsItsVersionWithoutDeletionFlag) {
+	CmrChunk chunk(1, ChunkPartType(), ChunkState::Available);
+	chunk.setVersion(7);
+	const auto entry = hddChunkRegistrationEntry(chunk);
+	EXPECT_EQ(1U, entry.id);
+	EXPECT_EQ(7U, entry.version);
+	EXPECT_EQ(ChunkPartType(), entry.type);
+}
 
 TEST_F(NewChunkReportQueueTests, PreservesOriginAcrossSeparateBatches) {
 	enqueue(1, false);

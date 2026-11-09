@@ -483,6 +483,7 @@ struct ReloadCleanup {
 	~ReloadCleanup() {
 		cfg_term();
 		const std::lock_guard lock(gDisksMutex);
+		for (const auto &disk : gDisks) { hddScanSettled(disk.get()); }
 		gDisks.clear();
 	}
 };
