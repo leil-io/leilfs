@@ -1,11 +1,14 @@
 # Create automatically generated list of test cases
 add_custom_target(list_of_test_cases
+  BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/test_suites.h
+             ${CMAKE_CURRENT_BINARY_DIR}/test_cases.h
   COMMAND ls ${CMAKE_CURRENT_SOURCE_DIR}/test_suites
     | xargs -IXXX echo "class XXX : public BashTestingSuite {};"
     > test_suites.h.tmp
   COMMAND ${CMAKE_COMMAND} -E copy_if_different test_suites.h.tmp test_suites.h
 
-  COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR} && bash tools/generate_tests_from_templates.sh
+  COMMAND ${CMAKE_COMMAND} -E chdir ${CMAKE_CURRENT_SOURCE_DIR}
+    bash tools/generate_tests_from_templates.sh
 
   COMMAND find -L ${CMAKE_CURRENT_SOURCE_DIR}/test_suites/ -name test_*.sh
     | sed -e "s/[.]sh$//"
@@ -16,9 +19,9 @@ add_custom_target(list_of_test_cases
 
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   VERBATIM)
+
 set_source_files_properties(leil-tests.cc PROPERTIES
-  OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/test_cases.h
-  OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/test_suites.h)
+  OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/test_cases.h;${CMAKE_CURRENT_BINARY_DIR}/test_suites.h")
 
 # Create constants.sh file
 configure_file(set_saunafs_constants.sh.in set_saunafs_constants.sh @ONLY)
