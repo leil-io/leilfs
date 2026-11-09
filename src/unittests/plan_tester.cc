@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <cstring>
 
 #include "common/block_xor.h"
 #include "common/reed_solomon.h"
@@ -29,7 +30,6 @@
 #include "protocol/SFSCommunication.h"
 
 namespace unittests {
-
 /*! \brief Simulate read from chunkserver.
  * \param output Vector for storing data from simulated chunkserver.
  * \param output_offset Offset where data should be stored in output vector.
@@ -39,18 +39,37 @@ namespace unittests {
  * \return 0 on success
  *         -1 on failure
  */
-int ReadPlanTester::readDataFromChunkServer(std::vector<uint8_t> &output, int output_offset,
-		const std::vector<uint8_t> &data, int offset, int size) {
-	for (int i = 0; i < size; ++i) {
-		assert(output_offset < (int)output.size());
-		if (offset >= SFSCHUNKSIZE) {
-			return -1;
-		}
+int ReadPlanTester::readDataFromChunkServer(std::vector<uint8_t> &output, const int output_offset,
+		const std::vector<uint8_t> &data, const int offset, const int size) {
 
-		output[output_offset++] = offset < (int)data.size() ? data[offset++] : 0;
+	if (size<=0) {
+		return 0;
 	}
 
-	return 0;
+    assert(offset >= 0 && output_offset >= 0);
+    assert(size_t(output_offset) <= output.size());
+    assert(size_t(size) <= output.size() - output_offset);
+
+	if (offset >= SFSCHUNKSIZE) {
+		return -1;
+	}
+
+	const int available = offset < int(data.size())
+        ? int(data.size()) - offset : 0;
+    const int copied = std::min({size, available, SFSCHUNKSIZE - offset});
+
+	if (copied > 0) {
+        std::memcpy(output.data() + output_offset,data.data() + offset, copied);
+    }
+
+    if (copied < size) {
+        if (offset + copied == SFSCHUNKSIZE) {
+            return -1;
+        }
+        std::memset(output.data() + output_offset + copied, 0, size - copied);
+    }
+
+    return 0;
 }
 
 
@@ -66,7 +85,7 @@ int ReadPlanTester::startReadOperation(int write_buffer_offset,
 		const std::map<ChunkPartType, std::vector<uint8_t>> &available_data,
 		ChunkPartType chunk_type, const ReadPlan::ReadOperation &op) {
 	assert(std::find(networking_failures_.begin(), networking_failures_.end(), chunk_type) ==
-	       networking_failures_.end());
+		   networking_failures_.end());
 
 	auto it = available_data.find(chunk_type);
 	if (it == available_data.end()) {
@@ -74,7 +93,7 @@ int ReadPlanTester::startReadOperation(int write_buffer_offset,
 	}
 
 	return readDataFromChunkServer(output_buffer_, write_buffer_offset + op.buffer_offset,
-	                               it->second, op.request_offset, op.request_size);
+								   it->second, op.request_offset, op.request_size);
 }
 
 /*! \brief Start reads for specified wave. */
@@ -86,11 +105,11 @@ void ReadPlanTester::startReadsForWave(
 	for (const auto &read_operation : plan->read_operations) {
 		if (read_operation.second.wave == wave) {
 			if (startReadOperation(write_buffer_offset, available_data, read_operation.first,
-			                       read_operation.second) < 0) {
+								   read_operation.second) < 0) {
 				networking_failures_.push_back(read_operation.first);
-			} else {
-				available_parts_.push_back(read_operation.first);
-			}
+								   } else {
+								   	available_parts_.push_back(read_operation.first);
+								   }
 		}
 	}
 }
@@ -106,7 +125,7 @@ void ReadPlanTester::checkPlan(const std::unique_ptr<ReadPlan> &plan, uint8_t *b
 		assert(op.request_offset >= 0 && op.request_size >= 0);
 		assert((op.request_offset + op.request_size) <= SFSCHUNKSIZE);
 		assert(op.buffer_offset >= 0 &&
-		       (op.buffer_offset + op.request_size) <= plan->read_buffer_size);
+			   (op.buffer_offset + op.request_size) <= plan->read_buffer_size);
 
 		if (op.request_size <= 0) {
 			continue;
@@ -124,18 +143,18 @@ void ReadPlanTester::checkPlan(const std::unique_ptr<ReadPlan> &plan, uint8_t *b
 			}
 
 			if (op.buffer_offset >= op2.buffer_offset &&
-			    op.buffer_offset < (op2.buffer_offset + op2.request_size)) {
+				op.buffer_offset < (op2.buffer_offset + op2.request_size)) {
 				assert(!overlap);
-			}
+				}
 			if ((op.buffer_offset + op.request_size - 1) >= op2.buffer_offset &&
-			    (op.buffer_offset + op.request_size - 1) <
-			        (op2.buffer_offset + op2.request_size)) {
+				(op.buffer_offset + op.request_size - 1) <
+					(op2.buffer_offset + op2.request_size)) {
 				assert(!overlap);
-			}
+					}
 			if (op.buffer_offset < op2.buffer_offset &&
-			    (op.buffer_offset + op.request_size) >= (op2.buffer_offset + op2.request_size)) {
+				(op.buffer_offset + op.request_size) >= (op2.buffer_offset + op2.request_size)) {
 				assert(!overlap);
-			}
+				}
 		}
 	}
 
@@ -183,44 +202,43 @@ int ReadPlanTester::executePlan(
 
 /*! \brief Build data for xor chunk part type. */
 void ReadPlanTester::buildXorData(std::map<ChunkPartType, std::vector<uint8_t>> &result,
-		int level) {
+		const int level) {
+
 	std::vector<uint8_t> buffer;
 
 	for (int part = 1; part <= level; ++part) {
-		if (result.count(slice_traits::xors::ChunkPartType(level, part))) {
+		if (result.contains(slice_traits::xors::ChunkPartType(level, part))) {
 			continue;
 		}
 
-		int block_count = slice_traits::getNumberOfBlocks(
-		    slice_traits::xors::ChunkPartType(level, part), SFSBLOCKSINCHUNK);
+		const int block_count = slice_traits::getNumberOfBlocks(
+			slice_traits::xors::ChunkPartType(level, part), SFSBLOCKSINCHUNK);
 
 		buffer.clear();
+		buffer.resize(block_count*SFSBLOCKSIZE);
 		for (int block = 0; block < block_count; ++block) {
+			const int depth = ((block*level)+part-1)*SFSBLOCKSIZE;
 			for (int offset = 0; offset < SFSBLOCKSIZE; offset += 4) {
-				union conv {
-					int32_t value;
-					uint8_t data[4];
-				} c;
-				c.value = (block * level + part - 1) * SFSBLOCKSIZE + offset;
-				buffer.insert(buffer.end(), c.data, c.data + 4);
+				const int32_t val = depth + offset;
+				std::memcpy(&buffer[block*SFSBLOCKSIZE + offset], &val, sizeof(val));
 			}
 		}
 		result.insert({slice_traits::xors::ChunkPartType(level, part), std::move(buffer)});
 	}
 
-	if (result.count(slice_traits::xors::ChunkPartType(level, 0))) {
+	if (result.contains(slice_traits::xors::ChunkPartType(level, 0))) {
 		return;
 	}
 
 	// compute parity block
-	int block_count = slice_traits::getNumberOfBlocks(slice_traits::xors::ChunkPartType(level, 0),
-	                                                  SFSBLOCKSINCHUNK);
+	const int block_count = slice_traits::getNumberOfBlocks(slice_traits::xors::ChunkPartType(level, 0),
+													  SFSBLOCKSINCHUNK);
 	buffer.resize(block_count * SFSBLOCKSIZE, 0);
 	for (int part = 1; part <= level; ++part) {
 		int size =
-		    std::min(buffer.size(), result[slice_traits::xors::ChunkPartType(level, part)].size());
+			std::min(buffer.size(), result[slice_traits::xors::ChunkPartType(level, part)].size());
 		blockXor(buffer.data(), result[slice_traits::xors::ChunkPartType(level, part)].data(),
-		         size);
+				 size);
 	}
 	result.insert(std::make_pair(slice_traits::xors::ChunkPartType(level, 0), std::move(buffer)));
 }
@@ -229,18 +247,16 @@ void ReadPlanTester::buildXorData(std::map<ChunkPartType, std::vector<uint8_t>> 
 void ReadPlanTester::buildStdData(std::map<ChunkPartType, std::vector<uint8_t>> &result) {
 	std::vector<uint8_t> buffer;
 
-	if (result.count(slice_traits::standard::ChunkPartType())) {
+	if (result.contains(slice_traits::standard::ChunkPartType())) {
 		return;
 	}
 
+	buffer.resize(SFSBLOCKSINCHUNK * SFSBLOCKSIZE);
 	for (int block = 0; block < SFSBLOCKSINCHUNK; ++block) {
+		const int base = block * SFSBLOCKSIZE;
 		for (int offset = 0; offset < SFSBLOCKSIZE; offset += 4) {
-			union conv {
-				int32_t value;
-				uint8_t data[4];
-			} c;
-			c.value = block * SFSBLOCKSIZE + offset;
-			buffer.insert(buffer.end(), c.data, c.data + 4);
+			const int32_t value = (block * SFSBLOCKSIZE) + offset;
+			std::memcpy(&buffer[base+offset], &value, sizeof(value));
 		}
 	}
 	result.insert({slice_traits::standard::ChunkPartType(), std::move(buffer)});
@@ -252,35 +268,33 @@ void ReadPlanTester::buildECData(std::map<ChunkPartType, std::vector<uint8_t>> &
 	std::vector<uint8_t> buffer;
 
 	for (int part = 0; part <= k; ++part) {
-		if (result.count(slice_traits::ec::ChunkPartType(k, m, part))) {
+		if (result.contains(slice_traits::ec::ChunkPartType(k, m, part))) {
 			continue;
 		}
 
-		int block_count = slice_traits::getNumberOfBlocks(
-		    slice_traits::ec::ChunkPartType(k, m, part), SFSBLOCKSINCHUNK);
+		const int block_count = slice_traits::getNumberOfBlocks(
+			slice_traits::ec::ChunkPartType(k, m, part), SFSBLOCKSINCHUNK);
+
+		const int first_part_blocks = slice_traits::getNumberOfBlocks(
+			slice_traits::ec::ChunkPartType(k, m, 0));
+		const bool needs_padding = block_count < first_part_blocks;
 
 		buffer.clear();
+		buffer.resize((block_count + (needs_padding ? 1 : 0)) * SFSBLOCKSIZE, 0);
 		for (int block = 0; block < block_count; ++block) {
+			const int base = block * SFSBLOCKSIZE;
 			for (int offset = 0; offset < SFSBLOCKSIZE; offset += 4) {
-				union conv {
-					int32_t value;
-					uint8_t data[4];
-				} c;
-				c.value = (block * k + part) * SFSBLOCKSIZE + offset;
-				buffer.insert(buffer.end(), c.data, c.data + 4);
+				const int32_t value = (((block * k) + part) * SFSBLOCKSIZE) + offset;
+				std::memcpy(&buffer[base+offset], &value, sizeof(value));
 			}
-		}
-		if (block_count <
-		    (int)slice_traits::getNumberOfBlocks(slice_traits::ec::ChunkPartType(k, m, 0))) {
-			buffer.insert(buffer.end(), SFSBLOCKSIZE, 0);
 		}
 		result.insert({slice_traits::ec::ChunkPartType(k, m, part), std::move(buffer)});
 	}
 
-	int block_count =
-	    slice_traits::getNumberOfBlocks(slice_traits::ec::ChunkPartType(k, m, k), SFSBLOCKSINCHUNK);
+	const int block_count =
+		slice_traits::getNumberOfBlocks(slice_traits::ec::ChunkPartType(k, m, k), SFSBLOCKSINCHUNK);
 
-	typedef ReedSolomon<slice_traits::ec::kMaxDataCount, slice_traits::ec::kMaxParityCount> RS;
+	using RS = ReedSolomon<slice_traits::ec::kMaxDataCount, slice_traits::ec::kMaxParityCount>;
 	std::vector<std::vector<uint8_t>> parity_buffers;
 	RS::ConstFragmentMap data_parts{{}};
 	RS::FragmentMap parity_parts{{}};
@@ -304,7 +318,26 @@ void ReadPlanTester::buildECData(std::map<ChunkPartType, std::vector<uint8_t>> &
 }
 
 bool ReadPlanTester::compareBlocks(const std::vector<uint8_t> &a, int a_offset,
-		const std::vector<uint8_t> &b, int b_offset, int block_count) {
+		const std::vector<uint8_t> &b, int b_offset, const int block_count) {
+
+	assert(a_offset >= 0 && b_offset >= 0 && block_count >= 0);
+
+	if (block_count == 0) {
+		return true;
+	}
+
+	const size_t bytes = block_count * SFSBLOCKSIZE;
+	const size_t a_start = a_offset;
+	const size_t b_start = b_offset;
+
+	assert(a_start <= a.size());
+	assert(bytes <= a.size() - a_start);
+
+	if (b_start <= b.size() && bytes <= b.size() - b_start &&
+		std::memcmp(a.data() + a_start, b.data() + b_start, bytes) == 0) {
+		return true;
+		}
+
 	for (int block = 0; block < block_count; ++block) {
 		for (int offset = 0; offset < SFSBLOCKSIZE; offset += 4) {
 			union conv {
@@ -320,12 +353,12 @@ bool ReadPlanTester::compareBlocks(const std::vector<uint8_t> &a, int a_offset,
 
 			if (c1.value != c2.value) {
 				std::cout << "failure at block " << block << " offset " << offset << " ("
-				          << c1.value << "," << c2.value << ")\n";
+						  << c1.value << "," << c2.value << ")\n";
 				return false;
 			}
 		}
 	}
-	return true;
-}
+		return true;
+	}
 
-}  // unittests
+} // unittests
