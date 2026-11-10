@@ -35,6 +35,7 @@
 #include "common/version.h"
 #include "errors/sfserr.h"
 #include "common/sockets.h"
+#include "mount/exit_signals_blocker.h"
 #include "mount/fuse/daemonize.h"
 #include "mount/fuse/sfs_fuse.h"
 #include "mount/fuse/sfs_meta_fuse.h"
@@ -294,7 +295,11 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 	if (!gMountOptions.meta) {
 		SaunaClient::fs_init(params);
 	} else {
-		masterproxy_init();
+		{
+			// Start helper threads without the exit signals, see ExitSignalsBlocker.
+			const ExitSignalsBlocker exitSignalsBlocker;
+			masterproxy_init();
+		}
 		symlink_cache_init();
 		if (gMountOptions.delayedinit) {
 			fs_init_master_connection(params);
@@ -303,8 +308,11 @@ static int mainloop(struct fuse_args *args, struct fuse_cmdline_opts *fuse_opts,
 				return 1;
 			}
 		}
-		fs_init_threads(params.io_retries, params.max_wait_retry_time,
-		                params.mastercomm_sleep_time_divisor);
+		{
+			const ExitSignalsBlocker exitSignalsBlocker;
+			fs_init_threads(params.io_retries, params.max_wait_retry_time,
+			                params.mastercomm_sleep_time_divisor);
+		}
 		// A meta mount skips fs_init, so it fills the session fields itself before reporting
 		mount_info_init(getuid(), getgid(), get_username_by_uid(getuid()), getpid(),
 		                SAUNAFS_PACKAGE_VERSION, GIT_COMMIT);

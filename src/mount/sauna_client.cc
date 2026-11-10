@@ -67,6 +67,7 @@
 #include "mount/chunk_locator.h"
 #include "mount/client_common.h"
 #include "mount/direntry_cache.h"
+#include "mount/exit_signals_blocker.h"
 #include "mount/g_io_limiters.h"
 #include "mount/global_chunkserver_stats.h"
 #include "mount/io_limit_group.h"
@@ -3825,6 +3826,10 @@ void fs_init(FsInitParams &params) {
 		socketrelease();
 		throw std::runtime_error("Can't initialize connection with master server");
 	}
+#ifndef _WIN32
+	// Start the client's threads without the exit signals, see ExitSignalsBlocker.
+	const ExitSignalsBlocker exitSignalsBlocker;
+#endif
 	// Configure before starting the threads that report to the notification area.
 	notifications_area_logging_init(params.log_notifications_area,
 	                                params.message_suppression_period, params.mountpoint);
