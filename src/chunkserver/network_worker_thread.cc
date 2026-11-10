@@ -137,7 +137,15 @@ bool NetworkWorkerThread::updateAndCheckTerminationStatus() {
 
 void NetworkWorkerThread::terminate() {
 	TRACETHIS();
-	bgJobPool_.reset();
+	// updateAndCheckTerminationStatus() inspects the pool under csservheadLock before
+	// publishing canTerminate_. Take it under the same lock: Helgrind does not see the
+	// atomic flag as ordering. Destroy it unlocked, as stopping runs pending callbacks.
+	std::unique_ptr<ClientJobPool> jobPool;
+	{
+		std::lock_guard lock(csservheadLock);
+		jobPool = std::move(bgJobPool_);
+	}
+	jobPool.reset();
 
 	std::unique_lock lock(csservheadLock);
 
