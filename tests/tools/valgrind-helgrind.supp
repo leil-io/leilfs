@@ -46,6 +46,16 @@
 }
 
 {
+   # libfuse 3.18 workers poll the session's plain exit flag, which the
+   # session loop or its exit signal handler sets with fuse_session_exit()
+   # (fuse_session_loop_mt_exit covers that writing side).
+   fuse_worker_polls_session_exit
+   Helgrind:Race
+   fun:fuse_session_exited
+   obj:*/libfuse3.so*
+}
+
+{
    # False positive about std::to_string calls when naming the read/write worker threads.
    to_string_in_workers_names
    Helgrind:Race
