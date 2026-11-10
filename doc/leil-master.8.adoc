@@ -104,7 +104,8 @@ Older releases gave these files a *.sfs* extension. *leil-master* keeps using th
 names unless its data directory has some of these files under the new name, also
 when it creates them, e.g. for a shadow. To switch to the new names, stop
 *leil-master*, rename its *metadata*, *changelog*, *sessions* and *stats* files
-from *.sfs* to *.leil* and start it again.
+from *.sfs* to *.leil* and start it again. If only some of them were renamed, it
+refuses to start and lists the ones left with *.sfs*.
 
 == REPORTING BUGS
 

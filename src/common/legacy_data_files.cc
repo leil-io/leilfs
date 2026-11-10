@@ -19,6 +19,7 @@
 #include "common/platform.h"
 #include "common/legacy_data_files.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <system_error>
@@ -79,6 +80,49 @@ bool usesLegacyNames(const std::string &dir, std::initializer_list<std::string_v
 	    "stop the daemon and rename its files",
 	    error ? dir : absoluteDir.string(), kExtension, kLegacyExtension);
 	return true;
+}
+
+std::vector<std::string> legacyNamedFiles(const std::string &dir,
+                                          std::initializer_list<std::string_view> families) {
+	namespace fs = std::filesystem;
+
+	std::vector<std::string> files;
+	std::error_code error;
+	for (fs::directory_iterator entry(dir, error), end; !error && entry != end;
+	     entry.increment(error)) {
+		const std::string name = entry->path().filename().string();
+		if (name.ends_with(kPackagedSuffix)) { continue; }
+		for (std::string_view family : families) {
+			if (replaceExtension(name, family, kLegacyExtension, kLegacyExtension)) {
+				files.push_back(name);
+				break;
+			}
+		}
+	}
+	std::sort(files.begin(), files.end());
+	return files;
+}
+
+void logPartialRename(const std::string &dir, const std::vector<std::string> &files, bool fatal) {
+	std::string list;
+	for (const auto &file : files) {
+		if (!list.empty()) { list += ", "; }
+		list += file;
+	}
+	std::error_code error;
+	const std::string shownDir = std::filesystem::absolute(dir, error).string();
+	if (fatal) {
+		safs::log_err(
+		    "data directory {} has data files under the new names (*{}), but these still have the "
+		    "pre-rebrand ones (*{}) and would be ignored: {}; refusing to start, rename them to "
+		    "*{} as well, or remove them",
+		    error ? dir : shownDir, kExtension, kLegacyExtension, list, kExtension);
+	} else {
+		safs::log_warn(
+		    "data directory {} has data files under the new names (*{}), but these still have the "
+		    "pre-rebrand ones (*{}) and are ignored: {}",
+		    error ? dir : shownDir, kExtension, kLegacyExtension, list);
+	}
 }
 
 }  // namespace legacy_data_files

@@ -23,6 +23,7 @@
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <vector>
 
 /// Before the rebrand, the data files of master, metalogger and chunkserver had a ".sfs"
 /// extension (metadata.sfs, changelog.sfs.1, csstats.sfs, ...); they have ".leil" now
@@ -40,5 +41,17 @@ std::string legacyName(std::string_view name);
 /// changelog.leil.N. It then reads and writes the old names, so it continues with exactly the
 /// files it used before, and creates them under those names in a directory with neither.
 bool usesLegacyNames(const std::string &dir, std::initializer_list<std::string_view> families);
+
+/// The data files of @p families in @p dir under their pre-rebrand names, sorted. In a
+/// directory that also has the new names, these are what a partial rename left behind: the
+/// daemon ignores them, so e.g. a changelog among them would not be replayed. Files installed
+/// by the packages (*.empty) don't count.
+std::vector<std::string> legacyNamedFiles(const std::string &dir,
+                                          std::initializer_list<std::string_view> families);
+
+/// Logs @p files, the data files left in @p dir under their pre-rebrand names next to the new
+/// ones (see legacyNamedFiles()): as an error if the daemon refuses to start (@p fatal), or else
+/// as a warning that they are ignored.
+void logPartialRename(const std::string &dir, const std::vector<std::string> &files, bool fatal);
 
 }  // namespace legacy_data_files

@@ -25,6 +25,8 @@
 #include <unistd.h>
 
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "common/legacy_data_files.h"
 
@@ -71,10 +73,16 @@ inline void useLegacyDataFileNames() {
 /// Picks the data file names of a master or shadow whose data directory is @p dir: the
 /// pre-rebrand ones unless it has some of its files under the new names. Everything reading or
 /// writing a master's data files decides with this, so that they all agree on the names.
-inline void useMasterDataFileNames(const std::string &dir) {
-	if (legacy_data_files::usesLegacyNames(dir, {"metadata", "changelog", "sessions", "stats"})) {
+/// Returns the files @p dir still has under the old names when it has the new ones, i.e. a
+/// partial rename, which are then ignored (see legacy_data_files::legacyNamedFiles()).
+[[nodiscard]] inline std::vector<std::string> useMasterDataFileNames(const std::string &dir) {
+	const auto families = {std::string_view("metadata"), std::string_view("changelog"),
+	                       std::string_view("sessions"), std::string_view("stats")};
+	if (legacy_data_files::usesLegacyNames(dir, families)) {
 		useLegacyDataFileNames();
+		return {};
 	}
+	return legacy_data_files::legacyNamedFiles(dir, families);
 }
 
 /// True if `dir` looks like an initialized data directory rather than an

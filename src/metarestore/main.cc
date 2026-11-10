@@ -131,6 +131,13 @@ void usage(const char* appname) {
 			"-f   - force loading all changelogs\n", appname, appname, appname, appname, appname);
 }
 
+/// useMasterDataFileNames() for the master's data directory @p dir, only warning about a partial
+/// rename there: the master refuses to start on one, but recovery should still be possible.
+static void useDataFileNames(const std::string &dir) {
+	const auto leftovers = useMasterDataFileNames(dir);
+	if (!leftovers.empty()) { legacy_data_files::logPartialRename(dir, leftovers, false); }
+}
+
 /*! \brief Prints version of metadata that can be read from disk
  * by a master server in auto recovery mode.
  *
@@ -138,7 +145,7 @@ void usage(const char* appname) {
  */
 void meta_version_on_disk(std::string path) {
 	// The files the master recovers from, under the names it uses there
-	useMasterDataFileNames(path);
+	useDataFileNames(path);
 	const std::string changelogs[] {
 		std::string(kChangelogFilename) + ".2",
 		std::string(kChangelogFilename) + ".1",
@@ -356,7 +363,7 @@ int main(int argc,char **argv) {
 		}
 		metadata = bestmetadata;
 		// Restored under the names the master uses there, as it would itself
-		useMasterDataFileNames(datapath);
+		useDataFileNames(datapath);
 		metaout =  datapath + "/" + kMetadataFilename;
 		safs_pretty_syslog(LOG_INFO, "file %s will be used to restore the most recent metadata",
 				metadata.c_str());
@@ -364,7 +371,7 @@ int main(int argc,char **argv) {
 	if (!autorestore) {
 		// The lock goes next to the metadata file, under the names a master there uses, so that
 		// one left behind does not switch that master to other names
-		useMasterDataFileNames(fs::dirname(metadata));
+		useDataFileNames(fs::dirname(metadata));
 	}
 	try {
 		if (fs_init(metadata.c_str(), ignoreflag, noLock) != 0) {

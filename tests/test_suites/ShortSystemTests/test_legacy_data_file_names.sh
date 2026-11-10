@@ -72,3 +72,16 @@ assert_eventually 'grep -q file30 "${data_path}/changelog_ml.leil"'
 check_contents 30
 assert_equals "" "$(find "$data_path" -regextype posix-egrep \
 	-regex '.*/(metadata|changelog|sessions)(_ml)?\.sfs([.].*)?')"
+
+# A partial rename: the daemons refuse to start rather than ignore the files left under the
+# old names
+saunafs_metalogger_daemon stop
+assert_success saunafs_master_daemon stop
+mv "$data_path/metadata.leil" "$data_path/metadata.sfs"
+mv "$data_path/metadata_ml.leil" "$data_path/metadata_ml.sfs"
+assert_failure saunafs_master_daemon start
+assert_failure saunafs_metalogger_daemon start
+rename_files sfs leil metadata metadata_ml
+assert_success saunafs_master_daemon start
+assert_success saunafs_metalogger_daemon start
+check_contents 30

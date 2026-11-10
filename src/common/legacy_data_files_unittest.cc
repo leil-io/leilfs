@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -72,6 +73,37 @@ TEST(LegacyDataFilesTests, UsesNewNamesOnlyWhereThoseExist) {
 	// daemon to the new names
 	std::filesystem::rename(d + "/changelog.sfs.3", d + "/changelog.leil.3");
 	EXPECT_FALSE(usesLegacyNames(d, {"metadata", "changelog"}));
+}
+
+TEST(LegacyDataFilesTests, FindsFilesLeftUnderOldNames) {
+	TemporaryDirectory dir("/tmp", "legacy-data-files");
+	const std::string &d = dir.name();
+	using legacy_data_files::legacyNamedFiles;
+	using Files = std::vector<std::string>;
+
+	EXPECT_EQ(legacyNamedFiles(d, {"metadata", "changelog"}), Files{});
+
+	// A partial rename: the metadata was renamed, but not the changelogs
+	writeFile(d + "/metadata.leil", "");
+	writeFile(d + "/changelog.sfs", "");
+	writeFile(d + "/changelog.sfs.1", "");
+	writeFile(d + "/changelog.leil.2", "");
+	EXPECT_EQ(legacyNamedFiles(d, {"metadata", "changelog"}),
+	          (Files{"changelog.sfs", "changelog.sfs.1"}));
+
+	// The package's empty metadata file, another daemon's files and others don't count
+	writeFile(d + "/metadata.sfs.empty", "");
+	writeFile(d + "/metadata_ml.sfs", "");
+	writeFile(d + "/changelogx.sfs", "");
+	writeFile(d + "/metadata.mfs", "");
+	EXPECT_EQ(legacyNamedFiles(d, {"metadata", "changelog"}),
+	          (Files{"changelog.sfs", "changelog.sfs.1"}));
+	EXPECT_EQ(legacyNamedFiles(d, {"metadata_ml"}), Files{"metadata_ml.sfs"});
+
+	// All renamed
+	std::filesystem::rename(d + "/changelog.sfs", d + "/changelog.leil");
+	std::filesystem::rename(d + "/changelog.sfs.1", d + "/changelog.leil.1");
+	EXPECT_EQ(legacyNamedFiles(d, {"metadata", "changelog"}), Files{});
 }
 
 TEST(LegacyDataFilesTests, UsesOldNamesForAnUnreadableDirectory) {

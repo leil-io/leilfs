@@ -105,9 +105,14 @@ inline int session_manager_init() {
 	return 0;
 }
 
-/// Keeps the pre-rebrand data file names (*.sfs) unless the data directory has the new ones
+/// Keeps the pre-rebrand data file names (*.sfs) unless the data directory has the new ones.
+/// Refuses to start on a partial rename, whose files under the old names would be ignored.
 inline int data_file_names_init() {
-	useMasterDataFileNames(".");
+	const auto leftovers = useMasterDataFileNames(".");
+	if (!leftovers.empty()) {
+		legacy_data_files::logPartialRename(".", leftovers, true);
+		return -1;
+	}
 	return 0;
 }
 
