@@ -56,6 +56,17 @@
 }
 
 {
+   # libfuse 3.18 frees the session in fuse_session_destroy() after
+   # fuse_session_loop_mt() returns, with no synchronization Helgrind sees
+   # with every worker thread that read it while replying to requests. The
+   # free is a tail call, so mainloop() appears as its caller.
+   fuse_session_destroy_free
+   Helgrind:Race
+   fun:free
+   fun:_ZL8mainloopP9fuse_argsP17fuse_cmdline_optsP19fuse_conn_info_opts
+}
+
+{
    # False positive about std::to_string calls when naming the read/write worker threads.
    to_string_in_workers_names
    Helgrind:Race
