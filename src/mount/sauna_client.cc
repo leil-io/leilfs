@@ -3823,6 +3823,9 @@ void fs_init(FsInitParams &params) {
 		socketrelease();
 		throw std::runtime_error("Can't initialize connection with master server");
 	}
+	// Configure before starting the threads that report to the notification area.
+	notifications_area_logging_init(params.log_notifications_area,
+	                                params.message_suppression_period, params.mountpoint);
 	symlink_cache_init(params.symlink_cache_timeout_s);
 
 	{
@@ -3848,6 +3851,7 @@ void fs_init(FsInitParams &params) {
 		::fs_term();
 		symlink_cache_term();
 		socketrelease();
+		notifications_area_logging_term();
 		throw std::runtime_error("Can't initialize I/O limiting");
 	}
 
@@ -3877,10 +3881,6 @@ void fs_init(FsInitParams &params) {
 #ifdef _WIN32
 	set_debug_mode(params.debug_mode);
 #endif
-
-	notifications_area_logging_init(params.log_notifications_area,
-		params.message_suppression_period,
-		params.mountpoint);
 
 	mount_info_init(
 #ifdef _WIN32
