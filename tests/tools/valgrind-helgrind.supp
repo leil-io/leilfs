@@ -131,3 +131,17 @@
    fun:_Z18eventloop_destructv
    fun:main
 }
+
+# GLIBC
+
+{
+   # False positive: when a timed condition variable wait times out after
+   # consuming a signal, glibc signals the condition variable again to pass
+   # that wakeup on, from inside the wait and without the mutex. Helgrind
+   # intercepts that internal call and expects the caller to hold the mutex
+   # (seen in WriteAlgorithm::delayed_queue_worker of the mount).
+   cond_timedwait_passes_on_consumed_signal
+   Helgrind:Misc
+   fun:pthread_cond_signal_WRK
+   fun:__pthread_cond_wait_common
+}
