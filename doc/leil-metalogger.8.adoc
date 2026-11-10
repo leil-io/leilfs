@@ -76,7 +76,8 @@ Older releases gave these files a *.sfs* extension. *leil-metalogger* keeps usin
 those names unless its data directory has some of these files under the new name,
 also when it creates them. To switch to the new names,
 stop *leil-metalogger*, rename its *metadata_ml*, *changelog_ml* and *sessions_ml*
-files from *.sfs* to *.leil* and start it again.
+files from *.sfs* to *.leil* and start it again. If only some of them were renamed,
+it refuses to start and lists the ones left with *.sfs*.
 
 == REPORTING BUGS
 

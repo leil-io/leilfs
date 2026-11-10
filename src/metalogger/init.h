@@ -20,6 +20,7 @@
 
 #include "common/platform.h"
 
+#include <string_view>
 #include <vector>
 
 #include "common/legacy_data_files.h"
@@ -41,10 +42,19 @@ inline int metadata_backend_init() {
 	return 0;
 }
 
-/// Keeps the pre-rebrand data file names (*.sfs) unless the data directory has the new ones
+/// Keeps the pre-rebrand data file names (*.sfs) unless the data directory has the new ones.
+/// Refuses to start on a partial rename, whose files under the old names would be ignored.
 inline int data_file_names_init() {
-	if (legacy_data_files::usesLegacyNames(".", {"metadata_ml", "changelog_ml", "sessions_ml"})) {
+	const auto families = {std::string_view("metadata_ml"), std::string_view("changelog_ml"),
+	                       std::string_view("sessions_ml")};
+	if (legacy_data_files::usesLegacyNames(".", families)) {
 		useLegacyDataFileNames();
+		return 0;
+	}
+	const auto leftovers = legacy_data_files::legacyNamedFiles(".", families);
+	if (!leftovers.empty()) {
+		legacy_data_files::logPartialRename(".", leftovers, true);
+		return -1;
 	}
 	return 0;
 }
