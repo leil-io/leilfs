@@ -51,6 +51,7 @@
 #include "common/datapack.h"
 #include "common/errno_defs.h"
 #include "common/lru_cache.h"
+#include "common/reed_solomon.h"
 #include "common/saunafs_version.h"
 #include "errors/leil_error_codes.h"
 #include "errors/sfserr.h"
@@ -3813,6 +3814,7 @@ void init(int debug_mode_, int keep_cache_, double direntry_cache_timeout_, unsi
 void fs_init(FsInitParams &params) {
 	socketinit();
 	mycrc32_init();
+	reed_solomon_init();
 	int connection_ret = fs_init_master_connection(params
 #ifdef _WIN32
 	, session_flags, params.mounting_uid, params.mounting_gid

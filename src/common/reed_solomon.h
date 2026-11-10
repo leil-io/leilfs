@@ -375,3 +375,21 @@ protected:
 __attribute__ ((aligned(32)))
 #endif
 ;
+
+/*! \brief Resolve ISA-L's CPU-specific implementations before threads use them.
+ *
+ * ISA-L selects them on first use and caches them in unsynchronized function
+ * pointers, so concurrent first uses race. Call once, before starting threads
+ * that encode or decode.
+ */
+inline void reed_solomon_init() {
+	using RS = ReedSolomon<1, 1>;
+	RS rs(1, 1);
+	std::array<uint8_t, 64> data{};
+	std::array<uint8_t, 64> parity{};
+	RS::ConstFragmentMap input{{data.data()}};
+	RS::FragmentMap output{{nullptr, parity.data()}};
+	RS::ErasedMap erased;
+	erased.set(1);
+	rs.recover(input, erased, output, data.size());
+}
