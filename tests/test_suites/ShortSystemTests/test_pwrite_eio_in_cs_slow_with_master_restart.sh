@@ -41,8 +41,10 @@ wait
 
 saunafs_wait_for_all_ready_chunkservers
 
-# Only 3 copies should be available
-assert_equals $(saunafs fileinfo "${info[mount0]}/dir/file" | tail -n1 | grep -c "copy 3:") 1
+# Only 3 copies should be available. The chunkservers may reconnect to the restarted master before
+# the write error, so wait for this state instead of checking it once.
+assert_eventually_prints "3:" "saunafs fileinfo '${info[mount0]}/dir/file' | tail -n1 | awk \
+	'{print \$2}'"
 
 # The missing part should be replicated to the first, which now won't fail, and the file should be
 # healthy again
