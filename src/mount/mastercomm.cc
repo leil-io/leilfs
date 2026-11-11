@@ -1349,9 +1349,10 @@ int fs_connect(bool verbose) {
 	    registerTotalHeaderInfoLength + kFuseRegisterBlobAclLength + fuseRegisterPacketInfoLength +
 	    (gInitParams.meta ? 0 : subfolderPathLength) + mountPointPathLength + passwordDigestLength;
 
-	// Only bootstrap needs an address before trying the current server and any pushed peers.
-	const bool bootstrap = masterip == 0;
-	if (bootstrap &&
+	// Without discovery, new sessions resolve the configured address and try it once per pass,
+	// as Master always did. Known servers precede name service only after discovery arrived.
+	const bool resolveFirst = masterip == 0 || !gHasReceivedDiscovery.load();
+	if (resolveFirst &&
 	    fs_resolve(verbose, gInitParams.bind_host, gInitParams.host, gInitParams.port) < 0) {
 		return -1;
 	}
@@ -1380,10 +1381,10 @@ int fs_connect(bool verbose) {
 		registered = true;
 		return true;
 	};
-	// At bootstrap the configured server was resolved just above and is the only one known: it
-	// gets one attempt, as it always had.
-	const auto resolveConfigured = [verbose, bootstrap]() -> std::optional<ServerAddress> {
-		if (bootstrap ||
+	// A configured server resolved above already got its attempt; discovery otherwise keeps
+	// the configured lookup as the final fallback, after the known endpoints.
+	const auto resolveConfigured = [verbose, resolveFirst]() -> std::optional<ServerAddress> {
+		if (resolveFirst ||
 		    fs_resolve(verbose, gInitParams.bind_host, gInitParams.host, gInitParams.port) < 0) {
 			return std::nullopt;
 		}
@@ -1955,16 +1956,6 @@ void* fs_receive_thread(void *) {
 			}
 		}
 		threc *rec = fs_get_threc_by_id(messageId);
-		if (rec == NULL && (packetHeader.type == SAU_MATOCL_FUSE_FLOCK ||
-		                    packetHeader.type == SAU_MATOCL_FUSE_SETLK)) {
-			// A lock granted after its wait failed with a lost connection, or answered twice
-			// by a server delivering another's answer: nothing waits for it any more.
-			MessageBuffer ignored;
-			if (fs_append_from_master(ignored, remainingBytes)) {
-				safs::log_debug("master: ignoring a late lock answer (queryid {})", messageId);
-			}
-			continue;
-		}
 		if (rec == NULL) {
 			safs_pretty_syslog(LOG_WARNING,"master: got unexpected queryid");
 			setDisconnect(true);

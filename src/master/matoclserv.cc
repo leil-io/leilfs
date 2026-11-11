@@ -248,9 +248,8 @@ struct matoclserventry {
 	AdminTask adminTask;  ///< admin task requested by this client
 	///< Delayed chunk operations for this client
 	std::vector<std::unique_ptr<DelayedChunkOperation>> delayedChunkOperations;
-	///< Number of async commits still in flight that will write a reply to this
-	///< client. The entry must not be freed while this is non-zero (see the close
-	///< loop in matoclserv_serve), so deferred replies never touch a dangling eptr.
+	/// Queued or in-flight operations retaining this connection. Teardown waits for zero so
+	/// metadata completion and kill-gated reply callbacks never use a freed entry.
 	uint32_t pendingCommits = 0;
 };
 
@@ -519,9 +518,10 @@ static OpReplay matoclserv_fenced(matoclserventry *eptr, OpReplay body) {
 	};
 }
 
-/// For the best-effort commits made outside the op harness (atime and goal fixes on reads):
-/// true while @p eptr's work may still commit, checked in @p fsOpContext's transaction as
-/// matoclserv_fenced() does, which also drops a connection whose session moved.
+/// For commits made outside the op harness that change session data (the open files report)
+/// or start a job: true while @p eptr's work may still commit, checked as matoclserv_fenced()
+/// does, which also drops a connection whose session moved. Read handlers skip it: what they
+/// commit themselves (an access time advance, a goal repair) is no change a client asked for.
 static bool matoclserv_still_serves(matoclserventry *eptr,
                                     const FilesystemOperationContext &fsOpContext) {
 	if (eptr->sessionData == nullptr || eptr->attachmentGeneration == 0) { return true; }
@@ -566,19 +566,24 @@ static uint8_t matoclserv_commit_op_with_retry_impl(
     const OpReplay &body, std::chrono::steady_clock::time_point deadline) {
 	std::unique_ptr<kv::IReadWriteTransaction> retained;
 	for (uint32_t attempt = 0;; ++attempt) {
-		// Refuse to START a new attempt past the budget: no fresh transaction, read, or
-		// commit may begin after the deadline. A call already in flight is bounded by the
-		// per-attempt transaction timeout set below, not by this check.
-		if (std::chrono::steady_clock::now() >= deadline) {
-			safs::log_warn("matoclserv: op retry deadline reached after {} attempts, giving up",
-			               attempt);
-			return SAUNAFS_ERROR_IO;
-		}
 		FilesystemOperationContext ctx =
 		    retained != nullptr ? FilesystemOperationContext(std::move(retained))
 		                        : gFSOperations->createFilesystemOperationContext(
 		                              FilesystemOperationContext::TransactionType::kReadWrite);
 		const bool hasTxn = ctx.hasReadWriteTransaction();
+
+		// A transactional backend refuses to START an attempt past the budget; a call in flight
+		// is bounded by the per-attempt transaction timeout set below. That includes a context
+		// whose transaction could not be created: it keeps its requested type and must not run
+		// as in-memory work. A backend without transactions applies in place and never retries,
+		// so a pause of the process must not skip its operation.
+		if (ctx.getTransactionType() != FilesystemOperationContext::TransactionType::kNone &&
+		    std::chrono::steady_clock::now() >= deadline) {
+			safs::log_warn("matoclserv: op retry deadline reached after {} attempts, giving up",
+			               attempt);
+			return SAUNAFS_ERROR_IO;
+		}
+
 		// Contain a kv::TransactionStateError (a coordinator SEQUENCING bug, e.g. a consumed
 		// future or a wrong-state call) ONLY here: pre-durability, on a rollback-capable
 		// transaction. Catching that narrow type, not std::logic_error, lets a genuine body
@@ -735,6 +740,8 @@ struct BatchMember {
 	std::function<void(uint8_t status)> onCommit;
 	/// Run on a transaction of its own, after prior members commit and before later bodies run.
 	bool isolated = false;
+	/// Complete previously started chunk work even if its client disconnects before this body runs.
+	bool finishAfterDisconnect = false;
 };
 
 /// One batch, used in two phases. While OPEN it accumulates members, whose bodies run on
@@ -854,10 +861,9 @@ static void matoclserv_finish_member(BatchMember &member, uint8_t status) {
 	if (member.eptr->mode != ClientConnectionMode::KILL && member.finish) { member.finish(status); }
 }
 
-/// Ends a member the store failed to run or commit with an I/O error, unless this server
-/// cannot reach the store and the client's session is attached to it: its connection is then
-/// dropped instead, so the mount resends the request through a server that can. A store that
-/// works but keeps failing the request (conflicts) still answers the error.
+/// Fails a member proven not committed: an attached client disconnects for safe replay if this
+/// server cannot reach the store, otherwise it gets EIO. Maybe-committed failures must use
+/// matoclserv_finish_member instead, so they do not deliberately trigger a replay.
 static void matoclserv_fail_member_on_store(BatchMember &member) {
 	if (member.eptr->attachmentGeneration != 0 && gStoreUnreachableHook &&
 	    gStoreUnreachableHook()) {
@@ -1022,26 +1028,29 @@ static void matoclserv_join_open_batch(BatchMember member) {
 	matoclserv_release_idle_open_batch();
 }
 
-/// Routes an op into the group-commit batch without checking that this server still serves the
-/// client's session: only for work that must finish wherever the session went, such as the
-/// end of a chunk operation the chunkservers already ran. Otherwise as matoclserv_submit_op.
-static void matoclserv_submit_unfenced_op(matoclserventry *eptr, OpReplay body,
-                                          std::function<void(uint8_t status)> finish,
-                                          std::function<void(uint8_t status)> onCommit = {},
-                                          bool isolated = false) {
-	eptr->pendingCommits++;
+/// Holds a submitted member's connection until its body and commit callbacks finish.
+static void matoclserv_enqueue_op(BatchMember member) {
+	member.eptr->pendingCommits++;
 	if (gBatchMaintenanceRequested || gInFlightBatch.has_value() || gBatchRetry.has_value() ||
 	    gBatchResolving || !gHeldOps.empty()) {
 		// Hold the body until the in-flight batch (or its parked retry) is durable, so it runs
 		// against committed state. Submitted operations queue behind held ones to keep their order
 		// while an isolation boundary waits for the open batch to commit.
 		if (gBatchStatsEnabled) { gBatchStats.heldOps++; }
-		gHeldOps.push_back(BatchMember{eptr, std::move(finish), std::move(body), 0,
-		                               std::move(onCommit), isolated});
+		gHeldOps.push_back(std::move(member));
 		return;
 	}
-	matoclserv_join_open_batch(
-	    BatchMember{eptr, std::move(finish), std::move(body), 0, std::move(onCommit), isolated});
+	matoclserv_join_open_batch(std::move(member));
+}
+
+/// Submits completion of already-started chunk work, even after the session moves or its client
+/// disconnects. The connection stays alive until completion; its reply is still kill-gated.
+static void matoclserv_submit_unfenced_op(matoclserventry *eptr, OpReplay body,
+                                          std::function<void(uint8_t status)> finish,
+                                          std::function<void(uint8_t status)> onCommit = {},
+                                          bool isolated = false) {
+	matoclserv_enqueue_op(BatchMember{eptr, std::move(finish), std::move(body), 0,
+	                                  std::move(onCommit), isolated, true});
 }
 
 /// True when the backend refused to release a file for now (busy freeing its chunks, or a store
@@ -1059,16 +1068,17 @@ static bool matoclserv_may_keep_data_cache(matoclserventry *eptr, inode_t inode)
 }
 
 /// Entry point for converted write-op handlers: routes the op into the group-commit
-/// batch. `finish` always runs exactly once with the op/commit status; the optional
-/// `onCommit` durable hook runs first, with the same status, even for a killed client.
+/// batch. `finish` replies only while the connection is live; the optional `onCommit`
+/// durable hook runs first with the final status, even for a killed client.
 /// An isolated member runs between committed batches; Master still executes it inline.
 /// The op commits only while this server still serves the client's session.
 static void matoclserv_submit_op(matoclserventry *eptr, OpReplay body,
                                  std::function<void(uint8_t status)> finish,
                                  std::function<void(uint8_t status)> onCommit = {},
                                  bool isolated = false) {
-	matoclserv_submit_unfenced_op(eptr, matoclserv_fenced(eptr, std::move(body)), std::move(finish),
-	                              std::move(onCommit), isolated);
+	matoclserv_enqueue_op(BatchMember{eptr, std::move(finish),
+	                                  matoclserv_fenced(eptr, std::move(body)), 0,
+	                                  std::move(onCommit), isolated});
 }
 
 /// Runs once per event-loop iteration (after the serve pass): finalizes an
@@ -1148,7 +1158,11 @@ static void matoclserv_poll_batch() {
 			              commitError, retryable);
 			gInFlightBatch->ctx.finishTransactionEffectsAfterCommit(false);
 			for (BatchMember &member : gInFlightBatch->members) {
-				matoclserv_fail_member_on_store(member);
+				if (retryable) {
+					matoclserv_fail_member_on_store(member);
+				} else {
+					matoclserv_finish_member(member, SAUNAFS_ERROR_IO);
+				}
 			}
 			gInFlightBatch.reset();
 		}
@@ -1248,9 +1262,8 @@ static void matoclserv_poll_batch() {
 		if (matoclserv_crosses_isolation(gHeldOps.front())) { break; }
 		BatchMember held = std::move(gHeldOps.front());
 		gHeldOps.pop_front();
-		if (held.eptr->mode == ClientConnectionMode::KILL) {
-			// The body never ran, but its durable hook still gets a final status: a cleanup that
-			// resolves earlier work, such as a chunk lock, queues its retry there.
+		if (held.eptr->mode == ClientConnectionMode::KILL && !held.finishAfterDisconnect) {
+			// The dropped body still reports a final status to its bookkeeping hook.
 			matoclserv_finish_member(held, SAUNAFS_ERROR_IO);
 			continue;
 		}
@@ -3568,11 +3581,11 @@ void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header, const 
 			// let's check if chunk is still locked by us
 			st = gFSOperations->getChunkId(context, ctx, inode, truncState->length / SFSCHUNKSIZE,
 			                               &truncState->chunkId);
-			if (st == SAUNAFS_STATUS_OK) {
+			if (st == SAUNAFS_STATUS_OK && !ctx.hasReadWriteTransaction()) {
 				st = gChunkOperations->canUnlock(truncState->chunkId, truncState->lockId);
 			}
 			if (st != SAUNAFS_STATUS_OK) { return st; }
-			// A backend checks the lock against its records here, where Master's cache answered
+			// Transactional backends validate the stored lock here; the cache may be stale.
 			st = gFSOperations->endSetLength(ctx, truncState->chunkId, truncState->lockId);
 			if (st != SAUNAFS_STATUS_OK) { return st; }
 		}
@@ -3726,8 +3739,7 @@ void matoclserv_fuse_readlink(matoclserventry *eptr, const uint8_t *data, uint32
 
 	status = gFSOperations->readlink(context, fsOpContext, inode, path);
 
-	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction() &&
-	    matoclserv_still_serves(eptr, fsOpContext)) {
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.commitTransaction()) {
 			// Best-effort: atime update only, do not fail the readlink.
 			safs::log_err("{}: transaction failed to commit: inode {}", __func__, inode);
@@ -4441,8 +4453,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr,const PacketHeader &header, co
 			status = gFSOperations->readdir(context, fsOpContext, inode, first_entry,
 			                                number_of_entries, dir_entries);
 
-			if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction() &&
-			    matoclserv_still_serves(eptr, fsOpContext)) {
+			if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 				if (!fsOpContext.commitTransaction()) {
 					// Best-effort: atime update only, do not fail the directory listing.
 					safs::log_err("{}: Failed to commit atime update for inode {}", __func__,
@@ -4528,7 +4539,7 @@ void matoclserv_fuse_getdir(matoclserventry *eptr, const uint8_t *data, uint32_t
 		gFSOperations->readdirData(context, fsOpContext, flags, custom, ptr);
 
 		// Best effort to update atime
-		if (fsOpContext.hasReadWriteTransaction() && matoclserv_still_serves(eptr, fsOpContext)) {
+		if (fsOpContext.hasReadWriteTransaction()) {
 			if (!fsOpContext.commitTransaction()) {
 				safs::log_err("{}: Failed to commit atime update for inode {}", __func__, inode);
 			}
@@ -4659,8 +4670,7 @@ void matoclserv_fuse_read_chunk(matoclserventry *eptr, PacketHeader header, cons
 		}
 	}
 
-	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction() &&
-	    matoclserv_still_serves(eptr, fsOpContext)) {
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.commitTransaction()) {
 			// Best-effort: atime update only, do not fail the chunk read.
 			safs::log_err("{}: transaction failed to commit: inode {}, chunk index {}", __func__,
@@ -5203,8 +5213,7 @@ void matoclserv_fuse_getgoal(matoclserventry *eptr, PacketHeader header, const u
 	uint8_t status =
 	    gFSOperations->getGoal(matoclserv_get_context(eptr), fsOpContext, inode, gmode, fgtab, dgtab);
 
-	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction() &&
-	    matoclserv_still_serves(eptr, fsOpContext)) {
+	if (status == SAUNAFS_STATUS_OK && fsOpContext.hasReadWriteTransaction()) {
 		if (!fsOpContext.commitTransaction()) {
 			safs::log_err("{}: transaction failed to commit: inode {}, gmode {}", __func__, inode,
 			              static_cast<uint32_t>(gmode));
