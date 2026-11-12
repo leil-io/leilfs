@@ -92,6 +92,9 @@ struct Session {
 	uint32_t disconnectedTimestamp{};
 	/// Active connection count. Zero means the session is currently disconnected.
 	uint32_t connections{};
+	/// Generation of this server's attachment to the session, raised on every move, reconnect
+	/// and release. Zero on backends where a session is not attached to one server (Master).
+	uint64_t attachmentGeneration{};
 	/// Current hour operation counters.
 	std::array<uint32_t, SESSION_STATS> currHourOperationsStats{};
 	/// Previous hour operation counters.
