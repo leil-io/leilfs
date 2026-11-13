@@ -26,6 +26,7 @@
 #include <memory>
 
 #include "common/event_loop.h"
+#include "common/legacy_data_files.h"
 #include "common/lockfile.h"
 #include "common/main.h"
 #include "common/scoped_timer.h"
@@ -59,6 +60,11 @@
 
 FilesystemMetadata* gMetadata = nullptr;
 std::unique_ptr<Lockfile> gMetadataLockfile;
+#ifdef METARESTORE
+/// The pre-rebrand metadata lock, held too while it exists: a master whose data files still have
+/// their pre-rebrand names uses it
+static std::unique_ptr<Lockfile> gLegacyMetadataLockfile;
+#endif
 
 #ifndef METARESTORE
 
@@ -94,6 +100,9 @@ void fs_disable_checksum_verification(bool value) {
 
 void fs_unlock() {
 	gMetadataLockfile->unlock();
+#ifdef METARESTORE
+	if (gLegacyMetadataLockfile) { gLegacyMetadataLockfile->unlock(); }
+#endif
 }
 
 #ifndef METARESTORE
@@ -162,7 +171,7 @@ void fs_term(void) {
 		// Remove the lock to say that the server has gently stopped and saved its metadata.
 		fs_unlock();
 	} else if (gMetadata != nullptr && !gSaveMetadataAtExit) {
-		// We will leave the lockfile present to indicate, that our metadata.sfs file should not be
+		// We will leave the lockfile present to indicate, that our metadata.leil file should not be
 		// loaded (it is not up to date -- some changelogs need to be applied). Write a message
 		// which tells that the lockfile is not left because of a crash, but because we have been
 		// asked to stop without saving metadata. Include information about version of metadata
@@ -170,7 +179,7 @@ void fs_term(void) {
 		auto message = "quick_stop: " + std::to_string(gMetadata->metadataVersion) + "\n";
 		gMetadataLockfile->writeMessage(message);
 	} else {
-		// We will leave the lockfile present to indicate, that our metadata.sfs file should not be
+		// We will leave the lockfile present to indicate, that our metadata.leil file should not be
 		// loaded (it is not up to date, because we didn't manage to download the most recent).
 		// Write a message which tells that the lockfile is not left because of a crash, but because
 		// we have been asked to stop before loading metadata. Don't overwrite 'quick_stop' though!
@@ -561,7 +570,15 @@ int fs_init(const char *fname, int ignoreflag, bool noLock) {
 	initFSOperations();
 
 	if (!noLock) {
-		gMetadataLockfile.reset(new Lockfile(fs::dirname(fname) + "/" + kMetadataFilename + ".lock"));
+		const std::string dir = fs::dirname(fname);
+		const std::string lockName = kMetadataFilename + std::string(".lock");
+		// Before the current lock, so that none is left behind if a master holds this one
+		const std::string legacyLock = dir + "/" + legacy_data_files::legacyName(lockName);
+		if (legacyLock != dir + "/" + lockName && fs::exists(legacyLock)) {
+			gLegacyMetadataLockfile = std::make_unique<Lockfile>(legacyLock);
+			gLegacyMetadataLockfile->lock(Lockfile::StaleLock::kSwallow);
+		}
+		gMetadataLockfile.reset(new Lockfile(dir + "/" + lockName));
 		gMetadataLockfile->lock(Lockfile::StaleLock::kSwallow);
 	}
 

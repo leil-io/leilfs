@@ -179,16 +179,16 @@ protocol handlers.
 active manager and assert if they are called before startup attaches one.
 
 For the file-backed master, `SessionManagerFile` keeps the complete in-memory
-session catalog and persists reconnectable session records to `sessions.sfs`.
+session catalog and persists reconnectable session records to `sessions.leil`.
 The loader accepts the current session-file header only; old `MFS`-branded and
 pre-1.6.4 session files are rejected at startup instead of being interpreted by
 compatibility branches. `storeSessions()` continues to write the current format.
 
 Session durability is split between the session file and metadata:
 
-- `sessions.sfs` stores reconnectable mount identity, access limits, UID/GID
+- `sessions.leil` stores reconnectable mount identity, access limits, UID/GID
   mapping, and hourly operation stats.
-- `metadata.sfs` stores the session-id counter and each file's
+- `metadata.leil` stores the session-id counter and each file's
   `FSNodeFile::sessionIds` list.
 - `Session::openFilesSet` is an in-memory, per-session index rebuilt on startup
   from the file-side `sessionIds` metadata.
@@ -218,7 +218,7 @@ Metadata durability is achieved through two complementary mechanisms:
   loading and saving complete metadata. Methods: `init()`, `loadall()`,
   `store_fd()`, `commit_metadata_dump()`, `emergency_saves()`.
 - **`MetadataBackendFile`** (`metadata_backend_file.*`) -- the file-based
-  implementation. Stores metadata in `metadata.sfs` with section-based format.
+  implementation. Stores metadata in `metadata.leil` with section-based format.
   Rotates previous copies on save.
 - **`MetadataLoader`** (`metadata_loader.h`) -- reads metadata sections from
   memory-mapped files, supporting async section loading.

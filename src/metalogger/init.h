@@ -20,10 +20,13 @@
 
 #include "common/platform.h"
 
+#include <string_view>
 #include <vector>
 
+#include "common/legacy_data_files.h"
 #include "common/run_tab.h"
 #include "master/masterconn.h"
+#include "master/metadata_backend_common.h"
 #include "master/metadata_backend_file.h"
 
 inline int metadata_backend_init() {
@@ -39,11 +42,30 @@ inline int metadata_backend_init() {
 	return 0;
 }
 
+/// Keeps the pre-rebrand data file names (*.sfs) unless the data directory has the new ones.
+/// Refuses to start on a partial rename, whose files under the old names would be ignored.
+inline int data_file_names_init() {
+	const auto families = {std::string_view("metadata_ml"), std::string_view("changelog_ml"),
+	                       std::string_view("sessions_ml")};
+	if (legacy_data_files::usesLegacyNames(".", families)) {
+		useLegacyDataFileNames();
+		return 0;
+	}
+	const auto leftovers = legacy_data_files::legacyNamedFiles(".", families);
+	if (!leftovers.empty()) {
+		legacy_data_files::logPartialRename(".", leftovers, true);
+		return -1;
+	}
+	return 0;
+}
+
 /// Functions to call before normal startup
 inline const std::vector<RunTab> earlyRunTabs = {};
 
 /// Functions to call during normal startup
 inline const std::vector<RunTab> runTabs = {
+    // has to be before anything uses its data files
+    RunTab{.function = data_file_names_init, .name = "data file names"},
     RunTab{.function = metadata_backend_init, .name = "metadata backend"},
     RunTab{.function = masterconn_init, .name = "connection with master"}};
 
