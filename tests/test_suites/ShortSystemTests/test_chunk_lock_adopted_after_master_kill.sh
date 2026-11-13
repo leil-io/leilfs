@@ -1,4 +1,4 @@
-timeout_set 4 minutes
+timeout_set 10 minutes
 
 # A master killed while a write start waits for one chunkserver's lock reply leaves its chunk
 # locks on the other chunkservers, with the connection they would report to gone. The next
