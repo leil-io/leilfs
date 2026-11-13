@@ -422,7 +422,8 @@ public:
 
 	/// What startChunkLock did with a lock request.
 	enum class LockStart : uint8_t {
-		kInstalled,  ///< A new lock, in place of an older lock of another metadata server if any.
+		kInstalled,  ///< A new lock, in place of an older lock of another metadata server if any,
+		             ///< or the requester's own lock left behind by a closed connection, adopted.
 		kExisting,   ///< The requester's lock was there already: a retransmission.
 		kRefused,    ///< Another metadata server holds the lock at the same or a newer version.
 	};
@@ -452,6 +453,8 @@ public:
 	/// @brief Changes the callback function for all lock jobs associated with a specific listener.
 	/// This function is used to update the callback for all lock jobs when the master server
 	/// disconnects to ensure that no chunks with broken data remain registered.
+	/// The locks themselves stay, marked orphaned: their owner's next request adopts them
+	/// (startChunkLock).
 	/// @param lockJobCallbackMaker The function to create new callback functions for all lock jobs.
 	/// @param listenerId The ID of the listener associated with the lock jobs.
 	void changeLockJobsCallback(const LockJobCallbackMaker &lockJobCallbackMaker,
@@ -484,6 +487,10 @@ public:
 	/// taken at, and only a request of that server is a retransmission: a lock of another server
 	/// at a newer version replaces the existing one, which sends no notice and releases its
 	/// deferred jobs, and one at the same or an older version is refused.
+	/// A lock whose connection closed or retired reports to no metadata server any more: its
+	/// owner's next request adopts it instead of passing for a retransmission, so that the
+	/// notice of the write under it reaches the connection that asked. The write session that
+	/// joined the lock and the jobs deferred behind it stay as they are.
 	/// @param callback The callback function to be called when the lock is released.
 	/// @param packet The packet to be sent to the master server with the write end status.
 	/// @param chunkId The ID of the chunk to be locked.
@@ -574,6 +581,9 @@ private:
 		uint32_t ownerId = 0;
 		/// The chunk version the lock was taken at.
 		uint32_t version = 0;
+		/// The lock's connection closed or retired (changeLockJobsCallback, detachLockJobs), so
+		/// its notice reaches no metadata server: the owner's next request adopts the lock.
+		bool orphaned = false;
 
 		LockedChunkData(uint32_t lockJobId, uint32_t listenerId)
 		    : lockJobId(lockJobId), listenerId(listenerId) {}

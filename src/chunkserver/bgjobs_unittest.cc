@@ -713,6 +713,161 @@ TEST(ChunkLockOwnershipTest, WithoutIdentityModeEveryLockBehavesAsUnderMaster) {
 	EXPECT_TRUE(pool.isListenerIdle(0));
 }
 
+TEST(ChunkLockOwnershipTest, LockLeftByAClosedConnectionReportsToTheNextOne) {
+	MasterJobPool pool("lock-orphan", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0)};
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t noticesOffline = 0;
+	uint32_t noticesOfNext = 0;
+	uint32_t deferredRuns = 0;
+	const auto offline = [&](ChunkWithType, uint32_t) {
+		return [&](uint8_t, void *) { ++noticesOffline; };
+	};
+	const JobPool::JobCallback noticeOfNext = [&](uint8_t, void *) { ++noticesOfNext; };
+
+	// Master's lock, with a write session under it and a command deferred behind it, loses its
+	// connection: the lock stays, reporting to nobody.
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t joined = pool.enforceChunkLock(kLockedChunk, chunkType, 0);
+	ASSERT_NE(joined, 0U);
+	pool.addJobIfNotLocked(
+	    {kLockedChunk, chunkType}, JobPool::ChunkOperation::ChangeVersion,
+	    [&](uint8_t, void *) { ++deferredRuns; }, nullptr,
+	    []() -> uint8_t { return SAUNAFS_STATUS_OK; }, 0);
+	pool.changeLockJobsCallback(offline, 0);
+
+	// The next master's lock of the part adopts it instead of passing for a retransmission: the
+	// write session and the deferred command stay, and only a repeated request is one.
+	EXPECT_EQ(pool.startChunkLock(noticeOfNext, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	EXPECT_EQ(pool.startChunkLock(noticeOfNext, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kExisting);
+	EXPECT_EQ(pool.enforceChunkLock(kLockedChunk, chunkType, 0), joined);
+	EXPECT_EQ(deferredRuns, 0U);
+
+	// The end of the write under it notifies the next master, not the closed connection, and
+	// releases the deferred command.
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joined);
+	for (int attempt = 0; attempt < 10 && (noticesOfNext == 0 || deferredRuns == 0); ++attempt) {
+		deliverCompletions(pool, descriptors[0], 0);
+	}
+	EXPECT_EQ(noticesOfNext, 1U);
+	EXPECT_EQ(noticesOffline, 0U);
+	EXPECT_EQ(deferredRuns, 1U);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+}
+
+/// Two write sessions on one part share its single lock entry, with or without a master
+/// restart in between: the first end releases the lock and is the only one reported, so the
+/// metadata server takes the part for idle while the second session still writes. This pins
+/// down the known limit of the entry-per-part design (LS-1185, "two sessions share one entry")
+/// and shows that adopting an orphaned lock keeps it where it was, neither wider nor narrower.
+TEST(ChunkLockOwnershipTest, TwoSessionsOnOnePartShareTheLockAndOnlyTheFirstEndIsReported) {
+	for (const bool masterRestarts : {false, true}) {
+		SCOPED_TRACE(masterRestarts ? "the master restarts between the sessions"
+		                            : "the sessions run under the same master");
+		MasterJobPool pool("lock-two-sessions", 1, 10);
+		const std::vector<int> descriptors{pool.allocateListener(0)};
+		const auto chunkType = slice_traits::standard::ChunkPartType();
+		uint32_t noticesOfFirst = 0;
+		uint32_t noticesOfNext = 0;
+		uint32_t noticesOffline = 0;
+		uint32_t deferredRuns = 0;
+		uint32_t lateRuns = 0;
+		const JobPool::JobCallback noticeOfFirst = [&](uint8_t, void *) { ++noticesOfFirst; };
+		const JobPool::JobCallback noticeOfNext = [&](uint8_t, void *) { ++noticesOfNext; };
+		const auto offline = [&](ChunkWithType, uint32_t) {
+			return [&](uint8_t, void *) { ++noticesOffline; };
+		};
+		const auto addMasterJob = [&](uint32_t &runs) {
+			pool.addJobIfNotLocked(
+			    {kLockedChunk, chunkType}, JobPool::ChunkOperation::ChangeVersion,
+			    [&runs](uint8_t, void *) { ++runs; }, nullptr,
+			    []() -> uint8_t { return SAUNAFS_STATUS_OK; }, 0);
+		};
+		const auto drain = [&](auto reported) {
+			for (int attempt = 0; attempt < 10 && !reported(); ++attempt) {
+				deliverCompletions(pool, descriptors[0], 0);
+			}
+		};
+
+		// Session A joins the master's lock.
+		ASSERT_EQ(pool.startChunkLock(noticeOfFirst, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+		          MasterJobPool::LockStart::kInstalled);
+		const uint64_t joinedA = pool.enforceChunkLock(kLockedChunk, chunkType, 0);
+		ASSERT_NE(joinedA, 0U);
+
+		// Under one master the part stays marked as being written, so no second lock is sent;
+		// after a restart the next master locks the part again and adopts the orphaned entry.
+		if (masterRestarts) {
+			pool.changeLockJobsCallback(offline, 0);
+			ASSERT_EQ(
+			    pool.startChunkLock(noticeOfNext, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+			    MasterJobPool::LockStart::kInstalled);
+		}
+
+		// Session B on the same part joins the very same lock: the entry cannot tell them apart.
+		const uint64_t joinedB = pool.enforceChunkLock(kLockedChunk, chunkType, 0);
+		EXPECT_EQ(joinedB, joinedA);
+		addMasterJob(deferredRuns);
+		EXPECT_EQ(deferredRuns, 0U);
+
+		// A's end releases the lock while B still writes: the deferred job runs, the end is
+		// reported to the current master, and a job received from now on is not held back.
+		pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joinedA);
+		drain([&] { return deferredRuns == 1 && noticesOfFirst + noticesOfNext == 1; });
+		EXPECT_EQ(deferredRuns, 1U);
+		EXPECT_EQ(noticesOfFirst, masterRestarts ? 0U : 1U);
+		EXPECT_EQ(noticesOfNext, masterRestarts ? 1U : 0U);
+		EXPECT_EQ(noticesOffline, 0U);
+		addMasterJob(lateRuns);
+		drain([&] { return lateRuns == 1; });
+		EXPECT_EQ(lateRuns, 1U);
+
+		// B's end finds no lock to end: nothing more is reported.
+		pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joinedB);
+		EXPECT_TRUE(pool.isListenerIdle(0));
+		EXPECT_EQ(noticesOfFirst + noticesOfNext + noticesOffline, 1U);
+	}
+}
+
+TEST(ChunkLockOwnershipTest, DetachedLockIsAdoptedByItsOwnersNextConnection) {
+	MasterJobPool pool("lock-adopt", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0), pool.allocateListener(1),
+	                                   pool.allocateListener(2)};
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t noticesOffline = 0;
+	uint32_t noticesOfA = 0;
+	const auto offline = [&](ChunkWithType, uint32_t) {
+		return [&](uint8_t, void *) { ++noticesOffline; };
+	};
+	const JobPool::JobCallback noticeA = [&](uint8_t, void *) { ++noticesOfA; };
+
+	// A's lock with a write session under it; A's connection retires, the lock moving to
+	// listener 0.
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 1),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t joined = pool.enforceChunkLock(kLockedChunk, chunkType, 3);
+	ASSERT_NE(joined, 0U);
+	pool.detachLockJobs(offline, 1, 0);
+
+	// A's next connection, in another slot, adopts its lock, which still judges B's request.
+	EXPECT_EQ(pool.startChunkLock(noticeA, nullptr, kLockedChunk, chunkType, kServerA, 3, 2),
+	          MasterJobPool::LockStart::kInstalled);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+	EXPECT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerB, 3, 0),
+	          MasterJobPool::LockStart::kRefused);
+
+	// The session that joined the lock still ends it, and A hears of it on its new connection.
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joined);
+	ASSERT_TRUE(deliverCompletions(pool, descriptors[2], 2));
+	EXPECT_EQ(noticesOfA, 1U);
+	EXPECT_EQ(noticesOffline, 0U);
+	EXPECT_TRUE(pool.isListenerIdle(2));
+}
+
 namespace {
 
 /// Drains both listeners' completions until every status in @p statuses was reported.
