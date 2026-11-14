@@ -789,6 +789,82 @@ TEST(ChunkLockOwnershipTest, WriteErrorUnderAnAdoptedLockReachesTheNextConnectio
 	EXPECT_TRUE(pool.isListenerIdle(0));
 }
 
+/// Adoption races the end of the write under the lock and the closing of its connection, as it
+/// does on a chunkserver, where a versioned lock is installed by a pool worker while a network
+/// worker ends the session and the main thread closes connections. Whichever order the threads
+/// take, the end of the write is reported exactly once, to a live connection or to the closed
+/// one's callback, and nothing stays behind. Run under ThreadSanitizer to check the locking.
+TEST(ChunkLockOwnershipTest, AdoptionRacesWriteEndAndConnectionClosure) {
+	MasterJobPool pool("lock-adopt-race", 2, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0), pool.allocateListener(1)};
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	std::atomic<uint32_t> noticesOfA{0};
+	std::atomic<uint32_t> noticesOffline{0};
+	const JobPool::JobCallback noticeA = [&](uint8_t, void *) { ++noticesOfA; };
+	const auto offline = [&](ChunkWithType, uint32_t) {
+		return [&](uint8_t, void *) { ++noticesOffline; };
+	};
+	const auto drainUntil = [&](auto done) {
+		for (int attempt = 0; attempt < 50 && !done(); ++attempt) {
+			pollfd ready{descriptors[1], POLLIN, 0};
+			if (poll(&ready, 1, 20) == 1) { pool.processCompletedJobs(1); }
+		}
+		return done();
+	};
+
+	constexpr uint32_t kRounds = 256;
+	uint32_t adoptions = 0;
+	for (uint32_t round = 0; round < kRounds; ++round) {
+		ASSERT_EQ(pool.startChunkLock(noticeA, nullptr, kLockedChunk, chunkType, kServerA, 3, 1),
+		          MasterJobPool::LockStart::kInstalled);
+		const uint64_t joined = pool.enforceChunkLock(kLockedChunk, chunkType, 3);
+		ASSERT_NE(joined, 0U);
+
+		// A's connection closes and A locks the part again on its next connection, while the
+		// write under the lock ends; the second lock either adopts it or is a new lock. Ending
+		// is the cheaper step, so each thread starts with its own small offset, spread over
+		// the rounds, for both orders to happen.
+		std::latch start{2};
+		const auto offset = [](uint32_t steps) { return std::chrono::microseconds(10 * steps); };
+		std::thread reconnect([&] {
+			start.arrive_and_wait();
+			std::this_thread::sleep_for(offset((round / 8) % 8));
+			pool.changeLockJobsCallback(offline, 1);
+			EXPECT_EQ(
+			    pool.startChunkLock(noticeA, nullptr, kLockedChunk, chunkType, kServerA, 3, 1),
+			    MasterJobPool::LockStart::kInstalled);
+		});
+		std::thread writer([&] {
+			start.arrive_and_wait();
+			std::this_thread::sleep_for(offset(round % 8));
+			pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joined);
+		});
+		reconnect.join();
+		writer.join();
+
+		// One notice per write end, whichever callback was current when it ended
+		ASSERT_TRUE(drainUntil([&] { return noticesOfA + noticesOffline == round + 1; }))
+		    << "round " << round;
+
+		// A new lock installed after the end is A's and idle, and is erased here; an adopted
+		// one ended with the write and left nothing. Either way the part is free again.
+		const uint64_t leftover = pool.reserveChunkLock(kLockedChunk, chunkType, 3);
+		if (leftover == 0) {
+			++adoptions;
+		} else {
+			pool.releaseChunkLockReservation(kLockedChunk, chunkType, leftover);
+			pool.eraseChunkLock(kLockedChunk, chunkType, kServerA);
+		}
+		ASSERT_TRUE(pool.isListenerIdle(1)) << "round " << round;
+	}
+	EXPECT_EQ(noticesOfA + noticesOffline, kRounds);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+	// How the race went, for the record: neither order is required, both are expected to show
+	RecordProperty("adoptions", adoptions);
+	RecordProperty("fresh_installs", kRounds - adoptions);
+}
+
 /// Two write sessions on one part share its single lock entry, with or without a master
 /// restart in between: the first end releases the lock and is the only one reported, so the
 /// metadata server takes the part for idle while the second session still writes. This pins
