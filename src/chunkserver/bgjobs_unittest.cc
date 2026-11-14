@@ -758,6 +758,37 @@ TEST(ChunkLockOwnershipTest, LockLeftByAClosedConnectionReportsToTheNextOne) {
 	EXPECT_TRUE(pool.isListenerIdle(0));
 }
 
+TEST(ChunkLockOwnershipTest, WriteErrorUnderAnAdoptedLockReachesTheNextConnection) {
+	MasterJobPool pool("lock-orphan-error", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0)};
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t noticesOffline = 0;
+	std::vector<uint8_t> statusesOfNext;
+	const auto offline = [&](ChunkWithType, uint32_t) {
+		return [&](uint8_t, void *) { ++noticesOffline; };
+	};
+	const JobPool::JobCallback noticeOfNext = [&](uint8_t status, void *) {
+		statusesOfNext.push_back(status);
+	};
+
+	// A write session under Master's lock loses its connection; the next master adopts the lock.
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t joined = pool.enforceChunkLock(kLockedChunk, chunkType, 0);
+	ASSERT_NE(joined, 0U);
+	pool.changeLockJobsCallback(offline, 0);
+	ASSERT_EQ(pool.startChunkLock(noticeOfNext, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kInstalled);
+
+	// The write fails: the next master, which marks the part as being written, hears the error
+	// itself, as it is, once; the closed connection's damaged-part cleanup no longer stands in.
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_ERROR_IO, joined);
+	ASSERT_TRUE(deliverCompletions(pool, descriptors[0], 0));
+	EXPECT_EQ(statusesOfNext, std::vector<uint8_t>{SAUNAFS_ERROR_IO});
+	EXPECT_EQ(noticesOffline, 0U);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+}
+
 /// Two write sessions on one part share its single lock entry, with or without a master
 /// restart in between: the first end releases the lock and is the only one reported, so the
 /// metadata server takes the part for idle while the second session still writes. This pins
