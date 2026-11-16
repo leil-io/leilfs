@@ -25,6 +25,7 @@
 #include <sys/eventfd.h>
 #include <sys/syslog.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cstdint>
@@ -731,14 +732,17 @@ MasterJobPool::LockStart MasterJobPool::startChunkLock(const JobPool::JobCallbac
 			const uint32_t orphanListenerId = adopted.listenerId;
 			adopted.lockJobId = addLockJob(callback, packet, listenerId);
 			adopted.listenerId = listenerId;
-			adopted.version = chunkVersion;
+			// As a retransmission, the request never takes the lock back to an older version, so
+			// sessions at the lock's version still join it; a newer one follows the part
+			adopted.version = std::max(adopted.version, chunkVersion);
 			adopted.orphaned = false;
+			const uint32_t adoptedVersion = adopted.version;
 			lock.unlock();
 
 			safs::log_info(
 			    "chunk lock of chunkId {:016X}, chunkType {}, version {} adopted: the connection "
 			    "that requested it had closed",
-			    chunkId, chunkType.toString(), chunkVersion);
+			    chunkId, chunkType.toString(), adoptedVersion);
 			dropLockJob(orphanJobId, orphanListenerId);
 			return LockStart::kInstalled;
 		}

@@ -4,7 +4,7 @@ timeout_set 10 minutes
 # locks on the other chunkservers, with the connection they would report to gone. The next
 # master's lock of the same parts must adopt those locks, so that the end of the write under
 # them is reported to it. Taken for retransmissions, the write end was lost and the chunk stayed
-# locked on the master once the client unlocked it (LS-1185).
+# locked on the master once the client unlocked it.
 CHUNKSERVERS=4 \
 	USE_RAMDISK=YES \
 	CHUNKSERVER_EXTRA_CONFIG="MAX_BLOCKS_PER_HDD_WRITE_JOB = 1|LOG_FLUSH_ON = TRACE" \

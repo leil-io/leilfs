@@ -490,7 +490,8 @@ public:
 	/// A lock whose connection closed or retired reports to no metadata server any more: its
 	/// owner's next request adopts it instead of passing for a retransmission, so that the
 	/// notice of the write under it reaches the connection that asked. The write session that
-	/// joined the lock and the jobs deferred behind it stay as they are.
+	/// joined the lock and the jobs deferred behind it stay as they are, and the lock keeps its
+	/// version unless the request names a newer one.
 	/// @param callback The callback function to be called when the lock is released.
 	/// @param packet The packet to be sent to the master server with the write end status.
 	/// @param chunkId The ID of the chunk to be locked.

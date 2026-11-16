@@ -868,8 +868,8 @@ TEST(ChunkLockOwnershipTest, AdoptionRacesWriteEndAndConnectionClosure) {
 /// Two write sessions on one part share its single lock entry, with or without a master
 /// restart in between: the first end releases the lock and is the only one reported, so the
 /// metadata server takes the part for idle while the second session still writes. This pins
-/// down the known limit of the entry-per-part design (LS-1185, "two sessions share one entry")
-/// and shows that adopting an orphaned lock keeps it where it was, neither wider nor narrower.
+/// down that known limit of the entry-per-part design and shows that adopting an orphaned lock
+/// keeps it where it was, neither wider nor narrower.
 TEST(ChunkLockOwnershipTest, TwoSessionsOnOnePartShareTheLockAndOnlyTheFirstEndIsReported) {
 	for (const bool masterRestarts : {false, true}) {
 		SCOPED_TRACE(masterRestarts ? "the master restarts between the sessions"
@@ -973,6 +973,38 @@ TEST(ChunkLockOwnershipTest, DetachedLockIsAdoptedByItsOwnersNextConnection) {
 	EXPECT_EQ(noticesOfA, 1U);
 	EXPECT_EQ(noticesOffline, 0U);
 	EXPECT_TRUE(pool.isListenerIdle(2));
+}
+
+TEST(ChunkLockOwnershipTest, AdoptionNeverTakesTheLockBackToAnOlderVersion) {
+	MasterJobPool pool("lock-adopt-version", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0), pool.allocateListener(1)};
+	pool.enableIdentityMode();
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	const auto offline = [](ChunkWithType, uint32_t) { return [](uint8_t, void *) {}; };
+
+	// A's lock at version 4 loses its connection, and A's next request names an older version.
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 4, 1),
+	          MasterJobPool::LockStart::kInstalled);
+	pool.changeLockJobsCallback(offline, 1);
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 3, 1),
+	          MasterJobPool::LockStart::kInstalled);
+
+	// The adopted lock stays at version 4: a session at that version joins it, one at 3 does not.
+	EXPECT_EQ(pool.enforceChunkLock(kLockedChunk, chunkType, 3), 0U);
+	const uint64_t joined = pool.enforceChunkLock(kLockedChunk, chunkType, 4);
+	ASSERT_NE(joined, 0U);
+
+	// A newer request after the next closure moves the lock forward, as the part moved.
+	pool.changeLockJobsCallback(offline, 1);
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, kServerA, 5, 1),
+	          MasterJobPool::LockStart::kInstalled);
+	EXPECT_EQ(pool.enforceChunkLock(kLockedChunk, chunkType, 4), 0U);
+	EXPECT_EQ(pool.enforceChunkLock(kLockedChunk, chunkType, 5), joined);
+
+	// The session that joined at version 4 still ends the lock.
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, joined);
+	ASSERT_TRUE(deliverCompletions(pool, descriptors[1], 1));
+	EXPECT_TRUE(pool.isListenerIdle(1));
 }
 
 namespace {
