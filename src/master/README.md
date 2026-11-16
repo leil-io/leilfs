@@ -203,10 +203,13 @@ disconnect, explicit delete, and timeout cleanup. Session ids are still
 allocated through `gFSOperations->newSessionId()`, which records the allocation
 in the changelog for the file-backed master path.
 
-Explicit delete and timeout cleanup both call `matocl_close_files()` to release
-open files and locks. The helper reports whether teardown completed; timeout
-cleanup erases a session only after successful teardown, so a failed transactional
-backend commit can keep the session managed for a later retry.
+Session expiry and deletion release open files and locks in bounded steps
+(up to 1,000 files, with a 50 ms yield target), keeping the master responsive.
+Deletion disconnects all attached connections. Sessions being released reject
+reconnects, and persisted retirement lets cleanup resume after restart without
+changing the sessions-file layout or changelog records. Transactional backends
+page the open-file index and destroy detached caches under the same budget.
+Failed releases remain managed for retry at the next session check.
 
 ## Metadata Persistence
 

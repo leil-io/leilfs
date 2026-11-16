@@ -7208,20 +7208,55 @@ static uint8_t matocl_locks_release(const FsContext &context,
 	return SAUNAFS_STATUS_OK;
 }
 
-bool matocl_close_files(Session *currentSession) {
+/// Progress of a session's release pass after one bounded step.
+enum class SessionReleaseStatus : uint8_t {
+	kDone,     ///< This open-file view is complete; a KV manager may have more pages.
+	kPending,  ///< Continue this view in a later loop step.
+	kStalled,  ///< This view has retryable files; a KV manager may continue later pages first.
+};
+
+/// Requests a bounded cleanup continuation, including deferred session-cache destruction.
+static bool gSessionReleasePending = false;
+
+/// Target time per cleanup step, shared across sessions. An in-flight inode operation or
+/// commit can exceed it; another inode is not started afterwards.
+static constexpr auto kSessionReleaseTimeBudget = std::chrono::milliseconds(50);
+
+/// Visits at most @p budget entries from Session::releaseCursor in inode order, stopping before
+/// starting another inode once @p deadline expires. The current open-file view may be one KV
+/// page. Visited entries consume @p budget; reaching the deadline exhausts it for all sessions.
+static SessionReleaseStatus matocl_close_files(Session *currentSession, size_t &budget,
+                                               std::chrono::steady_clock::time_point deadline) {
 	FsContext context = FsContext::getForMaster(eventloop_time());
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 	const bool contextHasTransaction = fsOpContext.hasReadWriteTransaction();
 
-	// Teardown must preserve backend correctness across partial failures.
-	//
-	// File-backed backends apply release() synchronously, so every processed inode can be erased
-	// from openFilesSet immediately.
-	//
+	auto &openFiles = currentSession->openFilesSet;
+	std::vector<inode_t> stepInodes;
+
+	auto next = openFiles.lower_bound(currentSession->releaseCursor.value_or(0));
+	for (; next != openFiles.end() && stepInodes.size() < budget; ++next) {
+		stepInodes.push_back(*next);
+	}
+
+	bool passEnds = next == openFiles.end();
+	if (!passEnds) { currentSession->releaseCursor = *next; }
+
+	// Budget/deadline yields keep the cursor. Ended or failed views clear it; paged managers
+	// can continue later pages before retrying failed entries at a periodic session check.
+	const auto stepStatus = [&](bool failed) {
+		if (!failed && !passEnds) { return SessionReleaseStatus::kPending; }
+		currentSession->releaseCursor.reset();
+		return failed || !openFiles.empty() ? SessionReleaseStatus::kStalled
+		                                    : SessionReleaseStatus::kDone;
+	};
+
+	if (stepInodes.empty()) { return stepStatus(false); }
+
 	// Transactional KV backends may batch many release() calls into one commit. If a batch commit
-	// fails, the backend state for that batch is rolled back, so those inodes must remain in
+	// fails, that batch may be rolled back or have an unknown outcome, so its inodes must remain in
 	// openFilesSet. Callers that keep the session managed can retry them later. Only inodes from
 	// successfully committed batches are erased here.
 	//
@@ -7230,8 +7265,12 @@ bool matocl_close_files(Session *currentSession) {
 	// transaction, so retrying here could duplicate those effects without a
 	// matching backend state change. Failed inodes stay in openFilesSet so later
 	// session-management or timeout-driven cleanup can retry them.
+	//
+	// The cursor carries unvisited files to later loop steps when the budget/deadline is reached.
+	// Failed files wait for a new pass at a periodic session check. For KV backends, retries
+	// reload remaining entries from the persistent index even if the cached page was discarded.
 	std::vector<inode_t> pendingBatch;
-	std::vector<inode_t> committed;
+	std::vector<inode_t> released;
 	if (contextHasTransaction) { pendingBatch.reserve(kTransactionBatchSize); }
 	SessionLockWakeUps pendingWakeUps;
 	const auto wakeUp = [&pendingWakeUps] {
@@ -7242,8 +7281,8 @@ bool matocl_close_files(Session *currentSession) {
 		matoclserv_deliver_recorded_now();
 	};
 
-	// Files with unreadable lock queues, or whose release the backend refused, stay open in the
-	// session for a later cleanup.
+	// Keep skipped or refused entries in this view for retry; KV managers retain their stored
+	// references if the in-memory page is later discarded.
 	std::vector<inode_t> refused;
 
 	// Commits one pending batch for transactional backends.
@@ -7253,11 +7292,7 @@ bool matocl_close_files(Session *currentSession) {
 			return false;
 		}
 		wakeUp();
-
-		if (!isFinal) {
-			committed.insert(committed.end(), pendingBatch.begin(), pendingBatch.end());
-		}
-
+		released.insert(released.end(), pendingBatch.begin(), pendingBatch.end());
 		pendingBatch.clear();
 
 		if (!isFinal) {
@@ -7269,9 +7304,16 @@ bool matocl_close_files(Session *currentSession) {
 	};
 
 	bool anyFailure = false;
-	size_t pendingOperations = currentSession->openFilesSet.size();
+	size_t pendingOperations = stepInodes.size();
+	size_t visited = 0;
 
-	for (inode_t openFileInode : currentSession->openFilesSet) {
+	for (inode_t openFileInode : stepInodes) {
+		if (std::chrono::steady_clock::now() >= deadline) {
+			currentSession->releaseCursor = openFileInode;
+			passEnds = false;
+			break;
+		}
+		++visited;
 		pendingOperations--;
 
 		// An unreadable queue must keep only its file open, without discarding earlier cleanup.
@@ -7317,17 +7359,19 @@ bool matocl_close_files(Session *currentSession) {
 				safs::log_err(
 				    "{}: batch commit failed while closing files for session {}; "
 				    "leaving {} inode(s) from this batch plus {} un-started "
-				    "inodes in openFilesSet for callers that can retry later",
+				    "inodes of this step in openFilesSet for callers that can retry later",
 				    __func__, currentSession->sessionId, pendingBatch.size(), pendingOperations);
 				anyFailure = true;
 				break;
 			}
 		} else {
 			wakeUp();
+			released.push_back(openFileInode);
 		}
 	}
 
-	// A skipped final inode still leaves earlier releases to commit.
+	// Commit remaining staged releases on a successful step, including after a deadline yield
+	// or a skipped final inode.
 	if (!anyFailure && contextHasTransaction && !pendingBatch.empty() &&
 	    !flushBatch(/*isFinal=*/true)) {
 		safs::log_err("{}: final batch commit failed for session {}", __func__,
@@ -7335,15 +7379,12 @@ bool matocl_close_files(Session *currentSession) {
 		anyFailure = true;
 	}
 
-	if (!anyFailure) {
-		currentSession->openFilesSet.clear();
-	} else {
-		for (inode_t inode : committed) { currentSession->openFilesSet.erase(inode); }
-	}
+	for (inode_t inode : released) { openFiles.erase(inode); }
+	for (inode_t inode : refused) { openFiles.insert(inode); }
+	budget -= visited;
+	if (std::chrono::steady_clock::now() >= deadline) { budget = 0; }
 
-	for (inode_t inode : refused) { currentSession->openFilesSet.insert(inode); }
-
-	return !anyFailure && refused.empty();
+	return stepStatus(anyFailure);
 }
 
 void matoclserv_session_files(matoclserventry *eptr, [[maybe_unused]] const uint8_t *data,
@@ -7375,7 +7416,31 @@ void matoclserv_session_files(matoclserventry *eptr, [[maybe_unused]] const uint
 	matoclserv_createpacket(eptr, std::move(reply));
 }
 
-bool matocl_session_timedout(Session *currentSession) { return matocl_close_files(currentSession); }
+/// Runs one bounded release step over the current open-file view. Only @p startPass starts
+/// an inactive cursor; otherwise the manager must already have queued this view.
+/// @return true when this view is complete. The manager checks for remaining KV pages and
+/// earlier failures before removing the session.
+static bool matocl_session_timedout(Session *currentSession, size_t &budget, bool startPass,
+                                    std::chrono::steady_clock::time_point deadline) {
+	if (!currentSession->releaseCursor) {
+		if (!startPass) { return false; }
+		// Retirement must survive a restart between this batch and the next one.
+		if (!matoclserv_begin_session_release(*currentSession)) { return false; }
+		currentSession->releaseCursor = 0;
+	}
+
+	switch (matocl_close_files(currentSession, budget, deadline)) {
+	case SessionReleaseStatus::kDone:
+		return true;
+	case SessionReleaseStatus::kPending:
+		gSessionReleasePending = true;
+		return false;
+	case SessionReleaseStatus::kStalled:
+		return false;
+	}
+
+	return false;
+}
 
 void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint32_t length) {
 	uint8_t status = SAUNAFS_STATUS_OK;
@@ -7393,16 +7458,26 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint3
 		}
 	}
 
-	// Where sessions live in a shared store, the session is released there, whichever server
-	// serves it; its server then refuses the client's work. Session ids are 32-bit: a wider id
-	// names no session, and narrowing it would name another one.
-	status = sessionId > std::numeric_limits<uint32_t>::max()
-	             ? static_cast<uint8_t>(SAUNAFS_ERROR_BADSESSIONID)
-	             : matoclserv_release_session_now(
-	                   static_cast<uint32_t>(sessionId),
-	                   [](Session *session) { return matocl_close_files(session); });
+	// Shared-store backends retire the session before bounded cleanup, even if served elsewhere.
+	// Reject ids outside 32 bits instead of narrowing them to a different session's id.
+	size_t budget = kSessionReleaseBatchSize;
+	const auto deadline = std::chrono::steady_clock::now() + kSessionReleaseTimeBudget;
+
+	status =
+	    sessionId > std::numeric_limits<uint32_t>::max()
+	        ? static_cast<uint8_t>(SAUNAFS_ERROR_BADSESSIONID)
+	        : matoclserv_release_session_now(
+	              static_cast<uint32_t>(sessionId), [&budget, deadline](Session *session) {
+		              return matocl_session_timedout(session, budget, /*startPass=*/true, deadline);
+	              });
+
 	if (status != SAUNAFS_ERROR_ENOTSUP) {
-		if (target != nullptr) { target->mode = ClientConnectionMode::KILL; }
+		for (const auto &entry : matoclservList) {
+			if (entry->sessionData && entry->sessionData->sessionId == sessionId) {
+				entry->mode = ClientConnectionMode::KILL;
+			}
+		}
+		if (status == SAUNAFS_STATUS_OK) { gSessionReleasePending = true; }
 		if (status == SAUNAFS_ERROR_BADSESSIONID) {
 			safs::log_err("SAU_CLTOMA_DELETE_SESSION - session not found (session id: {})",
 			              sessionId);
@@ -7413,22 +7488,57 @@ void matoclserv_session_delete(matoclserventry *eptr, const uint8_t *data, uint3
 	} else {
 		status = SAUNAFS_STATUS_OK;
 		matoclserv_close_session(sessionId);
-		target->mode = ClientConnectionMode::KILL;
-		// Force closure of files immediately.
-		// Otherwise, it will take a few moments before the session
-		// times out and the files are removed automatically, unless the
-		// peer reconnects during that time
-		matocl_close_files(target->sessionData);
+		auto *session = target->sessionData;
+
+		// Close all local connections; later file-backed steps wait for the last disconnect.
+		for (const auto &entry : matoclservList) {
+			if (entry->sessionData == session) { entry->mode = ClientConnectionMode::KILL; }
+		}
+
+		if (!matoclserv_begin_session_release(*session)) {
+			status = SAUNAFS_ERROR_IO;
+		} else {
+			// Start one bounded step before replying; disconnection schedules any remaining work.
+			if (!session->releaseCursor) { session->releaseCursor = 0; }
+			matocl_close_files(session, budget, deadline);
+		}
 	}
+
+	if (gSessionReleasePending) { eventloop_make_next_poll_nonblocking(); }
 
 	MessageBuffer reply;
 	matocl::deleteSession::serialize(reply, status);
 	matoclserv_createpacket(eptr, reply);
 }
 
+/// Discovers expired sessions and starts or restarts their release passes. Empty sessions can
+/// be removed here; matocl_session_release_a_bit() continues the remaining file cleanup.
 void matocl_session_check() {
-	matoclserv_remove_timed_out_sessions(
-	    [](Session *currentSession) { return matocl_session_timedout(currentSession); });
+	size_t budget = 0;
+	const auto deadline = std::chrono::steady_clock::now() + kSessionReleaseTimeBudget;
+
+	matoclserv_remove_timed_out_sessions([&budget, deadline](Session *session) {
+		return matocl_session_timedout(session, budget, /*startPass=*/true, deadline);
+	});
+
+	// Backends can have another page to load even when the current page was empty.
+	gSessionReleasePending = true;
+	eventloop_make_next_poll_nonblocking();
+}
+
+/// Continues queued cleanup under a fresh shared file budget and soft deadline. More work
+/// requests a nonblocking poll; stalled passes wait for the periodic session check.
+void matocl_session_release_a_bit() {
+	if (!gSessionReleasePending) { return; }
+	size_t budget = kSessionReleaseBatchSize;
+	const auto deadline = std::chrono::steady_clock::now() + kSessionReleaseTimeBudget;
+
+	gSessionReleasePending =
+	    matoclserv_continue_session_releases(budget, [&budget, deadline](Session *session) {
+		    return matocl_session_timedout(session, budget, /*startPass=*/false, deadline);
+	    });
+
+	if (gSessionReleasePending) { eventloop_make_next_poll_nonblocking(); }
 }
 
 /// Ends @p cleanup's chunk operation in @p fsOpContext. A lock the store no longer holds for
@@ -7519,12 +7629,35 @@ void matocl_before_disconnect(matoclserventry *eptr) {
 
 		if (eptr->sessionData->connections == 0) {
 			eptr->sessionData->disconnectedTimestamp = eventloop_time();
+			// Wake file-backed release work once the last connection leaves.
+			if (eptr->sessionData->releaseCursor) { gSessionReleasePending = true; }
 		}
 
 		matoclserv_session_disconnected(eptr->sessionData);
 	}
 
 	matoclserv_remove_entry_from_unlock_list(eptr);
+}
+
+matoclserventry *matoclserv_test_connection(Session *session) {
+	auto eptr = std::make_unique<matoclserventry>();
+	eptr->socket = -1;
+	eptr->pDescPos = -1;
+	eptr->registered = ClientState::kRegistered;
+	eptr->mode = ClientConnectionMode::HEADER;
+	eptr->adminTask = AdminTask::kNone;
+	eptr->sessionData = session;
+	matoclservList.push_front(std::move(eptr));
+	return matoclservList.front().get();
+}
+
+void matoclserv_test_disconnect(matoclserventry *eptr) {
+	matocl_before_disconnect(eptr);
+	matoclservList.remove_if([eptr](const auto &entry) { return entry.get() == eptr; });
+}
+
+bool matoclserv_test_connection_is_killed(const matoclserventry *eptr) {
+	return eptr->mode == ClientConnectionMode::KILL;
 }
 
 void matoclserv_gotpacket(matoclserventry *eptr, uint32_t type, const uint8_t *data,
@@ -8413,6 +8546,7 @@ void matoclserv_become_master() {
 	}
 
 	eventloop_timeregister(TIMEMODE_RUN_LATE, 10, 0, matocl_session_check);
+	eventloop_eachloopregister(matocl_session_release_a_bit);
 
 	// Only backends that record lock answers need a periodic pass to deliver them.
 	if (matoclserv_records_lock_answers()) {

@@ -136,3 +136,16 @@ void matoclserv_request_commit_pipeline_maintenance();
 
 /// Ends a previously requested maintenance window and lets held client operations resume.
 void matoclserv_complete_commit_pipeline_maintenance();
+
+struct matoclserventry;
+struct Session;
+
+/// Adds a registered test connection to the connection list. The caller maintains
+/// Session::connections. A null @p session represents an admin connection.
+matoclserventry *matoclserv_test_connection(Session *session);
+
+/// Runs disconnect bookkeeping and removes a connection from matoclserv_test_connection().
+void matoclserv_test_disconnect(matoclserventry *eptr);
+
+/// Whether this test connection is marked KILL.
+bool matoclserv_test_connection_is_killed(const matoclserventry *eptr);
