@@ -177,6 +177,28 @@ TEST(SessionManagerFileTests, CurrentFormatRoundTripsThroughStoreAndLoad) {
 	EXPECT_EQ(visited, 1);
 }
 
+TEST(SessionManagerFileTests, RetirementPersistsWithoutChangingTheSessionsFormat) {
+	TemporaryDirectory temp("/tmp", "session-file-retired");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile writer;
+	auto session = makeSession(42);
+	session->peerIpAddress = 0x7F000001;
+	session->newSession = 3;  // Explicitly deleted sessions must retain their retirement too.
+	auto *stored = writer.addSession(std::move(session));
+	ASSERT_TRUE(writer.beginSessionRelease(*stored));
+
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+	EXPECT_EQ(reader.findSession(42), nullptr);
+	size_t records = 0;
+	reader.forEachSession([&records](const Session &loaded) {
+		++records;
+		EXPECT_TRUE(loaded.closing);
+		EXPECT_EQ(loaded.peerIpAddress, 0U);
+	});
+	EXPECT_EQ(records, 1U);
+}
+
 TEST(SessionManagerFileTests, OldSfsSessionHeaderIsRejected) {
 	TemporaryDirectory temp("/tmp", "session-file-old-sfs");
 	ScopedCurrentDirectory cwd(temp.name());
@@ -257,6 +279,21 @@ TEST(SessionManagerBaseTests, FindSessionLeavesRegularNewSessionUntouched) {
 	EXPECT_EQ(found->connections, 2U);
 }
 
+TEST(SessionManagerBaseTests, FindSessionRefusesClosingSession) {
+	TestSessionManager manager;
+	auto session = makeSession(42);
+	session->newSession = 3;
+	session->connections = 0;
+	session->disconnectedTimestamp = 12345;
+	session->closing = true;
+	const Session *stored = manager.addSession(std::move(session));
+
+	EXPECT_EQ(manager.findSession(42), nullptr);
+	EXPECT_EQ(stored->connections, 0U);
+	EXPECT_EQ(stored->newSession, 3U);
+	EXPECT_EQ(stored->disconnectedTimestamp, 12345U);
+}
+
 // ---------------------------------------------------------------------------
 // closeSession()
 // ---------------------------------------------------------------------------
@@ -313,6 +350,7 @@ TEST(SessionManagerBaseTests, CloseSessionOnUnknownIdIsNoOp) {
 //
 // isTimedOut():
 //   connections != 0                                    => not timed out
+//   closing                                             => timed out (teardown running)
 //   newSession > 1 && dts < now                         => timed out (pending close)
 //   newSession == 1 && dts + sustain < now              => timed out (regular)
 //   newSession == 0 && dts + 7200 < now                 => timed out (legacy)
@@ -353,6 +391,29 @@ TEST(SessionManagerBaseTests, RemoveTimedOutReapsPendingCloseSession) {
 	EXPECT_EQ(timedOut, std::vector<uint32_t>{1});
 	EXPECT_EQ(manager.removedSessionIds, std::vector<uint32_t>{1});
 	EXPECT_EQ(manager.findSessionEntry(1), nullptr);
+}
+
+TEST(SessionManagerBaseTests, RemoveTimedOutContinuesDisconnectedClosingSession) {
+	TestSessionManager manager;
+	auto connected = makeSession(1);
+	connected->closing = true;
+	manager.addSession(std::move(connected));
+
+	// Disconnected in this second, long before the sustain time would run out.
+	auto disconnected = makeSession(2);
+	disconnected->connections = 0;
+	disconnected->disconnectedTimestamp = 200;
+	disconnected->closing = true;
+	manager.addSession(std::move(disconnected));
+
+	std::vector<uint32_t> timedOut;
+	manager.removeTimedOutSessions(200, 100'000, [&](Session *timedOutSession) {
+		timedOut.push_back(timedOutSession->sessionId);
+		return false;
+	});
+
+	EXPECT_EQ(timedOut, std::vector<uint32_t>{2});
+	EXPECT_TRUE(manager.removedSessionIds.empty());
 }
 
 TEST(SessionManagerBaseTests, RemoveTimedOutHonorsStrictLessThanSustainBoundary) {
