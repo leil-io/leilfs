@@ -49,7 +49,7 @@ struct ChunkMutationDiscovery {
 	uint64_t connectionGeneration = 0;  ///< Invalidated by connection joins and departures.
 	bool complete = false;              ///< All targeted peers replied without busy parts.
 
-	/// Resets the confirmation if required discovery is missing or stale.
+	/// Resets missing or stale discovery, including admission to client-assisted truncation.
 	/// @param plan The proposed write or truncate, including failed plans.
 	/// @param inventoryIncomplete Whether a connected peer's inventory is incomplete.
 	/// @param currentConnectionGeneration Current peer-set generation to validate against.
@@ -58,7 +58,8 @@ struct ChunkMutationDiscovery {
 	                   uint64_t currentConnectionGeneration);
 };
 
-/// Checks mutation discovery against connected inventory recovery; exempts identity backends.
+/// Checks discovery during inventory recovery; steady state uses maintained counters.
+/// Identity backends are exempt, and client-assisted truncates are checked before zeroing.
 /// @param plan The proposed write or truncate, including failed plans.
 /// @param[in,out] discovery Request confirmation, reset if a new query is required.
 /// @return SAUNAFS_STATUS_OK if discovery is unnecessary or confirmed;

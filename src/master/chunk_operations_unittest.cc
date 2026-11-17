@@ -754,6 +754,30 @@ TEST_F(ChunkMutationPlanTest, DiscoveryAlsoBlocksInPlaceTruncation) {
 	EXPECT_EQ(chunk_get_mutation_parts(17, 3, parts, 255), SAUNAFS_STATUS_OK);
 }
 
+TEST_F(ChunkMutationPlanTest, ClientAssistedTruncateDiscoversBeforeAnUnchangedWriteStart) {
+	const ChunkPartType parity(slice_traits::ec::getSliceType(3, 1), 3);
+	install({{&servers[0], {}}, {&servers[1], parity}});
+	const auto truncate = chunk_plan_truncate(17, 0, 1000, 1, true, false);
+	ASSERT_EQ(truncate.status, SAUNAFS_ERROR_NOTPOSSIBLE);
+	const auto write = chunk_plan_modify(17, 0, 1, false, 0);
+	ASSERT_EQ(write.status, SAUNAFS_STATUS_OK);
+	ASSERT_EQ(write.targetVersion, write.chunkVersion);
+
+	// Ordinary writes reuse their version, but an EC truncate must discover
+	// before granting the same lock: its client is about to zero existing data.
+	ChunkMutationDiscovery discovery;
+	EXPECT_FALSE(discovery.requiresQuery(write, true, 9));
+	EXPECT_FALSE(discovery.requiresQuery(truncate, false, 9));
+	ASSERT_TRUE(discovery.requiresQuery(truncate, true, 9));
+	EXPECT_EQ(discovery.chunkId, 17U);
+	EXPECT_EQ(discovery.version, 3U);
+
+	discovery.complete = true;
+	EXPECT_FALSE(discovery.requiresQuery(truncate, true, 9));
+	EXPECT_FALSE(discovery.requiresQuery(write, true, 9));
+	EXPECT_TRUE(discovery.requiresQuery(truncate, true, 10));
+}
+
 TEST_F(ChunkMutationPlanTest, IdentityBackendDoesNotRequireInventoryDiscovery) {
 	class IdentityOperations : public ChunkOperationsInMemory {
 		bool requestsChunkserverIdentity() const override { return true; }

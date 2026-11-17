@@ -150,6 +150,41 @@ struct PendingDiskStateRefresh {
 // Only the small active-peer list needs separately allocated stable positions.
 static std::list<matocsserventry *> gDiskStateRefreshServers;
 
+// Number of active registrations with incomplete inventories. Updated on
+// inventory transitions so client requests can check in O(1), without a scan.
+static std::size_t gIncompleteChunkInventories = 0;
+
+// Subset of incomplete inventories that cannot answer chunk-location queries
+// (for example, peers using a protocol version without query support).
+static std::size_t gUnqueryableChunkInventories = 0;
+
+class IncompleteChunkInventory {
+public:
+	~IncompleteChunkInventory() { finish(); }
+
+	void begin(bool queryable) {
+		finish();
+		state_ = queryable ? State::kQueryable : State::kUnqueryable;
+		++gIncompleteChunkInventories;
+		if (!queryable) { ++gUnqueryableChunkInventories; }
+	}
+
+	void finish() {
+		if (state_ == State::kComplete) { return; }
+		--gIncompleteChunkInventories;
+		if (state_ == State::kUnqueryable) { --gUnqueryableChunkInventories; }
+		state_ = State::kComplete;
+	}
+
+private:
+	enum class State : uint8_t {
+		kComplete,     // Inventory registration ended; it does not gate discovery.
+		kQueryable,    // Registration is active and the peer can answer queries.
+		kUnqueryable   // Registration is active, but the peer cannot answer queries.
+	};
+	State state_{State::kComplete};
+};
+
 struct matocsserventry {
 	matocsserventry() : inputPacket(kMaxPacketSize) {}
 	~matocsserventry() {
@@ -193,6 +228,9 @@ struct matocsserventry {
 	/// Inventory completion: SPACE for push, END for pull. This bounds the client
 	/// discovery window; disk scans may still announce chunks afterward.
 	bool chunkRegistrationComplete{false};
+	/// Tracks this connection's inventory until SPACE/END or destruction.
+	/// Destruction also clears the count when a peer disconnects mid-registration.
+	IncompleteChunkInventory incompleteInventory;
 
 	/// True when this connection registers through the master-driven (pull)
 	/// protocol (SAU_MATOCS_REGISTER_CHUNKS_START was sent to it).
@@ -1438,6 +1476,9 @@ void matocsserv_register_host(matocsserventry *eptr, uint32_t version, uint32_t 
 	eptr->pullBulkSize = 0;
 	eptr->pullInitialCreditsPending = 0;
 	eptr->pullCreditsOwed = 0;
+	if (!gChunkOperations->requestsChunkserverIdentity()) {
+		eptr->incompleteInventory.begin(eptr->version >= kFirstVersionWithChunkLocationQuery);
+	}
 
 	if (eptr->registrationState.identityPending()) {
 		safs::log_info("requesting chunkserver identity from {}:{}", eptr->serviceStrIp,
@@ -1492,11 +1533,7 @@ static bool matocsserv_can_answer_chunk_queries(const matocsserventry *eptr) {
 }
 
 bool matocsserv_has_incomplete_chunk_registration() {
-	if (gChunkOperations->requestsChunkserverIdentity()) { return false; }
-	return std::any_of(matocsservList.begin(), matocsservList.end(), [](const auto &entry) {
-		return entry->mode == ChunkserverConnectionMode::CONNECTED && entry->csdb != nullptr &&
-		       !entry->chunkRegistrationComplete;
-	});
+	return gIncompleteChunkInventories != 0 && !gChunkOperations->requestsChunkserverIdentity();
 }
 
 bool ChunkMutationDiscovery::requiresQuery(const ChunkMutationPlan &plan, bool inventoryIncomplete,
@@ -1505,7 +1542,12 @@ bool ChunkMutationDiscovery::requiresQuery(const ChunkMutationPlan &plan, bool i
 	    plan.status == SAUNAFS_ERROR_CHUNKLOST || plan.status == SAUNAFS_ERROR_NOCHUNKSERVERS;
 	const bool versionMove =
 	    plan.targetChunkId == plan.chunkId && plan.targetVersion > plan.chunkVersion;
-	if (!inventoryIncomplete || plan.chunkId == 0 || (!missingLocations && !versionMove)) {
+
+	// Parity truncation needs client-side zeroing, even if its write start would
+	// reuse the current version. Confirm locations before authorizing that work.
+	const bool clientAssistedTruncate = plan.status == SAUNAFS_ERROR_NOTPOSSIBLE;
+	if (!inventoryIncomplete || plan.chunkId == 0 ||
+	    (!missingLocations && !versionMove && !clientAssistedTruncate)) {
 		return false;
 	}
 	if (complete && chunkId == plan.chunkId && version == plan.chunkVersion &&
@@ -1518,19 +1560,12 @@ bool ChunkMutationDiscovery::requiresQuery(const ChunkMutationPlan &plan, bool i
 
 uint8_t matocsserv_check_mutation_discovery(const ChunkMutationPlan &plan,
                                             ChunkMutationDiscovery &discovery) {
-	if (gChunkOperations->requestsChunkserverIdentity()) { return SAUNAFS_STATUS_OK; }
+	if (!matocsserv_has_incomplete_chunk_registration()) { return SAUNAFS_STATUS_OK; }
 
-	bool inventoryIncomplete = false;
-	for (const auto &entry : matocsservList) {
-		if (entry->mode != ChunkserverConnectionMode::CONNECTED || entry->csdb == nullptr ||
-		    entry->chunkRegistrationComplete) {
-			continue;
-		}
-		inventoryIncomplete = true;
-		// A legacy or handshaking peer cannot confirm its unreported copies yet.
-		if (!matocsserv_can_answer_chunk_queries(entry.get())) { discovery.complete = false; }
-	}
-	return discovery.requiresQuery(plan, inventoryIncomplete, gChunkQueryConnectionGeneration)
+	// A legacy peer cannot confirm its unreported copies yet.
+	if (gUnqueryableChunkInventories != 0) { discovery.complete = false; }
+
+	return discovery.requiresQuery(plan, true, gChunkQueryConnectionGeneration)
 	           ? SAUNAFS_ERROR_NOCHUNKSERVERS
 			   : SAUNAFS_STATUS_OK;
 }
@@ -2060,6 +2095,7 @@ void matocsserv_sau_register_chunks_end(matocsserventry *eptr, const std::vector
 	cstoma::registerChunksEnd::deserialize(data, chunkCount);
 
 	eptr->chunkRegistrationComplete = true;
+	eptr->incompleteInventory.finish();
 	eptr->pullRegistrationConfirmed = false;
 	eptr->pullInitialCreditsPending = 0;
 	eptr->pullCreditsOwed = 0;
@@ -2148,6 +2184,7 @@ void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint
 	// the shared registration budget on a stream that ignores them.
 	if (!eptr->pullRegistration || eptr->registrationChunksSeen) {
 		eptr->chunkRegistrationComplete = true;
+		eptr->incompleteInventory.finish();
 		eptr->pullRegistration = false;
 		eptr->pullRegistrationConfirmed = false;
 		eptr->pullInitialCreditsPending = 0;

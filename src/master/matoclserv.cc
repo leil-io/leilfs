@@ -3596,11 +3596,14 @@ static void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header,
 			truncState->lockId = reqLockId;
 		}
 		truncState->discoveryRequired = false;
-		ctx.setChunkMutationCheck([truncState](const ChunkMutationPlan &plan) {
-			const auto status = matocsserv_check_mutation_discovery(plan, truncState->discovery);
-			truncState->discoveryRequired = status != SAUNAFS_STATUS_OK;
-			return status;
-		});
+		if (!isEnd) {
+			ctx.setChunkMutationCheck([truncState](const ChunkMutationPlan &plan) {
+				const auto status =
+				    matocsserv_check_mutation_discovery(plan, truncState->discovery);
+				truncState->discoveryRequired = status != SAUNAFS_STATUS_OK;
+				return status;
+			});
+		}
 		auto clearCheck = makeLambdaGuard([&ctx] { ctx.setChunkMutationCheck({}); });
 		truncState->phase = TruncPhase::kError;
 		truncState->writeStartStatus.reset();
@@ -3623,9 +3626,8 @@ static void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header,
 				st = gChunkOperations->canUnlock(truncState->chunkId, truncState->lockId);
 			}
 			if (st != SAUNAFS_STATUS_OK) { return st; }
-			// Transactional backends validate the stored lock here; the cache may be stale.
-			st = gFSOperations->endSetLength(ctx, truncState->chunkId, truncState->lockId);
-			if (st != SAUNAFS_STATUS_OK) { return st; }
+			// END completes the admitted operation under its existing lock. Keep it
+			// until finalization; transactional truncation validates the stored lock.
 		}
 
 		st =
@@ -3636,6 +3638,7 @@ static void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header,
 		// In case of SAUNAFS_ERROR_NOTPOSSIBLE we have to tell the client to write the
 		// chunk before truncating (new client truncating an xor/ec chunk does it itself).
 		if (st == SAUNAFS_ERROR_NOTPOSSIBLE && !isEnd) {
+			if (truncState->discoveryRequired) { return SAUNAFS_ERROR_NOTDONE; }
 			uint8_t chunkOperationPending;
 			st = gFSOperations->writeChunk(context, ctx, inode, truncState->length / SFSCHUNKSIZE,
 			                               &truncState->lockId, &truncState->chunkId,
@@ -3659,8 +3662,18 @@ static void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header,
 			// comes via matoclserv_chunk_status.
 			truncState->phase = TruncPhase::kDelayed;
 		} else if (st != SAUNAFS_STATUS_OK) {
+			// No storage work was queued: release only this END's owned in-memory lock.
+			if (isEnd && !ctx.hasReadWriteTransaction() &&
+			    gChunkOperations->canUnlock(truncState->chunkId, truncState->lockId) ==
+			        SAUNAFS_STATUS_OK) {
+				gFSOperations->endSetLength(ctx, truncState->chunkId, truncState->lockId);
+			}
 			return st;
 		} else {
+			if (isEnd) {
+				st = gFSOperations->endSetLength(ctx, truncState->chunkId, truncState->lockId);
+				if (st != SAUNAFS_STATUS_OK) { return st; }
+			}
 			st = gFSOperations->doSetLength(context, ctx, inode, truncState->length,
 			                                truncState->attr);
 			if (st != SAUNAFS_STATUS_OK) { return st; }
@@ -3692,10 +3705,15 @@ static void matoclserv_fuse_truncate(matoclserventry *eptr, PacketHeader header,
 
 	auto sendTruncateReply = [eptr, serializer, messageId, inode, truncState, allowDefer, header,
 	                          request](uint8_t replyStatus) {
-		if (truncState->discoveryRequired && allowDefer &&
-		    matoclserv_defer_chunk_location_wait(eptr, truncState->discovery.chunkId, header,
-		                                         request, truncState->discovery)) {
-			return;
+		if (truncState->discoveryRequired) {
+			if (allowDefer &&
+			    matoclserv_defer_chunk_location_wait(eptr, truncState->discovery.chunkId, header,
+			                                         request, truncState->discovery)) {
+				return;
+			}
+			// Existing mounts retry NOTDONE for truncate, but surface NOCHUNKSERVERS
+			// as EINVAL. No client data has been changed at this admission boundary.
+			replyStatus = SAUNAFS_ERROR_NOTDONE;
 		}
 		std::vector<uint8_t> reply;
 		if (replyStatus == SAUNAFS_STATUS_OK && truncState->phase == TruncPhase::kReplyWriteChunk) {
