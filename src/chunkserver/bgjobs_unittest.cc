@@ -865,6 +865,63 @@ TEST(ChunkLockOwnershipTest, AdoptionRacesWriteEndAndConnectionClosure) {
 	RecordProperty("fresh_installs", kRounds - adoptions);
 }
 
+/// After a restart or a failover, Master's first write start on a chunk raises its version along
+/// with the lock. A write session that joined the dead master's lock may still be flushing; the
+/// version change waits behind it, so the next master's lock is a new one, installed once that
+/// session ended, and never a share of the orphaned lock.
+TEST(ChunkLockOwnershipTest, NextMastersVersionChangeWaitsForTheSessionUnderAnOrphanedLock) {
+	MasterJobPool pool("lock-orphan-session", 1, 10);
+	const std::vector<int> descriptors{pool.allocateListener(0)};
+	const auto chunkType = slice_traits::standard::ChunkPartType();
+	uint32_t noticesOffline = 0;
+	uint32_t noticesOfNext = 0;
+	uint32_t versionChanges = 0;
+	const auto offline = [&](ChunkWithType, uint32_t) {
+		return [&](uint8_t, void *) { ++noticesOffline; };
+	};
+	const JobPool::JobCallback noticeOfNext = [&](uint8_t, void *) { ++noticesOfNext; };
+	const auto drain = [&](auto done) {
+		for (int attempt = 0; attempt < 10 && !done(); ++attempt) {
+			deliverCompletions(pool, descriptors[0], 0);
+		}
+	};
+
+	// Write A joined the first master's lock, and the master's connection closed.
+	ASSERT_EQ(pool.startChunkLock({}, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t sessionA = pool.enforceChunkLock(kLockedChunk, chunkType, 0);
+	ASSERT_NE(sessionA, 0U);
+	pool.changeLockJobsCallback(offline, 0);
+
+	// The next master's version change, sent with its lock, waits while A's session is open.
+	pool.addJobIfNotLocked(
+	    {kLockedChunk, chunkType}, JobPool::ChunkOperation::ChangeVersion,
+	    [&](uint8_t, void *) { ++versionChanges; }, nullptr,
+	    []() -> uint8_t { return SAUNAFS_STATUS_OK; }, 0);
+	pool.processCompletedJobs(0);
+	EXPECT_EQ(versionChanges, 0U);
+
+	// A's end goes to the closed connection and lets the version change go ahead.
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, sessionA);
+	drain([&] { return noticesOffline == 1 && versionChanges == 1; });
+	EXPECT_EQ(noticesOffline, 1U);
+	EXPECT_EQ(versionChanges, 1U);
+	EXPECT_EQ(noticesOfNext, 0U);
+
+	// The lock installed after the version change is a new one: write B's session gets another
+	// identity, and its end reaches the next master.
+	ASSERT_EQ(pool.startChunkLock(noticeOfNext, nullptr, kLockedChunk, chunkType, 0, 0, 0),
+	          MasterJobPool::LockStart::kInstalled);
+	const uint64_t sessionB = pool.enforceChunkLock(kLockedChunk, chunkType, 0);
+	ASSERT_NE(sessionB, 0U);
+	EXPECT_NE(sessionB, sessionA);
+	pool.endChunkLock(kLockedChunk, chunkType, SAUNAFS_STATUS_OK, sessionB);
+	drain([&] { return noticesOfNext == 1; });
+	EXPECT_EQ(noticesOfNext, 1U);
+	EXPECT_EQ(noticesOffline, 1U);
+	EXPECT_TRUE(pool.isListenerIdle(0));
+}
+
 /// Two write sessions on one part share its single lock entry, with or without a master
 /// restart in between: the first end releases the lock and is the only one reported, so the
 /// metadata server takes the part for idle while the second session still writes. This pins
