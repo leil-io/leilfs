@@ -9,6 +9,9 @@ setup_local_empty_saunafs() {
 	local use_legacy=${USE_LEGACY:-}
 	local use_saunafsXX=${START_WITH_LEGACY_SAUNAFS:-}
 	local metadata_backend=${METADATA_BACKEND:-FILE}
+	# The master's empty metadata file is named metadata.<this>: "leil" as packaged since the
+	# data file rebrand, "sfs" (the default) as it was before, which old binaries also need
+	local master_data_file_extension=${MASTER_DATA_FILE_EXTENSION:-sfs}
 	local use_ramdisk=${USE_RAMDISK:-}
 	local use_zoned_disks=${USE_ZONED_DISKS:-}
 	local zone_size_mb=${ZONE_SIZE_MB:-256}
@@ -603,7 +606,7 @@ add_metadata_server_() {
 	if [[ "${saunafs_info_[metadata_backend]}" == "FILE" ]]; then
 		if [[ "$personality" == "master" ]]; then
 			cp "$masterserver_master_cfg" "$masterserver_cfg"
-			echo -n 'SFSM NEW' >"$masterserver_data_path/metadata.sfs"
+			echo -n 'SFSM NEW' >"$masterserver_data_path/metadata.${master_data_file_extension}"
 		elif [[ "$personality" == "shadow" ]]; then
 			cp "$masterserver_shadow_cfg" "$masterserver_cfg"
 		else

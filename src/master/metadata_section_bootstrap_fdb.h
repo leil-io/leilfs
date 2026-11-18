@@ -40,7 +40,7 @@ namespace kv {
 class IKVEngine;
 }
 
-/// Metadata section used for bootstrapping from metadata.sfs
+/// Metadata section used for bootstrapping from metadata.leil
 struct MetadataFileSection {
 	bool matchesSectionTypeOf(const uint8_t *sectionPtr) const {
 		return std::memcmp(sectionPtr, name.data(), name.size()) == 0;
@@ -98,6 +98,6 @@ private:
 	std::unordered_map<std::string, SectionMarker> sectionMarkers_;
 	kv::IKVEngine *kvEngine_ = nullptr;
 
-	/// Sections to bootstrap from metadata.sfs
+	/// Sections to bootstrap from metadata.leil
 	std::vector<MetadataFileSection> metadataFileSections_;
 };

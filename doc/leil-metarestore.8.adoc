@@ -62,14 +62,18 @@ ignore metadata checksum inconsistency while applying changelogs
 
 == FILES
 
-*metadata.sfs*::
+*metadata.leil*::
 Leil File System metadata image as read by *leil-master* process
 
-*metadata.sfs.back*::
+*metadata.leil.back*::
 Leil File System metadata image as left by killed or crashed *leil-master* process
 
-*changelog.***.sfs*::
+*changelog.leil*, *`changelog.leil.*`*::
 Leil File System metadata change logs
+
+Older releases gave these files a *.sfs* extension. *leil-metarestore* also reads
+them under that name, and in autorestore mode writes under the names the master
+uses in that data directory.
 
 == REPORTING BUGS
 

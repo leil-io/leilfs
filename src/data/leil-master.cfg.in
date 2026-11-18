@@ -374,7 +374,7 @@
 
 ## Metadata backend selection for storing and loading metadata.
 ## Allowed values: FILE, FORKLESS.
-## FILE uses the MetadataBackendFile which stores filesystem metadata in `metadata.sfs` file.
+## FILE uses the MetadataBackendFile which stores filesystem metadata in `metadata.leil` file.
 ## FORKLESS enables the MetadataBackendForkless, which stores filesystem metadata in FoundationDB
 ## without forking the master process during metadata dumps.
 ##
