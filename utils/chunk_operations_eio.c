@@ -42,9 +42,9 @@ int EIO_replies = 0;
 // * pread takes 10ms + 1us per 250B if file name contains "pread_only_slow"
 // * pwrite takes 10ms + 1us per 250B if file name contains "pwrite_only_slow"
 // * pwrite takes 10ms + 1ms per KiB if file name contains "pwrite_very_slow"
-// * pwrite waits up to 1s while the file named by CHUNK_OPERATIONS_PWRITE_HOLD exists, if that
+// * pwrite waits up to 5s while the file named by CHUNK_OPERATIONS_PWRITE_HOLD exists, if that
 //   environment variable is set: a test slows the flush of acknowledged buffered writes to about
-//   one write per second, while the chunk stays available to other threads between two writes
+//   one write every 5s, while the chunk stays available to other threads between two writes
 
 // returns -1 on failure and sets errno (via readlink call)
 ssize_t read_filename(int fd, char *buf, int bufsize) {
@@ -55,7 +55,7 @@ ssize_t read_filename(int fd, char *buf, int bufsize) {
 	return readlink(fdpath, buf, bufsize);
 }
 
-// Waits while the hold file named by CHUNK_OPERATIONS_PWRITE_HOLD exists, 1s at most: a write never
+// Waits while the hold file named by CHUNK_OPERATIONS_PWRITE_HOLD exists, 5s at most: a write never
 // keeps its chunk from other threads, such as a registration that waits for it, for longer
 static void wait_for_pwrite_hold(void) {
 	const char *hold = getenv("CHUNK_OPERATIONS_PWRITE_HOLD");
@@ -63,7 +63,7 @@ static void wait_for_pwrite_hold(void) {
 		return;
 	}
 	const struct timespec pause = {0, 10 * 1000 * 1000};  // 10ms
-	for (int waited_ms = 0; waited_ms < 1000 && access(hold, F_OK) == 0; waited_ms += 10) {
+	for (int waited_ms = 0; waited_ms < 5000 && access(hold, F_OK) == 0; waited_ms += 10) {
 		nanosleep(&pause, NULL);
 	}
 }

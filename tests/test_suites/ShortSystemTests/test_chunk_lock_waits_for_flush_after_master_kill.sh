@@ -18,7 +18,7 @@ CHUNKSERVERS=3 \
 	setup_local_empty_saunafs info
 
 # Slow disks keep the last part of a write flushing for a few seconds after the client is done,
-# and the hold file slows every flush to a block per second for as long as it exists. A held
+# and the hold file slows every flush to a block every 5 seconds for as long as it exists. A held
 # write still releases its chunk between two blocks, as the registration with a new master waits
 # for every chunk a job holds.
 hold_file="${TEMP_DIR}/pwrite_hold"
@@ -117,7 +117,7 @@ kill_master_during_flush() {
 	assert_success dd if="${TEMP_DIR}/a" of="${file}" bs=1M conv=fsync status=none
 	hold_flushes
 	chunk=$(first_chunk_and_version_of "${file}")
-	blocks_left_to_flush "${chunk}" $((half / 2)) 40 || return 1
+	blocks_left_to_flush "${chunk}" $((half / 2)) 10 || return 1
 
 	# The client's unlock is in the changelog, so the next master finds the chunk unlocked and
 	# only the held session can keep the next write back
@@ -132,9 +132,9 @@ kill_master_during_flush() {
 attempt=1
 until kill_master_during_flush "${attempt}"; do
 	if ((attempt == 3)); then
-		# The runner was too slow to catch the end of a flush: no verdict on the product.
-		echo "INCONCLUSIVE: the first write had almost flushed when its flush was held, 3 times"
-		test_end
+		# A runner too slow to hold a flush in time checks nothing: fail rather than pass
+		test_fail "the first write had almost flushed when its flush was held, 3 times: the" \
+			"runner is too slow for this test, no verdict on the chunk lock"
 	fi
 	((++attempt))
 done
@@ -165,10 +165,10 @@ chunk_b=$(first_chunk_and_version_of "${file}")
 assert_equals "${chunk_a%%_*}" "${chunk_b%%_*}"
 assert_equals $((16#${chunk_a##*_} + 1)) $((16#${chunk_b##*_}))
 
-if ! blocks_left_to_flush "${chunk_b}" "${half}" 20; then
+if ! blocks_left_to_flush "${chunk_b}" "${half}" 4; then
 	release_flushes
-	echo "INCONCLUSIVE: the second write had almost flushed when its flush was held"
-	test_end
+	test_fail "the second write had almost flushed when its flush was held: the runner is too" \
+		"slow for this test, no verdict on the chunk lock"
 fi
 
 # Write start refusals the mount has logged so far
