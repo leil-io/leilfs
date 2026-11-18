@@ -25,6 +25,7 @@
 #include <sys/eventfd.h>
 #include <sys/syslog.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cstdint>
@@ -629,6 +630,7 @@ void MasterJobPool::changeLockJobsCallback(const LockJobCallbackMaker &lockJobCa
 			auto jobIterator = listenerInfo->jobHash.find(lockedChunkData.lockJobId);
 			if (jobIterator != listenerInfo->jobHash.end()) {
 				jobIterator->second->callback = lockJobCallbackMaker(chunkWithType, listenerId);
+				lockedChunkData.orphaned = true;
 			}
 		}
 	}
@@ -678,6 +680,7 @@ void MasterJobPool::detachLockJobs(const LockJobCallbackMaker &lockJobCallbackMa
 		job->callback = std::move(callback);
 		lockedChunkData.lockJobId = job->jobId;
 		lockedChunkData.listenerId = callbackListenerId;
+		lockedChunkData.orphaned = true;
 		targetInfo->jobHash[job->jobId] = std::move(job);
 	}
 }
@@ -711,13 +714,37 @@ MasterJobPool::LockStart MasterJobPool::startChunkLock(const JobPool::JobCallbac
 
 		// The requester's own lock again, or any lock while every lock is Master's
 		if (!identityMode() || holder == ownerId) {
-			lock.unlock();  // Release the lock before logging to avoid extra contention
+			if (!entry->second.orphaned) {
+				lock.unlock();  // Release the lock before logging to avoid extra contention
 
-			safs::log_warn(
-			    "{}: Chunk lock job already exists for chunkId {:016X}, chunkType {}. Treating "
-			    "request as retransmission; not adding a new lock job.",
-			    __func__, chunkId, chunkType.toString());
-			return LockStart::kExisting;
+				safs::log_warn(
+				    "{}: Chunk lock job already exists for chunkId {:016X}, chunkType {}. Treating "
+				    "request as retransmission; not adding a new lock job.",
+				    __func__, chunkId, chunkType.toString());
+				return LockStart::kExisting;
+			}
+
+			// The lock's connection closed, so its notice reaches no metadata server: the
+			// requester adopts the lock, write session and deferred jobs included, and the
+			// notice of the write under it goes to this connection instead
+			auto &adopted = entry->second;
+			const uint32_t orphanJobId = adopted.lockJobId;
+			const uint32_t orphanListenerId = adopted.listenerId;
+			adopted.lockJobId = addLockJob(callback, packet, listenerId);
+			adopted.listenerId = listenerId;
+			// As a retransmission, the request never takes the lock back to an older version, so
+			// sessions at the lock's version still join it; a newer one follows the part
+			adopted.version = std::max(adopted.version, chunkVersion);
+			adopted.orphaned = false;
+			const uint32_t adoptedVersion = adopted.version;
+			lock.unlock();
+
+			safs::log_info(
+			    "chunk lock of chunkId {:016X}, chunkType {}, version {} adopted: the connection "
+			    "that requested it had closed",
+			    chunkId, chunkType.toString(), adoptedVersion);
+			dropLockJob(orphanJobId, orphanListenerId);
+			return LockStart::kInstalled;
 		}
 
 		// Another server's lock at the same or a newer version stays
@@ -742,6 +769,8 @@ MasterJobPool::LockStart MasterJobPool::startChunkLock(const JobPool::JobCallbac
 	installed.version = chunkVersion;
 	chunkToJobReplyMap_[key] = std::move(installed);
 	lock.unlock();
+	safs::log_trace("chunk lock installed: chunkId {:016X}, chunkType {}, version {}", chunkId,
+	                chunkType.toString(), chunkVersion);
 
 	// The new owner's write gets the notice, not the replaced lock; the replaced lock's deferred
 	// work goes ahead as after an unlock
