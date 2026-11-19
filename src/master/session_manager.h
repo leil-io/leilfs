@@ -519,6 +519,11 @@ public:
 	/// @copydoc ISessionManager::beginSessionRelease
 	bool beginSessionRelease(Session &session) override;
 
+	/// @copydoc ISessionManager::removeTimedOutSessions
+	/// @note Persists new retirements together before invoking their cleanup callbacks.
+	void removeTimedOutSessions(uint32_t now, uint32_t sessionSustainTime,
+	                            const std::function<bool(Session *)> &onTimedOut) override;
+
 private:
 	/// Closing records retain the existing wire format and use the already invalid peer IP 0.
 	/// Retirement also syncs the file and its rename before any file release can run.

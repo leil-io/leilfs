@@ -326,6 +326,27 @@ bool SessionManagerFile::beginSessionRelease(Session &session) {
 	return writeSessions(/*durable=*/true);
 }
 
+void SessionManagerFile::removeTimedOutSessions(
+    uint32_t now, uint32_t sessionSustainTime,
+    const std::function<bool(Session *)> &onTimedOut) {
+	std::vector<Session *> sessionsToRetire;
+	for (const auto &session : sessions_) {
+		if (session->releaseCursor || !isTimedOut(*session, now, sessionSustainTime)) { continue; }
+		session->closing = true;
+		sessionsToRetire.push_back(session.get());
+	}
+
+	// Each snapshot contains all sessions. Sync once before queuing these release passes.
+	// On failure, their cursors stay unset and the next sweep can retry the write.
+	if (!sessionsToRetire.empty() && writeSessions(/*durable=*/true)) {
+		for (auto *session : sessionsToRetire) { session->releaseCursor = 0; }
+	}
+
+	SessionManagerBase::removeTimedOutSessions(now, sessionSustainTime, [&](Session *session) {
+		return session->releaseCursor.has_value() && onTimedOut(session);
+	});
+}
+
 bool SessionManagerFile::writeSessions(bool durable) {
 	uint32_t sessionInfoLength;
 	constexpr uint32_t kSessionSerializedSize =

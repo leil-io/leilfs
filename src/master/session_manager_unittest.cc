@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
@@ -197,6 +198,50 @@ TEST(SessionManagerFileTests, RetirementPersistsWithoutChangingTheSessionsFormat
 		EXPECT_EQ(loaded.peerIpAddress, 0U);
 	});
 	EXPECT_EQ(records, 1U);
+}
+
+TEST(SessionManagerFileTests, ExpirySweepPersistsAllRetirementsWithOneReplacement) {
+	TemporaryDirectory temp("/tmp", "session-file-retirement-batch");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile manager;
+	constexpr uint32_t kExpiredSessions = 8;
+	for (uint32_t id = 1; id <= kExpiredSessions; ++id) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		session->connections = 0;
+		session->disconnectedTimestamp = 1;
+		manager.addSession(std::move(session));
+	}
+	auto live = makeSession(kExpiredSessions + 1);
+	live->peerIpAddress = 0x7F000001;
+	manager.addSession(std::move(live));
+
+	size_t queued = 0;
+	manager.removeTimedOutSessions(100, 60, [&](Session *session) {
+		// Mirror the dispatcher's initial retirement for backends that leave it to the callback.
+		if (!session->releaseCursor) {
+			if (!manager.beginSessionRelease(*session)) {
+				ADD_FAILURE() << "Could not persist retirement";
+				return false;
+			}
+			session->releaseCursor = 0;
+		}
+
+		// Hold the first published inode open by name so later renames cannot reuse it.
+		if (queued++ == 0) {
+			std::filesystem::create_hard_link(kSessionsFilename, "first-retirement.sfs");
+		}
+		return false;
+	});
+
+	EXPECT_EQ(queued, kExpiredSessions);
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "first-retirement.sfs"));
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+	size_t retired = 0;
+	reader.forEachSession([&retired](const Session &session) { retired += session.closing; });
+	EXPECT_EQ(retired, kExpiredSessions);
+	EXPECT_NE(reader.findSession(kExpiredSessions + 1), nullptr);
 }
 
 TEST(SessionManagerFileTests, OldSfsSessionHeaderIsRejected) {
