@@ -93,6 +93,13 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
 endif()
 install(TARGETS slow_chunk_scan DESTINATION ${LIB_SUBDIR})
 
+# a library which holds a chunkserver's disk scan while a file exists
+add_library(hold_chunk_scan SHARED hold_chunk_scan.c)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+  target_link_libraries(hold_chunk_scan dl)
+endif()
+install(TARGETS hold_chunk_scan DESTINATION ${LIB_SUBDIR})
+
 add_executable(send_wrapped_length_cs_register send_wrapped_length_cs_register.cc)
 target_link_libraries(send_wrapped_length_cs_register leil-common)
 install(TARGETS send_wrapped_length_cs_register RUNTIME DESTINATION ${BIN_SUBDIR})

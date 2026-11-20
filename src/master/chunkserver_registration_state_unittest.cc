@@ -55,21 +55,27 @@ TEST(ChunkserverRegistrationStateTests, AcceptsOneNonzeroRequestedIdentity) {
 	ASSERT_TRUE(state.begin(true, kFirstVersionWithChunkserverIdentity));
 
 	EXPECT_FALSE(state.markRegistrationComplete());
-	EXPECT_TRUE(state.acceptIdentity(kIdentity));
+	EXPECT_EQ(state.incarnation(), 0U);
+	EXPECT_TRUE(state.acceptIdentity(kIdentity, 7));
 	EXPECT_FALSE(state.identityPending());
 	ASSERT_TRUE(state.identity().has_value());
 	EXPECT_EQ(*state.identity(), kIdentity);
+	EXPECT_EQ(state.incarnation(), 7U);
 	EXPECT_TRUE(state.markRegistrationComplete());
-	EXPECT_FALSE(state.acceptIdentity(kIdentity));
+	EXPECT_FALSE(state.acceptIdentity(kIdentity, 7));
 }
 
 TEST(ChunkserverRegistrationStateTests, RejectsUnsolicitedAndZeroIdentity) {
 	ChunkserverRegistrationState unsolicited;
-	EXPECT_FALSE(unsolicited.acceptIdentity(kIdentity));
+	EXPECT_FALSE(unsolicited.acceptIdentity(kIdentity, 7));
 
 	ChunkserverRegistrationState zero;
 	ASSERT_TRUE(zero.begin(true, kFirstVersionWithChunkserverIdentity));
-	EXPECT_FALSE(zero.acceptIdentity(chunkserver::ChunkserverId{}));
+	EXPECT_FALSE(zero.acceptIdentity(chunkserver::ChunkserverId{}, 7));
+	EXPECT_TRUE(zero.identityPending());
+
+	// An incarnation of 0 means "none": a chunkserver never draws it.
+	EXPECT_FALSE(zero.acceptIdentity(kIdentity, 0));
 	EXPECT_TRUE(zero.identityPending());
 }
 
@@ -91,6 +97,6 @@ TEST(ChunkserverRegistrationStateTests, IdentityDeadlineIgnoresSocketKeepalives)
 	EXPECT_FALSE(state.identityExpired(1000, started + 999ms));
 	EXPECT_TRUE(state.identityExpired(1000, started + 1000ms));
 
-	ASSERT_TRUE(state.acceptIdentity(kIdentity));
+	ASSERT_TRUE(state.acceptIdentity(kIdentity, 7));
 	EXPECT_FALSE(state.identityExpired(1000, started + 2000ms));
 }

@@ -57,4 +57,8 @@ int chunkserverIdInit();
 /// Returns the identity resolved by @ref chunkserverIdInit.
 const ChunkserverId &chunkserverId();
 
+/// This process's incarnation: random, never 0, the same for the whole life of the process. A
+/// metadata server tells a chunkserver that restarted from one that only reconnected by it.
+uint64_t chunkserverIncarnation();
+
 }  // namespace chunkserver

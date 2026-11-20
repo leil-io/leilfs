@@ -35,41 +35,49 @@ TEST(CstomaCommunicationTests, ChunkserverId) {
 	const std::array<uint8_t, 16> idIn = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
 	                                      0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe};
 	std::array<uint8_t, 16> idOut{};
+	const uint64_t incarnationIn = 0x0123456789abcdefULL;
+	uint64_t incarnationOut = 0;
 
 	std::vector<uint8_t> buffer;
-	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, idIn));
+	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, idIn, incarnationIn));
 
 	verifyHeader(buffer, SAU_CSTOMA_CHUNKSERVER_ID);
 	removeHeaderInPlace(buffer);
-	verifyVersion(buffer, cstoma::chunkserverId::kDefault);
-	ASSERT_NO_THROW(cstoma::chunkserverId::deserialize(buffer, idOut));
+	verifyVersion(buffer, cstoma::chunkserverId::kWithIncarnation);
+	ASSERT_NO_THROW(cstoma::chunkserverId::deserialize(buffer, idOut, incarnationOut));
 	EXPECT_EQ(idOut, idIn);
+	EXPECT_EQ(incarnationOut, incarnationIn);
 }
 
 TEST(CstomaCommunicationTests, ChunkserverIdRejectsWrongLength) {
 	const std::array<uint8_t, 16> id{};
 	std::array<uint8_t, 16> parsed{};
+	uint64_t incarnation = 0;
 	std::vector<uint8_t> buffer;
-	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, id));
+	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, id, uint64_t{1}));
 	removeHeaderInPlace(buffer);
 
 	buffer.pop_back();
-	EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed));
+	EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed, incarnation));
 	buffer.push_back(0);
 	buffer.push_back(0);
-	EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed));
+	EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed, incarnation));
 }
 
 TEST(CstomaCommunicationTests, ChunkserverIdRejectsWrongVersion) {
 	const std::array<uint8_t, 16> id{};
 	std::array<uint8_t, 16> parsed{};
+	uint64_t incarnation = 0;
 	std::vector<uint8_t> buffer;
-	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, id));
+	ASSERT_NO_THROW(cstoma::chunkserverId::serialize(buffer, id, uint64_t{1}));
 	removeHeaderInPlace(buffer);
 
-	uint8_t *version = buffer.data();
-	put32bit(&version, cstoma::chunkserverId::kDefault + 1);
-	EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed));
+	// Version 0, the identity without an incarnation, is refused like any unknown version.
+	for (const uint32_t refused : {0U, cstoma::chunkserverId::kWithIncarnation + 1}) {
+		uint8_t *version = buffer.data();
+		put32bit(&version, refused);
+		EXPECT_ANY_THROW(cstoma::chunkserverId::deserialize(buffer, parsed, incarnation));
+	}
 }
 
 TEST(CstomaCommunicationTests, OverwriteStatusField) {
