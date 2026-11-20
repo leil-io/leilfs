@@ -724,6 +724,40 @@ int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPar
 	return SAUNAFS_STATUS_OK;
 }
 
+int matocsserv_send_querychunks(matocsserventry *eptr, uint64_t generation,
+                                const std::vector<uint64_t> &chunkIds) {
+	if (eptr->mode == ChunkserverConnectionMode::KILL ||
+	    eptr->version < kFirstVersionWithChunkserverIdentity) {
+		return SAUNAFS_ERROR_ENOTSUP;
+	}
+	if (chunkIds.size() > kMaxChunksPerQuery) { return SAUNAFS_ERROR_EINVAL; }
+	eptr->outputPackets.emplace_back();
+	matocs::queryChunks::serialize(eptr->outputPackets.back().packet, generation, chunkIds);
+	return SAUNAFS_STATUS_OK;
+}
+
+/// The reply to a query. A chunkserver that tells whether its startup scan has ended sends
+/// that with the reply; the reply of one that does not names the parts it holds and says nothing
+/// about a part it does not name.
+void matocsserv_got_querychunks(matocsserventry *eptr, const std::vector<uint8_t> &data) {
+	PacketVersion v;
+	deserializePacketVersionNoHeader(data, v);
+
+	uint64_t generation = 0;
+	std::vector<uint64_t> queriedChunkIds;
+	std::vector<ChunkWithVersionAndType> found;
+	std::vector<ChunkWithType> busy;
+	uint8_t discoveryReady = 0;
+	if (v == cstoma::queryChunks::kWithDiscoveryStatus) {
+		cstoma::queryChunks::deserialize(data, generation, queriedChunkIds, found, busy,
+		                                 discoveryReady);
+	} else {
+		cstoma::queryChunks::deserialize(data, generation, queriedChunkIds, found, busy);
+	}
+	gChunkOperations->gotChunkQueryAnswer(eptr, generation, queriedChunkIds, found, busy,
+	                                      discoveryReady != 0);
+}
+
 int matocsserv_send_maintenance_fence(matocsserventry *eptr, uint64_t epoch) {
 	if (eptr->mode == ChunkserverConnectionMode::KILL ||
 	    eptr->version < kFirstVersionWithMaintenanceFence) {
@@ -1230,9 +1264,9 @@ void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint
 
 	// The first space report completes the registration; later ones only refresh the counters.
 	if (eptr->registrationState.markRegistrationComplete()) {
-		const ChunkserverRegistration registration{NetworkAddress(eptr->servip, eptr->servport),
-		                                           eptr->version, eptr->timeout,
-		                                           eptr->registrationState.identity()};
+		const ChunkserverRegistration registration{
+		    NetworkAddress(eptr->servip, eptr->servport), eptr->version, eptr->timeout,
+		    eptr->registrationState.identity(), eptr->registrationState.incarnation()};
 		gChunkOperations->serverRegistered(eptr, registration);
 		if (eptr->mode == ChunkserverConnectionMode::KILL) { return; }
 
@@ -1260,8 +1294,9 @@ void matocsserv_sau_register_space(matocsserventry *eptr, const std::vector<uint
 /// The identity reply the master requested at host registration; the host response follows.
 void matocsserv_sau_chunkserver_id(matocsserventry *eptr, const std::vector<uint8_t> &data) {
 	chunkserver::ChunkserverId chunkserverId;
-	cstoma::chunkserverId::deserialize(data, chunkserverId);
-	if (!eptr->registrationState.acceptIdentity(chunkserverId)) {
+	uint64_t incarnation = 0;
+	cstoma::chunkserverId::deserialize(data, chunkserverId, incarnation);
+	if (!eptr->registrationState.acceptIdentity(chunkserverId, incarnation)) {
 		safs::log_warn("invalid or unexpected chunkserver identity reply from {}:{}",
 		               eptr->serviceStrIp, eptr->servport);
 		eptr->mode = ChunkserverConnectionMode::KILL;
@@ -1468,6 +1503,9 @@ void matocsserv_gotpacket(matocsserventry *eptr, PacketHeader header, const Mess
 			break;
 		case SAU_CSTOMA_MAINTENANCE_FENCE:
 			matocsserv_got_maintenance_fence(eptr, data);
+			break;
+		case SAU_CSTOMA_QUERY_CHUNKS:
+			matocsserv_got_querychunks(eptr, data);
 			break;
 		case SAU_CSTOMA_TRUNCATE:
 			matocsserv_got_sau_truncatechunk_status(eptr, data);

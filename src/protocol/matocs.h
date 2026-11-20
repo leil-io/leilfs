@@ -91,6 +91,9 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(matocs, queryChunks, SAU_MATOCS_QUERY_CHUNKS
                                     uint64_t, generation,
                                     std::vector<uint64_t>, chunkIds)
 
+/// Chunk ids one query carries at most, so the packet stays under the limit above.
+constexpr size_t kMaxChunksPerQuery = 1024;
+
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kStandardAndXorChunks, 0)
 SAUNAFS_DEFINE_PACKET_VERSION(matocs, setVersion, kECChunks, 1)
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(

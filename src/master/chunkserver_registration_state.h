@@ -49,19 +49,24 @@ public:
 	/// True while the identity reply is awaited; only a keepalive is accepted meanwhile.
 	bool identityPending() const { return identityPending_; }
 
-	/// Stores the identity reply. False when none was requested or the identity is all zero, which
-	/// a well-formed chunkserver never sends since it generates and persists one at startup.
-	bool acceptIdentity(const chunkserver::ChunkserverId &identity) {
+	/// Stores the identity reply. False when none was requested, or when the identity is all zero
+	/// or the incarnation is 0: a well-formed chunkserver persists the first at startup and draws
+	/// the second nonzero.
+	bool acceptIdentity(const chunkserver::ChunkserverId &identity, uint64_t incarnation) {
 		const bool isZero =
 		    std::all_of(identity.begin(), identity.end(), [](uint8_t byte) { return byte == 0; });
-		if (!identityPending_ || isZero) { return false; }
+		if (!identityPending_ || isZero || incarnation == 0) { return false; }
 
 		identity_ = identity;
+		incarnation_ = incarnation;
 		identityPending_ = false;
 		return true;
 	}
 
 	const std::optional<chunkserver::ChunkserverId> &identity() const { return identity_; }
+
+	/// The incarnation that came with the identity; 0 while there is none.
+	uint64_t incarnation() const { return incarnation_; }
 
 	/// True when the identity reply is overdue by the peer's own keepalive timeout.
 	bool identityExpired(uint32_t timeoutMs, TimePoint now = Clock::now()) const {
@@ -83,6 +88,7 @@ private:
 	bool identityPending_{false};
 	bool registrationCompleted_{false};
 	std::optional<chunkserver::ChunkserverId> identity_;
+	uint64_t incarnation_{0};
 	/// When the identity request went out; drives identityExpired.
 	std::optional<TimePoint> identityStarted_;
 };
