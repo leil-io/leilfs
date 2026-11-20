@@ -23,11 +23,22 @@ TRUNCATE_END_REPLY = 1498
 WRITE_REQUEST = 1434
 WRITE_REPLY = 1435
 
+counter_lock = threading.Lock()
+
 
 def record_first_status(marker, status):
     if not marker.exists():
         temporary = marker.with_name(marker.name + ".tmp")
         temporary.write_text(str(status) + "\n")
+        temporary.replace(marker)
+
+
+def record_write_request(prefix):
+    marker = Path(prefix + "-write-request-count")
+    with counter_lock:
+        count = int(marker.read_text(encoding="utf-8")) if marker.exists() else 0
+        temporary = marker.with_name(marker.name + ".tmp")
+        temporary.write_text(str(count + 1) + "\n", encoding="utf-8")
         temporary.replace(marker)
 
 
@@ -87,6 +98,7 @@ def forward_client(client, args):
                     signal(args.prefix + "-end-reply")
                     print("TRUNCATE_END reply=" + payload.hex(), flush=True)
                 elif source is client and packet_type == WRITE_REQUEST:
+                    record_write_request(args.prefix)
                     signal(args.prefix + "-write-request")
                 elif source is master and packet_type == WRITE_REPLY:
                     version = struct.unpack("!I", payload[:4])[0]

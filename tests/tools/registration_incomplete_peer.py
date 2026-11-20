@@ -41,6 +41,10 @@ def main():
     parser.add_argument("--service-port", required=True, type=int)
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--legacy", action="store_true")
+    parser.add_argument(
+        "--query-release-marker",
+        help="reply to held queries when this marker appears, without ending registration",
+    )
     args = parser.parse_args()
 
     prefix = args.prefix
@@ -54,6 +58,8 @@ def main():
     with socket.create_connection((args.host, args.master_port)) as connection:
         send_packet(connection, REGISTER_HOST, host)
         pending_queries = []
+        query_count = 0
+        queries_released = False
         released = False
         last_keepalive = time.monotonic()
 
@@ -63,13 +69,29 @@ def main():
                     send_packet(connection, REGISTER_SPACE, space)
                 else:
                     send_packet(connection, REGISTER_END, struct.pack("!IQ", 0, 0))
-                for payload in pending_queries:
-                    # Echo version, generation and IDs; found and busy vectors are empty.
-                    send_packet(connection, QUERY_REPLY, payload + struct.pack("!II", 0, 0))
-                pending_queries.clear()
+                if not queries_released:
+                    for payload in pending_queries:
+                        # Echo version, generation and IDs; found and busy vectors are empty.
+                        send_packet(connection, QUERY_REPLY, payload + struct.pack("!II", 0, 0))
+                    pending_queries.clear()
+                    queries_released = True
                 released = True
                 signal(prefix + "-completed")
                 print("released empty inventory and held queries", flush=True)
+
+            query_release_marker = args.query_release_marker
+            if (
+                query_release_marker
+                and not queries_released
+                and Path(query_release_marker).exists()
+            ):
+                for payload in pending_queries:
+                    # Report this query while keeping the inventory incomplete.
+                    send_packet(connection, QUERY_REPLY, payload + struct.pack("!II", 0, 0))
+                pending_queries.clear()
+                queries_released = True
+                signal(prefix + "-queries-released")
+                print("released held queries; inventory remains incomplete", flush=True)
 
             if time.monotonic() - last_keepalive >= 1:
                 send_packet(connection, 0)
@@ -96,9 +118,12 @@ def main():
             elif packet_type == QUERY_CHUNKS:
                 if args.legacy:
                     raise RuntimeError("master queried a peer without query support")
+                query_count += 1
                 signal(prefix + "-query")
-                print("query received; held=" + str(not released), flush=True)
-                if released:
+                if query_count == 2:
+                    signal(prefix + "-query-2")
+                print("query received; held=" + str(not queries_released), flush=True)
+                if queries_released:
                     send_packet(connection, QUERY_REPLY, payload + struct.pack("!II", 0, 0))
                 else:
                     pending_queries.append(payload)

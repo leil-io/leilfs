@@ -197,6 +197,7 @@ struct DeferredChunkLocationWait {
 	PacketHeader header{};
 	std::vector<uint8_t> requestData;
 	ChunkMutationDiscovery discovery;
+	SteadyTimePoint deadline{};
 };
 
 ///< This looks to be the client type.
@@ -3510,7 +3511,8 @@ void matoclserv_fuse_setattr(matoclserventry *eptr, const uint8_t *data, uint32_
 static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t chunkId,
                                                  PacketHeader header,
                                                  const std::vector<uint8_t> &requestData,
-                                                 const ChunkMutationDiscovery &discovery = {});
+                                                 const ChunkMutationDiscovery &discovery = {},
+                                                 SteadyTimePoint deadline = {});
 
 /// Handles both truncate packets, including the client-assisted EC completion path.
 /// @param allowDefer Whether this request may wait for discovery; false on replay.
@@ -4712,7 +4714,14 @@ void matoclserv_fuse_open(matoclserventry *eptr, const uint8_t *data, uint32_t l
 static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t chunkId,
                                                  PacketHeader header,
                                                  const std::vector<uint8_t> &requestData,
-                                                 const ChunkMutationDiscovery &discovery) {
+                                                 const ChunkMutationDiscovery &discovery,
+                                                 SteadyTimePoint deadline) {
+	const auto now = SteadyClock::now();
+	if (deadline == SteadyTimePoint{}) {
+		deadline = now + std::chrono::milliseconds(
+		                       matocsserv_get_on_demand_chunk_query_timeout_ms());
+	}
+	if (now >= deadline) { return false; }
 	const auto waiterLimit = matocsserv_get_on_demand_chunk_query_waiter_limit();
 	if (gDeferredChunkLocationWaitCount >= waiterLimit) {
 		if (!gDeferredChunkLocationWaitLimitWarningEmitted) {
@@ -4730,7 +4739,7 @@ static bool matoclserv_defer_chunk_location_wait(matoclserventry *eptr, uint64_t
 
 	auto &waits = eptr->deferredChunkLocationWaits[chunkId];
 	if (waits.empty()) { gDeferredChunkLocationWaiters[chunkId].push_back(eptr); }
-	waits.push_back(DeferredChunkLocationWait{chunkId, header, requestData, discovery});
+	waits.push_back(DeferredChunkLocationWait{chunkId, header, requestData, discovery, deadline});
 	++gDeferredChunkLocationWaitCount;
 	matoclserv_update_deferred_chunk_location_waiter_gauge();
 	return true;
@@ -5081,6 +5090,22 @@ void matoclserv_chunk_locations_resolved(uint64_t chunkId, bool complete) {
 		// discovery succeeded, so a timeout cannot authorize a version change.
 		for (auto &wait : matchedWaits) {
 			wait.discovery.complete = complete;
+			const bool mutation = wait.header.type == SAU_CLTOMA_FUSE_WRITE_CHUNK ||
+			                      wait.header.type == SAU_CLTOMA_FUSE_TRUNCATE ||
+			                      wait.header.type == SAU_CLTOMA_FUSE_TRUNCATE_END;
+			const bool peerSetChanged =
+			    wait.discovery.connectionGeneration !=
+			    matocsserv_get_chunk_query_connection_generation();
+			if (complete && mutation && peerSetChanged) {
+				wait.discovery.complete = false;
+				wait.discovery.connectionGeneration =
+				    matocsserv_get_chunk_query_connection_generation();
+				if (matoclserv_defer_chunk_location_wait(eptr, chunkId, wait.header,
+				                                        wait.requestData, wait.discovery,
+				                                        wait.deadline)) {
+					continue;
+				}
+			}
 			switch (wait.header.type) {
 			case SAU_CLTOMA_FUSE_READ_CHUNK:
 				matoclserv_fuse_read_chunk(eptr, wait.header, wait.requestData.data(), false);

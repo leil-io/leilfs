@@ -1536,6 +1536,10 @@ bool matocsserv_has_incomplete_chunk_registration() {
 	return gIncompleteChunkInventories != 0 && !gChunkOperations->requestsChunkserverIdentity();
 }
 
+uint64_t matocsserv_get_chunk_query_connection_generation() {
+	return gChunkQueryConnectionGeneration;
+}
+
 bool ChunkMutationDiscovery::requiresQuery(const ChunkMutationPlan &plan, bool inventoryIncomplete,
                                            uint64_t currentConnectionGeneration) {
 	const bool missingLocations =
@@ -1791,6 +1795,10 @@ static void matocsserv_resolve_chunk_query(uint64_t chunkId, bool complete) {
 
 uint32_t matocsserv_get_on_demand_chunk_query_waiter_limit() {
 	return kMaxOnDemandChunkQueryWaiters;
+}
+
+uint32_t matocsserv_get_on_demand_chunk_query_timeout_ms() {
+	return gOnDemandChunkQueryTimeout_ms;
 }
 
 bool matocsserv_query_chunk_location(uint64_t chunkId, bool registeringOnly) {

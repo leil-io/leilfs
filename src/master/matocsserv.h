@@ -213,6 +213,8 @@ void matocsserv_test_connection_free(matocsserventry *eptr);
 
 /// True if a connected inventory-sending peer has not completed registration.
 bool matocsserv_has_incomplete_chunk_registration();
+uint64_t matocsserv_get_chunk_query_connection_generation();
+uint32_t matocsserv_get_on_demand_chunk_query_timeout_ms();
 
 /// Coalesces client discovery while a connected inventory remains incomplete.
 /// Reads include completed peers; mutation discovery can restrict targets.
