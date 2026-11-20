@@ -196,7 +196,8 @@ void MasterConn::sendChunkserverId(const std::vector<uint8_t> &data) {
 		return;
 	}
 
-	createAttachedPacket(cstoma::chunkserverId::build(chunkserver::chunkserverId()));
+	createAttachedPacket(cstoma::chunkserverId::build(chunkserver::chunkserverId(),
+	                                                  chunkserver::chunkserverIncarnation()));
 	setSendInventory(false);
 	if (jobPool_) { jobPool_->enableIdentityMode(); }
 }
@@ -786,6 +787,10 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 	std::vector<uint64_t> chunkIds;
 	matocs::queryChunks::deserialize(data, generation, chunkIds);
 
+	// Read before the lookups: a scan that ends in between still counts as running, so a part it
+	// added right after a miss is never answered as absent.
+	const bool scanEnded = !hddScansInProgress();
+
 	std::vector<ChunkWithVersionAndType> foundChunks;
 	std::vector<ChunkWithType> busyChunks;
 	{
@@ -814,6 +819,15 @@ void MasterConn::queryChunks(const std::vector<uint8_t> &data) {
 				// duplicate location reports are safe.
 			}
 		}
+	}
+
+	// A server that asked for the identity takes no inventory: it reads a queried chunk without
+	// a part as "not here", which holds only once the startup scan has ended. It is told so with
+	// the reply. Any other peer gets the reply it always got.
+	if (!sendInventory_) {
+		createAttachedPriorityPacket(cstoma::queryChunks::build(
+		    generation, chunkIds, foundChunks, busyChunks, static_cast<uint8_t>(scanEnded)));
+		return;
 	}
 
 	// The master holds client operations back until this answer arrives, so

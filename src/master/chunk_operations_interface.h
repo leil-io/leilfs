@@ -51,6 +51,8 @@ struct ChunkserverRegistration {
 	uint32_t timeoutMs;
 	/// Persistent identity; absent when the backend did not ask or the peer predates it.
 	std::optional<chunkserver::ChunkserverId> chunkserverId;
+	/// Random per process start of the chunkserver, sent with its identity; 0 without one.
+	uint64_t incarnation = 0;
 };
 
 /// Operations over chunk metadata, behind a swappable/extensible backend.
@@ -217,6 +219,16 @@ public:
 	/// without a registration inventory asks instead of trusting what it last recorded.
 	virtual void gotProbeStatus(matocsserventry *ptr, uint64_t chunkId, ChunkPartType chunkType,
 	                            uint32_t chunkVersion, uint8_t status) = 0;
+	/// Reply to a query about the parts of several chunks, with the @p generation the query
+	/// carried. @p found lists the parts the chunkserver holds, @p busy those a job holds, so
+	/// their version is not known. With @p discoveryReady the chunkserver's startup scan had
+	/// ended before the lookup: only then is a queried chunk without a part not there. Master
+	/// does not query.
+	virtual void gotChunkQueryAnswer(matocsserventry * /*ptr*/, uint64_t /*generation*/,
+	                                 const std::vector<uint64_t> & /*queriedChunkIds*/,
+	                                 const std::vector<ChunkWithVersionAndType> & /*found*/,
+	                                 const std::vector<ChunkWithType> & /*busy*/,
+	                                 bool /*discoveryReady*/) {}
 	/// A chunkserver answered the maintenance fence sent at @p epoch: with status OK no replicate
 	/// or delete of an earlier connection can still run there. Master never fences.
 	virtual void maintenanceFenceAnswered(matocsserventry * /*ptr*/, uint64_t /*epoch*/,
@@ -229,7 +241,8 @@ public:
 	/// holds the chunk; nothing may be sent, and the backend reset the cached chunk to its record.
 	virtual bool recordVersionIncrease(uint64_t chunkId, uint32_t newVersion) = 0;
 	/// A part of @p chunkId held by the disconnected chunkserver @p csid left memory. A backend
-	/// without a registration inventory restores it from its own records when the server returns.
+	/// without a registration inventory notes it, to look for the chunk's parts when the server
+	/// returns.
 	virtual void copyDropped(uint64_t chunkId, uint16_t csid) = 0;
 
 	// --- Stats / introspection ---

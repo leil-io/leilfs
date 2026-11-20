@@ -32,7 +32,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -269,6 +271,17 @@ int chunkserverIdInit() {
 const ChunkserverId &chunkserverId() {
 	sassert(gChunkserverId.has_value());
 	return *gChunkserverId;
+}
+
+uint64_t chunkserverIncarnation() {
+	static const uint64_t incarnation = [] {
+		// Not the common random helpers: their engine starts again from its default seed when
+		// a disk plugin is loaded, so every start of a chunkserver would draw the same number.
+		std::random_device source;
+		std::uniform_int_distribution<uint64_t> nonZero(1, std::numeric_limits<uint64_t>::max());
+		return nonZero(source);
+	}();
+	return incarnation;
 }
 
 }  // namespace chunkserver

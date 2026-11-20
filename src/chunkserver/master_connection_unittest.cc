@@ -1330,3 +1330,29 @@ TEST_F(MasterConnQueryTests, ReleasedPartReportsItsFreshVersionOnRetry) {
 }
 
 }  // namespace
+
+// A peer that takes the inventory gets the reply it always got. A metadata server that asked
+// for the identity asks instead of taking an inventory, so its reply also says whether the
+// startup scan had ended: while it runs, a part that is not found may only not be read yet.
+TEST_F(MasterConnQueryTests, ReplyToAnIdentityServerSaysWhetherTheStartupScanHadEnded) {
+	const auto scanEndedInReply = [&] {
+		uint64_t generation = 0;
+		std::vector<uint64_t> ids;
+		std::vector<ChunkWithVersionAndType> found;
+		std::vector<ChunkWithType> busy;
+		uint8_t scanEnded = 0xFF;
+		cstoma::queryChunks::deserialize(query(), generation, ids, found, busy, scanEnded);
+		EXPECT_EQ(generation, kGeneration);
+		EXPECT_TRUE(found.empty());
+		return scanEnded;
+	};
+
+	// The existing reply, also while a scan runs: its form does not change.
+	gScansInProgress.store(1);
+	EXPECT_TRUE(found(query()).empty());
+
+	masterConn_.setSendInventory(false);
+	EXPECT_EQ(scanEndedInReply(), 0);
+	gScansInProgress.store(0);
+	EXPECT_EQ(scanEndedInReply(), 1);
+}

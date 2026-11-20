@@ -93,6 +93,16 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, queryChunks, SAU_CSTOMA_QUERY_CHUNKS
                                     std::vector<ChunkWithVersionAndType>, foundChunks,
                                     std::vector<ChunkWithType>, busyChunks)
 
+// The same reply for a metadata server that asked for the identity, with the state of the
+// startup scan read before the parts were looked up: only with discoveryReady set, the scan
+// ended, does a queried id that is neither found nor busy say the part is not there.
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, queryChunks, kWithDiscoveryStatus, 1)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, queryChunks, SAU_CSTOMA_QUERY_CHUNKS,
+                                    kWithDiscoveryStatus, uint64_t, generation,
+                                    std::vector<uint64_t>, queriedChunkIds,
+                                    std::vector<ChunkWithVersionAndType>, foundChunks,
+                                    std::vector<ChunkWithType>, busyChunks, uint8_t, discoveryReady)
+
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 		cstoma, registerSpace, SAU_CSTOMA_REGISTER_SPACE, 0,
 		uint64_t, usedSpace,
@@ -250,6 +260,9 @@ SAUNAFS_DEFINE_PACKET_SERIALIZATION(
 
 SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, startTls, SAU_CSTOMA_STARTTLS, 0)
 
-SAUNAFS_DEFINE_PACKET_VERSION(cstoma, chunkserverId, kDefault, 0)
-SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, chunkserverId, SAU_CSTOMA_CHUNKSERVER_ID, kDefault,
-                                    chunkserver::ChunkserverId, chunkserverId)
+// The identity is persistent; the incarnation is random per process start and never 0.
+// Version 0, the identity alone, is no longer accepted.
+SAUNAFS_DEFINE_PACKET_VERSION(cstoma, chunkserverId, kWithIncarnation, 1)
+SAUNAFS_DEFINE_PACKET_SERIALIZATION(cstoma, chunkserverId, SAU_CSTOMA_CHUNKSERVER_ID,
+                                    kWithIncarnation, chunkserver::ChunkserverId, chunkserverId,
+                                    uint64_t, incarnation)
