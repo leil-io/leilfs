@@ -21,6 +21,7 @@
 #include "common/platform.h"
 
 #include <cassert>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -31,6 +32,8 @@
 #include "kv/itransaction.h"
 #include "kv/kv_types.h"
 #include "master/filesystem_node_arena.h"
+
+struct ChunkMutationPlan;
 
 namespace kv {
 class IReadOnlyTransaction;
@@ -155,6 +158,16 @@ public:
 	/// Get the transaction type hint
 	TransactionType getTransactionType() const { return transactionType_; }
 
+	/// Sets the request's precondition for chunk_multi_modify/chunk_multi_truncate.
+	/// @param check Observes each plan, including failures; a non-OK result vetoes a valid
+	///        plan before mutation. An empty callback clears the check.
+	void setChunkMutationCheck(std::function<uint8_t(const ChunkMutationPlan &)> check) {
+		chunkMutationCheck_ = std::move(check);
+	}
+
+	/// Returns the optional check installed for the current request.
+	const auto &chunkMutationCheck() const { return chunkMutationCheck_; }
+
 	/// Per-operation owner of KV-materialized nodes; stays empty on in-memory builds.
 	/// Accessible from const contexts: pinning is physical cache state shared through the
 	/// const resolution seam, not a logical filesystem mutation.
@@ -209,6 +222,8 @@ public:
 	bool isGroupCommitBatch() const { return groupCommitBatch_; }
 
 private:
+	std::function<uint8_t(const ChunkMutationPlan &)> chunkMutationCheck_;
+
 	/// The active read-write transaction (if any)
 	std::unique_ptr<kv::IReadWriteTransaction> rwTransaction_ = nullptr;
 
