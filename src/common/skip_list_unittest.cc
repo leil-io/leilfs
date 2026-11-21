@@ -106,18 +106,25 @@ protected:
 		// Verify all elements are equal and in the same order
 		auto skiplist_it = sList.begin();
 		auto reference_it = refSet.begin();
+		const auto skiplistEnd = sList.end();
+		const auto refSetEnd = refSet.end();
+		const Compare compare;
 
 		size_t count = 0;
-		while (skiplist_it != sList.end() && reference_it != refSet.end()) {
-			bool equals =
-			    !Compare()(*skiplist_it, *reference_it) && !Compare()(*reference_it, *skiplist_it);
-			EXPECT_TRUE(equals) << "Mismatch at position " << count;
+		while (skiplist_it != skiplistEnd && reference_it != refSetEnd) {
+			const auto &actual = *skiplist_it;
+			const auto &expected = *reference_it;
+
+			if (compare(actual, expected) || compare(expected, actual)) {
+				ADD_FAILURE() << "Mismatch at position " << count;
+			}
+
 			++skiplist_it;
 			++reference_it;
 			++count;
 		}
 
-		EXPECT_TRUE(skiplist_it == sList.end() && reference_it == refSet.end());
+		EXPECT_TRUE(skiplist_it == skiplistEnd && reference_it == refSetEnd);
 	}
 
 	/// Test insert and find operations
