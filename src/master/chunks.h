@@ -75,6 +75,9 @@ bool chunk_exists(uint64_t chunkid);
 /// True when the chunk's copies changed since the last version operation completed, so the
 /// next write must bump the version first. False for an unknown chunk.
 bool chunk_needs_version_increase(uint64_t chunkid);
+/// For tests only: the chunk loop's sweep of the bucket of @p chunkid, run at once by a worker of
+/// its own. It erases from a bucket the loop's own worker may stand in, so nothing else calls it.
+void chunk_test_sweep_bucket(uint64_t chunkid);
 
 /// Marks a cached chunk as owing a version increase without changing its parts or lock.
 /// For a backend restoring the requirement on re-entry; an unknown chunk is ignored.
@@ -86,6 +89,7 @@ bool chunk_has_parts(uint64_t chunkid);
 
 /// True while the in-memory chunk's operation is not finished. False for an unknown chunk.
 bool chunk_operation_running(uint64_t chunkid);
+
 
 /// True while some chunkserver still owes the in-memory chunk's operation its answer: false on
 /// the last answer, when the operation finishes and its clients are told. False for an unknown

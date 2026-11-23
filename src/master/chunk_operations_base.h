@@ -107,6 +107,12 @@ public:
 	/// The in-memory registry walks its own chunk table, so it needs no external maintenance.
 	/// @see IChunkOperations::usesExternalMaintenance
 	bool usesExternalMaintenance() const override { return false; }
+	/// The table is the only copy of the chunks: none leaves it while a file or a part uses it.
+	/// @see IChunkOperations::forgetsIdleChunks
+	bool forgetsIdleChunks() const override { return false; }
+	/// Never called while forgetsIdleChunks is false.
+	/// @see IChunkOperations::holdsChunk
+	bool holdsChunk(uint64_t /*chunkid*/) const override { return false; }
 	/// Never called while usesExternalMaintenance is false.
 	/// @see IChunkOperations::maintenanceTick
 	void maintenanceTick() override {}

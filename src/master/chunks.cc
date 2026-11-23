@@ -423,6 +423,13 @@ public:
 		removeFromStats();
 	}
 
+	/// Gives back the heap of the part and goal lists of a chunk that leaves the table with
+	/// them; the counters read the goal list, so this comes after freeStats.
+	void releaseLists() {
+		parts.clear();
+		goalCounters_.clear();
+	}
+
 	// Updates statistics of all chunks
 	void updateStats(bool remove_from_stats = true) {
 		int oldAllMissingParts = allMissingParts_;
@@ -1014,15 +1021,52 @@ Chunk *chunk_find(uint64_t chunkid) {
 }
 
 #ifndef METARESTORE
-void chunk_delete(Chunk *c) {
-	if (gChunksMetadata->lastchunkptr==c) {
-		gChunksMetadata->lastchunkid=0;
-		gChunksMetadata->lastchunkptr=NULL;
+/// Forgets the cached result of the last lookup when it is this chunk.
+static void chunk_drop_last_lookup(const Chunk *c) {
+	if (gChunksMetadata->lastchunkptr == c) {
+		gChunksMetadata->lastchunkid = 0;
+		gChunksMetadata->lastchunkptr = NULL;
 	}
+}
+
+void chunk_delete(Chunk *c) {
+	chunk_drop_last_lookup(c);
 	// Report the removal before the chunk is freed: KV backends persist chunks individually and
 	// must drop the row, otherwise deleted chunks come back as zombies on the next load.
 	if (!gChunkRemovedSignal.empty()) { gChunkRemovedSignal.emit(c->chunkid); }
 	c->freeStats();
+	chunk_free(c);
+}
+
+/// Whether nothing is being done with the chunk and the table knows nothing about it that a
+/// backend's records lack: such a chunk can leave the table and be loaded again.
+static bool chunk_is_idle(const Chunk *c) {
+	// A chunk without files stays for chunk_reclaim_unreferenced, which deletes its parts.
+	if (c->fileCount() == 0) { return false; }
+
+	// An operation, a write (its lock, also once expired, is the writer's to come back to), an
+	// owed version increase and a queued repair exist in the table only.
+	if (c->operation != Chunk::NONE || c->interrupted != 0 || c->needVersionIncrease != 0 ||
+	    c->lockedto != 0 || c->inEndangeredQueue != 0) {
+		return false;
+	}
+
+	// So does a part that is not a plain valid copy: the records list those only.
+	return std::all_of(c->parts.begin(), c->parts.end(), [](const ChunkPart &part) {
+		return part.is_valid() && !part.is_busy() && !part.is_being_written();
+	});
+}
+
+/// Drops a chunk that still exists from the table: unlike chunk_delete nothing is reported,
+/// and what the chunk added to the checksums and the counters is taken back.
+static void chunk_forget(Chunk *c) {
+	chunk_drop_last_lookup(c);
+	if (chunkHashPos(c->chunkid) < gChunksMetadata->checksumRecalculationPosition) {
+		removeFromChecksum(gChunksMetadata->chunksChecksumRecalculated, c->checksum);
+	}
+	removeFromChecksum(gChunksMetadata->chunksChecksum, c->checksum);
+	c->freeStats();
+	c->releaseLists();
 	chunk_free(c);
 }
 
@@ -2806,6 +2850,8 @@ public:
 	void doEverySecondTasks();
 	void doChunkJobs(Chunk *c, uint16_t serverCount);
 	void mainLoop();
+	/// The sweep of one bucket to its end, outside the loop's pacing; see chunk_test_sweep_bucket.
+	void sweepBucket(uint32_t bucket);
 
 private:
 	using ServersWithUsage = std::vector<ServerWithUsage>;
@@ -2852,6 +2898,8 @@ private:
 	std::map<MediaLabel, ServersWithUsage> labeledSortedServers_;
 
 	MainLoopStack stack_;
+	/// Idle chunks dropped from the table since the pass began, for a backend that forgets them.
+	uint32_t forgottenInPass_ = 0;
 	/// Null for the master's own worker; set only by chunk_run_maintenance.
 	const ChunkMaintenanceSink *commandSink_ = nullptr;
 };
@@ -3523,10 +3571,15 @@ void ChunkWorker::doChunkJobs(Chunk *c, uint16_t serverCount) {
 }
 
 bool ChunkWorker::deleteUnusedChunks() {
+	// A backend whose records hold the chunks also lets the idle ones leave the table.
+	const bool forgetsIdle = gChunkOperations && gChunkOperations->forgetsIdleChunks();
 	while (stack_.node != nullptr) {
 		chunk_handle_disconnected_copies(stack_.node);
 		auto &bucket = gChunksMetadata->chunkhash[stack_.current_bucket];
-		if (stack_.node->fileCount() == 0 && stack_.node->parts.empty()) {
+		const bool unused = stack_.node->fileCount() == 0 && stack_.node->parts.empty();
+		const bool forgotten = !unused && forgetsIdle && chunk_is_idle(stack_.node) &&
+		                       !gChunkOperations->holdsChunk(stack_.node->chunkid);
+		if (unused || forgotten) {
 			assert(stack_.current_bucket_index < bucket.size());
 			assert(bucket[stack_.current_bucket_index] == stack_.node);
 
@@ -3537,7 +3590,12 @@ bool ChunkWorker::deleteUnusedChunks() {
 
 			Chunk *toDelete = bucket[stack_.current_bucket_index];
 			bucket.erase(bucket.begin() + static_cast<std::ptrdiff_t>(stack_.current_bucket_index));
-			chunk_delete(toDelete);
+			if (unused) {
+				chunk_delete(toDelete);
+			} else {
+				chunk_forget(toDelete);
+				++forgottenInPass_;
+			}
 
 			stack_.node =
 			    getCurrentChunkInBucket(stack_.current_bucket, stack_.current_bucket_index);
@@ -3553,6 +3611,14 @@ bool ChunkWorker::deleteUnusedChunks() {
 	}
 
 	return true;
+}
+
+void ChunkWorker::sweepBucket(uint32_t bucket) {
+	stack_.current_bucket = bucket;
+	stack_.current_bucket_index = 0;
+	stack_.node = getCurrentChunkInBucket(bucket, 0);
+	stack_.watchdog.start();
+	while (!deleteUnusedChunks()) { stack_.watchdog.start(); }
 }
 
 void ChunkWorker::mainLoop() {
@@ -3610,6 +3676,15 @@ void ChunkWorker::mainLoop() {
 		while (stack_.buckets_done_count < HashSteps &&
 		       stack_.chunks_done_count < HashCPS) {
 			if (stack_.current_bucket == 0) {
+				if (gChunkOperations && gChunkOperations->forgetsIdleChunks()) {
+					// One line per pass, at info level only when the pass dropped chunks.
+					safs::log(
+					    forgottenInPass_ != 0 ? safs::log_level::info : safs::log_level::debug,
+					    fmt::runtime(
+					        "chunk table: forgot {} idle chunks in the last pass, {} in memory"),
+					    forgottenInPass_, Chunk::count);
+					forgottenInPass_ = 0;
+				}
 				doEveryLoopTasks();
 			}
 
@@ -3768,6 +3843,11 @@ void chunk_optimize_copies(ChunkCopiesCalculator &calculator) {
 }
 
 void chunk_set_maintenance_enabled(bool enabled) { gChunkMaintenanceEnabled = enabled; }
+
+void chunk_test_sweep_bucket(uint64_t chunkid) {
+	ChunkWorker worker;
+	worker.sweepBucket(chunkHashPos(chunkid));
+}
 
 void chunk_jobs_main(void) {
 	if (gChunkMaintenanceEnabled && starttime + gOperationsDelayInit <= eventloop_time() &&
