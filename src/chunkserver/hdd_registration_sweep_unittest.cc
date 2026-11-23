@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -34,9 +35,13 @@
 #include "chunkserver-common/global_shared_resources.h"
 #include "chunkserver-common/hdd_utils.h"
 #include "chunkserver/hddspacemgr.h"
+#include "chunkserver/master_connection.h"
 #include "common/chunk_version_with_todel_flag.h"
+#include "common/saunafs_version.h"
 #include "common/slice_traits.h"
+#include "protocol/matocs.h"
 #include "unittests/TemporaryDirectory.h"
+#include "unittests/packet.h"
 
 // Existing disk-maintenance entry points; no test-only production API is needed.
 void hddCheckDisks();
@@ -1512,6 +1517,74 @@ TEST_F(RegistrationSweepTests, DropsReportedAndRemovedAnnouncements) {
 	EXPECT_EQ(bulk.front().id, 3U);
 	EXPECT_TRUE(fromScan);
 	EXPECT_TRUE(gNewChunkReportOriginRuns.empty());
+}
+
+TEST_F(RegistrationSweepTests, ConnectionRetriesWithRetainedCredit) {
+	auto *chunk = addChunk(1, ChunkState::Locked);
+	ASSERT_NE(chunk, nullptr);
+	MasterConn connection("localhost", "9420", "default", nullptr, nullptr);
+	connection.setMode(ConnectionMode::CONNECTED);
+	auto registered = matocs::registerHost::build(SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX,
+	                                             "default");
+	removeHeaderInPlace(registered);
+	connection.onRegistered(registered);
+	ASSERT_EQ(connection.registrationStatus(), RegistrationStatus::kAwaitingPullStart);
+	auto start = matocs::registerChunksStart::build(1, 1);
+	removeHeaderInPlace(start);
+	connection.onRegisterChunksStart(start);
+	EXPECT_EQ(connection.registrationStatus(), RegistrationStatus::kChunksRegistering);
+	hddChunkRelease(chunk);
+	std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+	connection.checkPullRegistration();
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		EXPECT_NE(chunk->registrationEpoch(), 0U);
+	}
+	EXPECT_EQ(connection.registrationStatus(), RegistrationStatus::kChunksRegistering);
+	auto credit = matocs::registerChunksCredit::build(1);
+	removeHeaderInPlace(credit);
+	connection.onRegisterChunksCredit(credit);
+	EXPECT_EQ(connection.registrationStatus(), RegistrationStatus::kChunksRegistered);
+}
+
+TEST_F(RegistrationSweepTrackingTests, YieldRetainsCreditWithoutLockedRetryDelay) {
+	constexpr std::size_t kChunks = kDefaultChunkBulkSize + 1;
+	std::vector<EpochCountingChunk *> chunks;
+	for (uint64_t id = 1; id <= kChunks; ++id) {
+		auto *chunk = addTrackedChunk(id, ChunkState::Locked);
+		ASSERT_NE(chunk, nullptr);
+		chunks.push_back(chunk);
+	}
+	MasterConn connection("localhost", "9420", "default", nullptr, nullptr);
+	connection.setMode(ConnectionMode::CONNECTED);
+	auto registered = matocs::registerHost::build(SAUNAFS_STATUS_OK, SAUNAFS_VERSHEX, "default");
+	removeHeaderInPlace(registered);
+	connection.onRegistered(registered);
+	auto start = matocs::registerChunksStart::build(1, 1);
+	removeHeaderInPlace(start);
+	connection.onRegisterChunksStart(start);
+	ASSERT_EQ(RegistrationStatus::kChunksRegistering, connection.registrationStatus());
+
+	// START exhausted the cursor budget, retaining its only credit. Make the next
+	// entry available: the next turn must send it without another CREDIT or sleep.
+	hddChunkRelease(chunks.back());
+	connection.checkPullRegistration();
+	{
+		std::lock_guard chunksMapLockGuard(gChunksMapMutex);
+		EXPECT_NE(0U, chunks.back()->registrationEpoch());
+		for (std::size_t index = 0; index + 1 < chunks.size(); ++index) {
+			EXPECT_EQ(0U, chunks[index]->registrationEpoch());
+		}
+	}
+
+	// Normal pacing resumes once that retained credit has been consumed.
+	for (std::size_t index = 0; index + 1 < chunks.size(); ++index) {
+		hddChunkRelease(chunks[index]);
+	}
+	auto credit = matocs::registerChunksCredit::build(kChunks + 1);
+	removeHeaderInPlace(credit);
+	connection.onRegisterChunksCredit(credit);
+	EXPECT_EQ(RegistrationStatus::kChunksRegistered, connection.registrationStatus());
 }
 
 TEST_F(RegistrationSweepTests, StartsWithoutPreRegistrationNewChunkQueue) {

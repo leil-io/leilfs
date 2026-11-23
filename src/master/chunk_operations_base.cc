@@ -73,7 +73,7 @@ uint8_t ChunkOperationsBase::multiModify(
     uint32_t *lockid, uint8_t goal, bool quotaExceeded, uint8_t *opflag, uint64_t *nchunkid,
     uint32_t minServerVersion) {
 	return chunk_multi_modify(ochunkid, lockid, goal, quotaExceeded, opflag, nchunkid,
-	                          minServerVersion);
+	                          minServerVersion, fsOpContext.chunkMutationCheck());
 }
 
 uint8_t ChunkOperationsBase::multiTruncate(
@@ -81,7 +81,7 @@ uint8_t ChunkOperationsBase::multiTruncate(
     uint32_t lockid, uint32_t length, uint8_t goal, bool denyTruncatingParityParts,
     bool quotaExceeded, uint64_t *nchunkid) {
 	return chunk_multi_truncate(ochunkid, lockid, length, goal, denyTruncatingParityParts,
-	                            quotaExceeded, nchunkid);
+	                            quotaExceeded, nchunkid, fsOpContext.chunkMutationCheck());
 }
 
 int ChunkOperationsBase::canUnlock(uint64_t chunkid, uint32_t lockid) {
