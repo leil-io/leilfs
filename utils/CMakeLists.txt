@@ -72,6 +72,10 @@ install(TARGETS readdir-unlink-test RUNTIME DESTINATION ${BIN_SUBDIR})
 add_executable(big-session-metadata-benchmark big_session_metadata_benchmark.cc)
 install(TARGETS big-session-metadata-benchmark RUNTIME DESTINATION ${BIN_SUBDIR})
 
+# hold-open-files for testing sessions that keep many files open at once
+add_executable(hold-open-files hold_open_files.cc)
+install(TARGETS hold-open-files RUNTIME DESTINATION ${BIN_SUBDIR})
+
 # create_and_reread_file test for testing some rereads after creating a file
 add_executable(create-and-reread-file create_and_reread_file.cc)
 install(TARGETS create-and-reread-file RUNTIME DESTINATION ${BIN_SUBDIR})
