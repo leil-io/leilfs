@@ -78,7 +78,7 @@ public:
 protected:
 	void checkPlan(const std::unique_ptr<ReadPlan> &plan, uint8_t *buffer_start);
 
-	int readDataFromChunkServer(std::vector<uint8_t> &output, int output_offset,
+	static int readDataFromChunkServer(std::vector<uint8_t> &output, int output_offset,
 	                            const std::vector<uint8_t> &data, int offset, int size);
 
 	int startReadOperation(int write_buffer_offset,
