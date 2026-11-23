@@ -152,6 +152,12 @@ public:
 	/// from an indeterminate result.
 	void finishTransactionEffectsAfterCommit(bool committed) const noexcept;
 
+	/// Hands over the effects object once its outcome was delivered, for a caller that keeps
+	/// what the object still holds until the operations have run again.
+	std::unique_ptr<FilesystemTransactionEffects> releaseFinishedTransactionEffects() const {
+		return transactionEffectsFinished_ ? std::move(transactionEffects_) : nullptr;
+	}
+
 	/// Get the transaction type hint
 	TransactionType getTransactionType() const { return transactionType_; }
 

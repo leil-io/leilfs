@@ -792,6 +792,9 @@ struct BatchRetry {
 	std::unique_ptr<kv::IVoidFuture> recovery;
 	std::chrono::steady_clock::time_point notBefore{};  ///< timed flavor only
 	std::chrono::steady_clock::time_point parkedAt{};   ///< recovery-flavor deadline base
+	/// The failed attempt's effects. What they still hold for the backend (the chunks the
+	/// attempt touched stay in the cached table) lasts until the replay has run the bodies again.
+	std::unique_ptr<FilesystemTransactionEffects> failedEffects;
 };
 static std::optional<BatchRetry> gBatchRetry;
 
@@ -1131,6 +1134,7 @@ static void matoclserv_poll_batch() {
 			retry.members = std::move(gInFlightBatch->members);
 			retry.attempt = attempt;
 			gInFlightBatch->ctx.finishTransactionEffectsAfterCommit(false);
+			retry.failedEffects = gInFlightBatch->ctx.releaseFinishedTransactionEffects();
 			// The launch-time injected flag, NOT the reloadable setting: re-deriving it
 			// here could release a transaction the injected future never committed,
 			// still Active, and recoverAsync on it would fail stop the event loop.
