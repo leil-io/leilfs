@@ -1197,6 +1197,11 @@ bool chunk_operation_running(uint64_t chunkid) {
 	return c != nullptr && c->operation != Chunk::NONE;
 }
 
+bool chunk_is_locked(uint64_t chunkid) {
+	Chunk *c = chunk_find(chunkid);
+	return c != nullptr && c->isLocked();
+}
+
 bool chunk_operation_owes_replies(uint64_t chunkid) {
 	Chunk *c = chunk_find(chunkid);
 	return c != nullptr && c->operation != Chunk::NONE &&
@@ -3790,6 +3795,18 @@ bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server) {
 	return std::any_of(c->parts.begin(), c->parts.end(), [&](const ChunkPart &part) {
 		return part.server() == server && part.is_valid() && part.version == c->version;
 	});
+}
+
+std::vector<CachedChunkPart> chunk_parts_on_server(uint64_t chunkid, matocsserventry *server) {
+	std::vector<CachedChunkPart> parts;
+	Chunk *c = chunk_find(chunkid);
+	if (c == nullptr || server == nullptr) { return parts; }
+	for (const auto &part : c->parts) {
+		if (part.server() == server && part.state != ChunkPart::DEL) {
+			parts.push_back({part.type, part.version, part.is_valid()});
+		}
+	}
+	return parts;
 }
 
 size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64_t)> &hasRecord,

@@ -90,6 +90,9 @@ bool chunk_has_parts(uint64_t chunkid);
 /// True while the in-memory chunk's operation is not finished. False for an unknown chunk.
 bool chunk_operation_running(uint64_t chunkid);
 
+/// Master's lock of a cached chunk (Chunk::isLocked): a client lock not yet expired, or a valid
+/// part still being written after the client unlocked. False when the chunk is not cached.
+bool chunk_is_locked(uint64_t chunkid);
 
 /// True while some chunkserver still owes the in-memory chunk's operation its answer: false on
 /// the last answer, when the operation finishes and its clients are told. False for an unknown
@@ -338,6 +341,16 @@ size_t chunk_reclaim_unreferenced(size_t budget, const std::function<bool(uint64
 /// True when memory holds a valid part of @p chunkid on @p server at the chunk's version, so a
 /// backend can skip re-verifying a copy this process itself created after the server returned.
 bool chunk_server_holds_valid_part(uint64_t chunkid, matocsserventry *server);
+/// One part memory holds of a chunk on a server.
+struct CachedChunkPart {
+	ChunkPartType type;  ///< The part's type.
+	uint32_t version;    ///< The version recorded for it; 0 for a copy known bad.
+	bool valid;          ///< Whether it is a valid copy.
+};
+/// The parts memory holds of @p chunkid on @p server, at any version, valid or not, deleted ones
+/// aside; empty when the chunk is not cached. For a backend that learns from a server's whole
+/// answer which of them it no longer holds, or holds at another version.
+std::vector<CachedChunkPart> chunk_parts_on_server(uint64_t chunkid, matocsserventry *server);
 
 /// Ticks of chunk_jobs_main that one pass over the in-memory chunk table takes, derived from the
 /// hash size and the configured steps per tick; a backend paging its own records paces itself

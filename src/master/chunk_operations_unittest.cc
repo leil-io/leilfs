@@ -757,7 +757,8 @@ TEST_F(ChunkserverSideLockPlanTest, AnOperationInFlightKeepsTheChunkAfterItsUnlo
 }
 
 // After the client's write end cleared the lock, the chunkserver has not confirmed the end of the
-// write: the part is still being written, and the sweep keeps the chunk until it has.
+// write: the part is still being written. Master counts the chunk as locked until it has, and
+// the sweep keeps it until then.
 TEST_F(ChunkserverSideLockPlanTest, APartStillBeingWrittenKeepsTheChunkAfterItsUnlock) {
 	install({{&servers[0], {}}});
 	const auto grant = chunk_plan_modify(17, 77, 1, false, 0);
@@ -767,9 +768,11 @@ TEST_F(ChunkserverSideLockPlanTest, APartStillBeingWrittenKeepsTheChunkAfterItsU
 	chunk_got_chunklock_status(servers[0].eptr, 17, {}, SAUNAFS_STATUS_OK);
 
 	ASSERT_EQ(chunk_unlock(17), SAUNAFS_STATUS_OK);
+	EXPECT_TRUE(chunk_is_locked(17));
 	EXPECT_TRUE(sweepKeeps(17));
 
 	chunk_got_writeend_status(servers[0].eptr, 17, {}, SAUNAFS_STATUS_OK);
+	EXPECT_FALSE(chunk_is_locked(17));
 	EXPECT_FALSE(sweepKeeps(17));
 }
 
