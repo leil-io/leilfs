@@ -114,6 +114,8 @@ struct Session {
 	/// Set when retirement starts, before file release. Reconnects are refused even if
 	/// retirement persistence must be retried; cleanup state stays managed until completion.
 	bool closing{};
+	/// Ensures a release spanning several batches publishes one retirement record.
+	bool retirementPublished{};
 	/// Next inode in the active view; empty when inactive. KV managers also use zero to queue
 	/// a not-yet-loaded page for continuation.
 	std::optional<inode_t> releaseCursor;

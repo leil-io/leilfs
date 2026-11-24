@@ -95,6 +95,11 @@ void matoclserv_close_session(uint32_t sessionId) {
 	gSessionManager->closeSession(sessionId);
 }
 
+void matoclserv_apply_session_retirement(uint32_t sessionId) {
+	sassert(gSessionManager != nullptr);
+	gSessionManager->applySessionRetirement(sessionId);
+}
+
 bool matoclserv_begin_session_release(Session &session) {
 	sassert(gSessionManager != nullptr);
 	return gSessionManager->beginSessionRelease(session);

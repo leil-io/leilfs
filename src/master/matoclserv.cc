@@ -7233,6 +7233,15 @@ static SessionReleaseStatus matocl_close_files(Session *currentSession, size_t &
 	    FilesystemOperationContext::TransactionType::kReadWrite);
 	const bool contextHasTransaction = fsOpContext.hasReadWriteTransaction();
 
+	// Shared-store sessions already persist retirement in their attachment transaction.
+	if (!contextHasTransaction && !currentSession->retirementPublished &&
+	    currentSession->sessionId != 0) {
+		// Inode zero has no locks. Older readers replay this marker as an empty flock clear.
+		gFSOperations->changeLog(fsOpContext, context.ts(), "CLRLCK(%" PRIu8 ",0,%" PRIu32 ")",
+		                         static_cast<uint8_t>(safs_locks::Type::kFlock), currentSession->sessionId);
+		currentSession->retirementPublished = true;
+	}
+
 	auto &openFiles = currentSession->openFilesSet;
 	std::vector<inode_t> stepInodes;
 

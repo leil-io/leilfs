@@ -69,6 +69,9 @@ std::expected<Session *, uint8_t> matoclserv_find_session(uint32_t sessionId);
 /// @param sessionId The session ID to mark as closed
 void matoclserv_close_session(uint32_t sessionId);
 
+/// Marks a session closing when a shadow replays the inode-zero flock clear.
+void matoclserv_apply_session_retirement(uint32_t sessionId);
+
 /// Prepares retirement before file release; returns false if persistence must be retried.
 bool matoclserv_begin_session_release(Session &session);
 

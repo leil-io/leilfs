@@ -73,6 +73,14 @@ public:
 	ReleaseRecordingOperations()
 	    : FilesystemOperationsBase(std::make_unique<OpenFileNodeOperations>()) {}
 
+	void changeLog(const FilesystemOperationContext &, uint32_t, const char *format, ...) override {
+		EXPECT_STREQ(format, "CLRLCK(%" PRIu8 ",0,%" PRIu32 ")");
+		retirementOffsets.push_back(releases.size());
+	}
+
+	/// Number of file releases already observed at each retirement record.
+	std::vector<size_t> retirementOffsets;
+
 	int locksListInode(const FsContext &, const FilesystemOperationContext &, uint8_t, bool,
 	                   inode_t inode, uint64_t, uint64_t,
 	                   std::vector<safs_locks::Info> &locks) override {
@@ -288,6 +296,7 @@ TEST_F(MatoclSessionReleaseTest, ExpiredSessionReleasesEveryFileOnceOverLoopStep
 	matocl_session_check();
 	EXPECT_EQ(runReleaseSteps(), 4U);
 
+	EXPECT_EQ(filesystem_->retirementOffsets, std::vector<size_t>{0});
 	// Batching preserves the inode/session release sequence recorded by this fake backend.
 	EXPECT_EQ(filesystem_->releases, releasesOf(7, kOpenFiles));
 	EXPECT_EQ(managedSessions(), 0U);
@@ -411,6 +420,7 @@ TEST_F(MatoclSessionReleaseTest, TransactionalSessionsShareTheBudgetAndReleaseEv
 	matocl_session_check();
 	EXPECT_TRUE(filesystem_->releases.empty());
 	EXPECT_EQ(runReleaseSteps(), 5U);
+	EXPECT_TRUE(filesystem_->retirementOffsets.empty());
 	EXPECT_EQ(filesystem_->releases.size(), 2 * kOpenFiles);
 	EXPECT_EQ(managedSessions(), 0U);
 }

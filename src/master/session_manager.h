@@ -142,6 +142,9 @@ public:
 	/// file cleanup.
 	virtual void closeSession(uint32_t sessionId) = 0;
 
+	/// Replays retirement without attaching the client or starting file cleanup on a shadow.
+	virtual void applySessionRetirement(uint32_t sessionId) = 0;
+
 	/// Marks the runtime session closing before cleanup. Backends must persist retirement here
 	/// or before invoking the release callback. Returns false when persistence must be retried;
 	/// callers must then defer every file release.
@@ -362,6 +365,7 @@ public:
 
 	/// @copydoc ISessionManager::closeSession
 	void closeSession(uint32_t sessionId) override;
+	void applySessionRetirement(uint32_t sessionId) override;
 
 	/// @copydoc ISessionManager::beginSessionRelease
 	/// @note Marks runtime state only. A durable backend must persist retirement in an override

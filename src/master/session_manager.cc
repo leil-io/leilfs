@@ -95,6 +95,10 @@ Session *SessionManagerBase::findSession(uint32_t sessionId) {
 	return session;
 }
 
+void SessionManagerBase::applySessionRetirement(uint32_t sessionId) {
+	if (auto *session = findSessionEntry(sessionId)) { session->closing = true; }
+}
+
 void SessionManagerBase::closeSession(uint32_t sessionId) {
 	auto *session = findSessionEntry(sessionId);
 	if (session == nullptr) { return; }
