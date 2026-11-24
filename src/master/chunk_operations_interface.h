@@ -183,6 +183,13 @@ public:
 	/// instead of letting it walk the cached chunk table; the loop then drives maintenanceTick
 	/// and maintenanceStep.
 	virtual bool usesExternalMaintenance() const = 0;
+	/// Whether the cached chunk table may drop a chunk nothing is being done with, because the
+	/// backend's records hold all that the table would rebuild. The in-memory backend's table is
+	/// its only copy.
+	virtual bool forgetsIdleChunks() const = 0;
+	/// Whether the backend has work in flight that reads this chunk from the cached table; asked
+	/// only while forgetsIdleChunks is true.
+	virtual bool holdsChunk(uint64_t chunkid) const = 0;
 	/// Arms one tick of external maintenance work; maintenanceStep spends it in slices.
 	virtual void maintenanceTick() = 0;
 	/// One slice of the current tick's work, called between polls; true when more slices remain.

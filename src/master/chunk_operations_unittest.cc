@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <fstream>
 #include <limits>
+#include <set>
 #include <utility>
 
 #include <gtest/gtest.h>
@@ -37,6 +38,7 @@
 #include "master/filesystem_operation_context.h"
 #include "master/filesystem_operations.h"
 #include "master/goal_config_loader.h"
+#include "master/id_generator_incremental.h"
 #include "master/matocsserv.h"
 
 // Check the apply precondition without sending chunkserver commands.
@@ -639,4 +641,209 @@ TEST_F(ChunkMutationPlanTest, RemovedRegistryEntryIsDroppedFromTheChunk) {
 	chunk_create_with_goal_counters(18, 1, {}, 0, 0);
 	ASSERT_TRUE(chunk_exists(18));
 	EXPECT_FALSE(chunk_mutation_plan_current(plan));
+}
+
+namespace {
+
+// What the sweep sees of a backend that has the chunks in records of its own: it lets the sweep
+// forget idle chunks, and holds the ones a test names.
+class ForgettingBackend : public ChunkOperationsInMemory {
+public:
+	bool forgetsIdleChunks() const override { return true; }
+	bool holdsChunk(uint64_t chunkid) const override { return held.contains(chunkid); }
+	std::set<uint64_t> held;  ///< Chunks the backend says it still works on.
+};
+
+/// The chunk loop's sweep of the bucket of @p chunkid, for a backend that forgets idle chunks
+/// and holds none: whether the chunk is still in the table afterwards.
+bool sweepKeeps(uint64_t chunkid) {
+	auto previous = std::move(gChunkOperations);
+	gChunkOperations = std::make_unique<ForgettingBackend>();
+	chunk_test_sweep_bucket(chunkid);
+	gChunkOperations = std::move(previous);
+	return chunk_exists(chunkid);
+}
+
+// For a backend that forgets idle chunks, the chunk loop's sweep also drops a chunk that is idle
+// and that the backend does not hold. That chunk still exists, so nothing is reported, and the
+// table's counters and checksum no longer count it; the sweep's delete of a chunk with no file
+// and no part still reports. Chunk 17 starts idle, with one file, one valid part and no lock:
+// the first case shows that the sweep drops it, and each "Keeps" case changes one thing in it.
+class IdleChunkSweepTest : public ChunkMutationPlanTest {
+protected:
+	void SetUp() override {
+		ChunkMutationPlanTest::SetUp();
+		install({{&servers[0], {}}});
+		previousOperations = std::move(gChunkOperations);
+		auto owned = std::make_unique<ForgettingBackend>();
+		backend = owned.get();
+		gChunkOperations = std::move(owned);
+		previousRemovedSignal = std::move(gChunkRemovedSignal);
+		gChunkRemovedSignal = {};
+		gChunkRemovedSignal.connect([this]([[maybe_unused]] uint64_t chunkid) { ++removals; });
+		// The table's checksum includes the next chunk id, which it asks the generator for.
+		previousIdGenerator = std::move(gChunkIdGenerator);
+		gChunkIdGenerator = std::make_unique<IdGeneratorIncremental<uint64_t>>();
+	}
+	void TearDown() override {
+		gChunkIdGenerator = std::move(previousIdGenerator);
+		gChunkRemovedSignal = std::move(previousRemovedSignal);
+		gChunkOperations = std::move(previousOperations);
+		ChunkMutationPlanTest::TearDown();
+	}
+	/// Chunk 17 as installed, under a lock that lasts until @p lockedto.
+	void lockUntil(uint32_t lockedto) {
+		ASSERT_EQ(chunk_replace_part_locations(17, 3, 77, lockedto, {{&servers[0], {}}}, 255,
+		                                       {{1, 1}}, false),
+		          SAUNAFS_STATUS_OK);
+	}
+	bool sweepKeepsTheChunk() {
+		chunk_test_sweep_bucket(17);
+		return chunk_exists(17);
+	}
+	ForgettingBackend *backend = nullptr;
+	std::unique_ptr<IChunkOperations> previousOperations;
+	Signal<uint64_t> previousRemovedSignal;
+	std::unique_ptr<IIdGeneratorWithState<uint64_t>> previousIdGenerator;
+	unsigned removals = 0;
+};
+
+}  // namespace
+
+TEST_F(IdleChunkSweepTest, DropsTheIdleChunkOfTheFixture) { EXPECT_FALSE(sweepKeepsTheChunk()); }
+
+TEST_F(IdleChunkSweepTest, KeepsAChunkWithoutAFile) {
+	// Its parts wait for chunk_reclaim_unreferenced, which finds them through the table.
+	ASSERT_EQ(chunk_replace_part_locations(17, 3, 0, 0, {{&servers[0], {}}}, 255, {}, false),
+	          SAUNAFS_STATUS_OK);
+	EXPECT_TRUE(sweepKeepsTheChunk());
+}
+
+TEST_F(IdleChunkSweepTest, KeepsALockedChunk) {
+	lockUntil(static_cast<uint32_t>(eventloop_time()) + 100);
+	EXPECT_TRUE(sweepKeepsTheChunk());
+}
+
+TEST_F(IdleChunkSweepTest, KeepsAChunkWhoseExpiredLockWasNotReleased) {
+	// The writer may still come back to its lock and end its write on this chunk.
+	lockUntil(1);
+	ASSERT_GT(eventloop_time(), 1U) << "the lock has not expired";
+	EXPECT_TRUE(sweepKeepsTheChunk());
+}
+
+TEST_F(IdleChunkSweepTest, KeepsAChunkThatOwesAVersionIncrease) {
+	// The table's flag makes the next write move the version; a chunk loaded again has it only
+	// when its record says so.
+	install({{&servers[0], {}}}, true);
+	EXPECT_TRUE(sweepKeepsTheChunk());
+}
+
+TEST_F(IdleChunkSweepTest, KeepsAChunkWithAPartAtAnOlderVersion) {
+	// A chunkserver reported an older copy: the table keeps it as invalid, for a repair.
+	chunk_server_has_chunk(connections[1], 17, 2, {});
+	EXPECT_TRUE(sweepKeepsTheChunk());
+
+	// Without that part the chunk is idle again.
+	chunk_forget_parts_at_other_versions(17);
+	EXPECT_FALSE(sweepKeepsTheChunk());
+}
+
+// The grant of a write sends a lock command to the chunkserver, and the client's lock is
+// released in the table (chunk_unlock) before the chunkserver answered. The part, busy and being
+// written, then leaves the chunk on a delete status nobody asked for: only the operation that
+// still runs keeps the chunk.
+TEST_F(ChunkserverSideLockPlanTest, AnOperationStillRunningKeepsTheChunkAfterItsUnlock) {
+	install({{&servers[0], {}}});
+	const auto grant = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(grant.status, SAUNAFS_STATUS_OK);
+	uint8_t operation = 255;
+	ASSERT_TRUE(chunk_apply_mutation_plan(grant, operation));
+	ASSERT_EQ(chunk_unlock(17), SAUNAFS_STATUS_OK);
+	chunk_got_delete_status(servers[0].eptr, 17, {}, SAUNAFS_STATUS_OK);
+	ASSERT_TRUE(chunk_operation_running(17));
+	ASSERT_FALSE(chunk_server_holds_valid_part(17, servers[0].eptr));
+	ASSERT_FALSE(chunk_needs_version_increase(17));
+	EXPECT_TRUE(sweepKeeps(17));
+}
+
+// The chunkserver answered the lock command, so no operation runs. The client's write end then
+// releases the lock in the table (chunk_unlock), and the chunkserver has not confirmed the end
+// of the write: the part is still being written, and the sweep keeps the chunk until it has.
+TEST_F(ChunkserverSideLockPlanTest, APartStillBeingWrittenKeepsTheChunkAfterItsUnlock) {
+	install({{&servers[0], {}}});
+	const auto grant = chunk_plan_modify(17, 77, 1, false, 0);
+	ASSERT_EQ(grant.status, SAUNAFS_STATUS_OK);
+	uint8_t operation = 255;
+	ASSERT_TRUE(chunk_apply_mutation_plan(grant, operation));
+	chunk_got_chunklock_status(servers[0].eptr, 17, {}, SAUNAFS_STATUS_OK);
+	ASSERT_FALSE(chunk_operation_running(17));
+
+	ASSERT_EQ(chunk_unlock(17), SAUNAFS_STATUS_OK);
+	EXPECT_TRUE(sweepKeeps(17));
+
+	chunk_got_writeend_status(servers[0].eptr, 17, {}, SAUNAFS_STATUS_OK);
+	EXPECT_FALSE(sweepKeeps(17));
+}
+
+TEST_F(IdleChunkSweepTest, DropsAnIdleChunkAndTakesBackWhatItAddedToTheTable) {
+	// Chunk 18 is made like chunk 17: one file of goal 1, one valid part.
+	const auto count = chunk_count();
+	const auto checksum = chunk_checksum(ChecksumMode::kGetCurrent);
+	const auto safe = chunk_get_availability_state().safeChunks(1);
+	chunk_create_with_goal_counters(18, 3, {{1, 1}}, 0, 0);
+	ASSERT_EQ(chunk_replace_part_locations(18, 3, 0, 0, {{&servers[0], {}}}, 255, {{1, 1}}, false),
+	          SAUNAFS_STATUS_OK);
+	ASSERT_EQ(chunk_count(), count + 1);
+	ASSERT_NE(chunk_checksum(ChecksumMode::kGetCurrent), checksum);
+	ASSERT_EQ(chunk_get_availability_state().safeChunks(1), safe + 1);
+
+	chunk_test_sweep_bucket(18);
+
+	EXPECT_FALSE(chunk_exists(18));
+	EXPECT_EQ(removals, 0U) << "a chunk the sweep only forgot was reported as removed";
+	EXPECT_EQ(chunk_count(), count);
+	EXPECT_EQ(chunk_checksum(ChecksumMode::kGetCurrent), checksum);
+	EXPECT_EQ(chunk_get_availability_state().safeChunks(1), safe);
+
+	// The chunk is loaded again like one the table never held.
+	chunk_create_with_goal_counters(18, 3, {{1, 1}}, 0, 0);
+	EXPECT_TRUE(chunk_exists(18));
+	EXPECT_EQ(chunk_count(), count + 1);
+}
+
+TEST_F(IdleChunkSweepTest, ADroppedChunkIsAlsoTakenOutOfARecalculationThatPassedIt) {
+	// A whole recalculation first: from here the table's checksum is the recalculated one.
+	while (chunks_update_checksum_a_bit(1000) == ChecksumRecalculationStatus::kInProgress) {}
+
+	// A step of the next recalculation stops after the first bucket that has a chunk. Chunk 17
+	// is the only chunk, so the recalculation has passed its bucket when the chunk is dropped.
+	ASSERT_EQ(chunk_count(), 1U);
+	ASSERT_EQ(chunks_update_checksum_a_bit(1), ChecksumRecalculationStatus::kInProgress);
+	chunk_test_sweep_bucket(17);
+	ASSERT_FALSE(chunk_exists(17));
+
+	// The recalculation ends without a mismatch: a mismatch replaces the table's checksum.
+	const auto checksum = chunk_checksum(ChecksumMode::kGetCurrent);
+	while (chunks_update_checksum_a_bit(1000) == ChecksumRecalculationStatus::kInProgress) {}
+	EXPECT_EQ(chunk_checksum(ChecksumMode::kGetCurrent), checksum);
+}
+
+TEST_F(IdleChunkSweepTest, KeepsAnIdleChunkTheBackendHolds) {
+	backend->held.insert(17);
+	chunk_test_sweep_bucket(17);
+	EXPECT_TRUE(chunk_exists(17));
+}
+
+TEST_F(IdleChunkSweepTest, StillFreesAChunkWithoutFileAndPartAndReportsIt) {
+	chunk_create_with_goal_counters(18, 1, {}, 0, 0);
+	chunk_test_sweep_bucket(18);
+	EXPECT_FALSE(chunk_exists(18));
+	EXPECT_EQ(removals, 1U);
+}
+
+TEST_F(IdleChunkSweepTest, TheInMemoryBackendKeepsAnIdleChunk) {
+	gChunkOperations = std::make_unique<ChunkOperationsInMemory>();
+	chunk_test_sweep_bucket(17);
+	EXPECT_TRUE(chunk_exists(17));
+	EXPECT_EQ(removals, 0U);
 }
