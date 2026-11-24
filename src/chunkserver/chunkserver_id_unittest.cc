@@ -20,7 +20,10 @@
 
 #include <gtest/gtest.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -56,6 +59,29 @@ std::string readFile(const std::filesystem::path &path) {
 
 ChunkserverIdGenerator fixedGenerator(const ChunkserverId &chunkserverId) {
 	return [chunkserverId]() { return chunkserverId; };
+}
+
+// What a new process gets as its incarnation, at its first call and at a later one. A process
+// draws the number at its first call, so a child of this process draws its own as long as this
+// process itself never asks for one.
+std::array<uint64_t, 2> incarnationOfANewProcess() {
+	std::array<int, 2> ends{};
+	EXPECT_EQ(::pipe(ends.data()), 0);
+	const pid_t child = fork();
+	if (child == 0) {
+		const std::array<uint64_t, 2> drawn{chunkserverIncarnation(), chunkserverIncarnation()};
+		const bool sent = ::write(ends[1], drawn.data(), sizeof(drawn)) == sizeof(drawn);
+		_exit(sent ? 0 : 1);
+	}
+	::close(ends[1]);
+
+	std::array<uint64_t, 2> drawn{};
+	EXPECT_EQ(::read(ends[0], drawn.data(), sizeof(drawn)), static_cast<ssize_t>(sizeof(drawn)));
+	::close(ends[0]);
+	int status = 0;
+	EXPECT_EQ(waitpid(child, &status, 0), child);
+	EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	return drawn;
 }
 
 TEST(ChunkserverIdTests, ParsesAndFormatsCanonicalVersion4) {
@@ -274,6 +300,20 @@ TEST(ChunkserverIdTests, FailsIfStaleTemporaryPathCannotBeRemoved) {
 	             std::system_error);
 	EXPECT_FALSE(std::filesystem::exists(idPath));
 	EXPECT_TRUE(std::filesystem::is_directory(temporaryPath));
+}
+
+// A metadata server tells a chunkserver that restarted from one that only reconnected by the
+// incarnation it sends. So a process keeps the number it drew, the number is never 0 (which
+// stands for "none"), and two processes draw different numbers.
+TEST(ChunkserverIdTests, AProcessKeepsItsIncarnationAndTwoProcessesDiffer) {
+	const auto first = incarnationOfANewProcess();
+	const auto second = incarnationOfANewProcess();
+
+	EXPECT_NE(first[0], 0U);
+	EXPECT_EQ(first[0], first[1]);
+	EXPECT_NE(second[0], 0U);
+	EXPECT_EQ(second[0], second[1]);
+	EXPECT_NE(first[0], second[0]) << "two processes drew the same number";
 }
 
 }  // namespace

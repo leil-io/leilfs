@@ -1431,8 +1431,19 @@ int hddChunkGetNumberOfBlocks(uint64_t chunkId, ChunkPartType chunkType,
 int hddChunkGetVersion(uint64_t chunkId, ChunkPartType chunkType, uint32_t *version) {
 	TRACETHIS1(chunkId);
 	*version = 0;
-	auto *chunk = hddChunkFindAndLock(chunkId, chunkType);
-	if (chunk == ChunkNotFound) { return SAUNAFS_ERROR_NOCHUNK; }
+
+	// Read before the lookup: a scan that ends in between still counts as open, so a part it
+	// added right after the miss is never answered as absent.
+	const bool scanWasOpen = hddScansInProgress();
+	int lookupStatus = SAUNAFS_STATUS_OK;
+	auto *chunk = hddChunkFindAndLock(chunkId, chunkType, &lookupStatus);
+
+	// Only a miss after every scan ended, without a read error, says the part is not here.
+	if (chunk == ChunkNotFound) {
+		if (lookupStatus != SAUNAFS_STATUS_OK) { return lookupStatus; }
+		return scanWasOpen ? SAUNAFS_ERROR_WAITING : SAUNAFS_ERROR_NOCHUNK;
+	}
+
 	*version = chunk->version();
 	hddChunkRelease(chunk);
 	return SAUNAFS_STATUS_OK;

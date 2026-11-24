@@ -149,6 +149,10 @@ int matocsserv_send_deletechunk(matocsserventry* eptr,
 /// Asks which version of a chunk part the chunkserver holds; ENOTSUP for peers that predate the
 /// probe packet, so a backend can fall back instead of waiting for a reply that never comes.
 int matocsserv_send_probechunk(matocsserventry *eptr, uint64_t chunkId, ChunkPartType chunkType);
+/// Asks which parts of @p chunkIds the chunkserver holds, in one packet; the answer echoes
+/// @p generation. EINVAL for more ids than one packet carries.
+int matocsserv_send_querychunks(matocsserventry *eptr, uint64_t generation,
+                                const std::vector<uint64_t> &chunkIds);
 /// Fences the chunkserver's replicate and delete commands to this connection at @p epoch; the
 /// answer arrives as IChunkOperations::maintenanceFenceAnswered. ENOTSUP for peers that predate
 /// the packet. Master never calls it.

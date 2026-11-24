@@ -226,13 +226,25 @@ TEST(AlreadyRepliedInputBufferTests, ReadOverlayServesOnlyWritesAtThePartVersion
 	lateWrite->repliedBlocks = 0;
 }
 
-/// A disk whose parts are found without their files.
+/// A disk that touches no files: reading a part's attributes returns what the test sets.
 class InMemoryPartsDisk : public CmrDisk {
 public:
 	using CmrDisk::CmrDisk;
 	int updateChunkAttributes(IChunk * /*chunk*/, bool /*isFromScan*/) override {
-		return SAUNAFS_STATUS_OK;
+		if (lastScanEndsDuringRead) {
+			gScansInProgress.store(0);
+			return SAUNAFS_ERROR_NOCHUNK;
+		}
+		if (attributesStatus != SAUNAFS_STATUS_OK) { errno = EIO; }
+		return attributesStatus;
 	}
+
+	int unlinkChunk(IChunk * /*chunk*/) override { return SAUNAFS_STATUS_OK; }
+
+	/// What reading a part's file attributes returns.
+	int attributesStatus = SAUNAFS_STATUS_OK;
+	/// The read finds the files gone, and the last disk scan ends while it runs.
+	bool lastScanEndsDuringRead = false;
 };
 
 TEST(WriteSessionOpenTests, SessionAtAnotherVersionThanThePartJoinsNoLock) {
@@ -265,6 +277,86 @@ TEST(WriteSessionOpenTests, SessionAtAnotherVersionThanThePartJoinsNoLock) {
 	part = hddChunkFindAndLock(chunkId, type);
 	ASSERT_NE(part, ChunkNotFound);
 	hddDeleteChunkFromRegistry(part);
+}
+
+/// What the chunkserver answers when the metadata server asks whether it has a part.
+class ProbeAnswerTests : public testing::Test {
+protected:
+	void TearDown() override { gScansInProgress.store(0); }
+
+	const ChunkPartType type = ChunkPartType();
+};
+
+TEST_F(ProbeAnswerTests, PartNotInTheTableIsNotReadYetWhileAScanIsOpen) {
+	// The chunkserver registers before its disk scan ends, so a miss during the scan proves
+	// nothing about the part.
+	constexpr uint64_t chunkId = 0x7A01;
+	uint32_t version = 7;
+	gScansInProgress.store(1);
+	EXPECT_EQ(hddChunkGetVersion(chunkId, type, &version), SAUNAFS_ERROR_WAITING);
+	EXPECT_EQ(version, 0U);
+
+	// Once every scan has ended, the same miss means the part is not there.
+	gScansInProgress.store(0);
+	EXPECT_EQ(hddChunkGetVersion(chunkId, type, &version), SAUNAFS_ERROR_NOCHUNK);
+}
+
+TEST_F(ProbeAnswerTests, AttributesReadErrorIsAnsweredAsTheError) {
+	const disk::Configuration config("/mnt/hdd_probe_answer/");
+	InMemoryPartsDisk disk(config);
+	constexpr uint64_t chunkId = 0x7A02;
+	auto *part =
+	    hddChunkFindOrCreatePlusLock(&disk, chunkId, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(part, ChunkNotFound);
+	part->setVersion(5);
+	{
+		const std::lock_guard lock(gTestsMutex);
+		disk.chunks().insert(part);
+	}
+	hddChunkRelease(part);
+
+	// The part is in the table but its files cannot be read: that is not an absence.
+	disk.attributesStatus = SAUNAFS_ERROR_IO;
+	uint32_t version = 7;
+	EXPECT_EQ(hddChunkGetVersion(chunkId, type, &version), SAUNAFS_ERROR_IO);
+	EXPECT_EQ(version, 0U);
+
+	// Readable again, the same part answers with its version.
+	disk.attributesStatus = SAUNAFS_STATUS_OK;
+	EXPECT_EQ(hddChunkGetVersion(chunkId, type, &version), SAUNAFS_STATUS_OK);
+	EXPECT_EQ(version, 5U);
+
+	part = hddChunkFindAndLock(chunkId, type);
+	ASSERT_NE(part, ChunkNotFound);
+	hddDeleteChunkFromRegistry(part);
+}
+
+TEST_F(ProbeAnswerTests, ScanThatEndsDuringTheLookupStillAnswersNotReadYet) {
+	const disk::Configuration config("/mnt/hdd_probe_answer_order/");
+	InMemoryPartsDisk disk(config);
+	constexpr uint64_t chunkId = 0x7A03;
+	auto *part =
+	    hddChunkFindOrCreatePlusLock(&disk, chunkId, type, disk::ChunkGetMode::kCreateOnly);
+	ASSERT_NE(part, ChunkNotFound);
+	{
+		const std::lock_guard lock(gTestsMutex);
+		disk.chunks().insert(part);
+	}
+	hddChunkRelease(part);
+
+	// The scan was open when the question arrived. While the lookup runs, the last scan ends
+	// and the lookup finds the part's files gone. The answer comes from the state before the
+	// lookup, "not read yet"; read afterwards it would be "no chunk". A later question, with
+	// no scan open, gets "no chunk".
+	gScansInProgress.store(1);
+	disk.lastScanEndsDuringRead = true;
+	uint32_t version = 7;
+	EXPECT_EQ(hddChunkGetVersion(chunkId, type, &version), SAUNAFS_ERROR_WAITING);
+	EXPECT_EQ(gScansInProgress.load(), 0);
+
+	// The lookup queued a damage report for the part it dropped; leave none behind.
+	std::vector<ChunkWithType> reported;
+	hddGetDamagedChunks(reported, 16);
 }
 
 }  // namespace
