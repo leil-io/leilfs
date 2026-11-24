@@ -38,7 +38,7 @@ struct ChangelogEvent {
 Signal<const ChangelogEvent &> &getChangelogSignal();
 
 /// Initializes changelog module.
-/// \param changelogFilename - base name of changelog files, e.g. "changelog_ml.sfs"
+/// \param changelogFilename - base name of changelog files, e.g. "changelog_ml.leil"
 /// \param minBackLogsNumber - minimum allowed value of BACK_LOGS config entry
 /// \param maxBackLogsNumber - maximum allowed value of BACK_LOGS config entry
 /// \throws InitializeException

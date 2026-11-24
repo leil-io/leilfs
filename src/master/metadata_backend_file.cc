@@ -1473,9 +1473,9 @@ void MetadataBackendFile::init() {
 	if (metadataserver::isMaster() && !metadataFileExists && !legacyMetadataFileExists) {
 		std::string currentPath = fs::getCurrentWorkingDirectoryNoThrow();
 		throw FilesystemException(
-		    "can't open metadata file " + currentPath + "/" + kMetadataFilename +
-		    ": if this is a new installation create empty metadata by copying " + currentPath +
-		    "/" + kMetadataFilename + ".empty to " + currentPath + "/" + kMetadataFilename);
+		    "can't open metadata file " + currentPath + "/metadata.leil or " + currentPath +
+		    "/metadata.sfs: if this is a new installation create empty metadata by copying " +
+		    currentPath + "/metadata.leil.empty to " + currentPath + "/metadata.leil");
 	}
 #endif
 }

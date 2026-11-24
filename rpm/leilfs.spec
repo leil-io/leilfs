@@ -343,7 +343,7 @@ rm -f %{buildroot}%{_libdir}/leil/plugins/chunkserver/libmock-disk-plugin.so
 %{_unitdir}/saunafs-master.service
 %dir %{leil_confdir}
 %attr(-,%{leil_user},%{leil_group}) %dir %{leil_datadir}
-%attr(-,%{leil_user},%{leil_group}) %{leil_datadir}/metadata.sfs.empty
+%attr(-,%{leil_user},%{leil_group}) %{leil_datadir}/metadata.leil.empty
 %{_localstatedir}/lib/saunafs
 %{_mandir}/man5/sfsexports.cfg.5*
 %{_mandir}/man5/leil-exports.cfg.5*

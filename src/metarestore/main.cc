@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "common/cwrap.h"
+#include "common/legacy_data_files.h"
 #include "common/rotate_files.h"
 #include "common/setup.h"
 #include "master/changelog.h"
@@ -58,9 +59,12 @@
 
 int changelog_checkname(const char *fname) {
 	const char *ptr = fname;
+	// Both the current and the pre-rebrand names: master and metalogger choose theirs apart
 	std::string testName[] = {
-		kChangelogFilename,
-		kChangelogMlFilename
+		"changelog.leil",
+		"changelog_ml.leil",
+		legacy_data_files::legacyName("changelog.leil"),
+		legacy_data_files::legacyName("changelog_ml.leil")
 	};
 
 	for (const std::string& s : testName) {
@@ -127,13 +131,22 @@ void usage(const char* appname) {
 			"-f   - force loading all changelogs\n", appname, appname, appname, appname, appname);
 }
 
+/// useMasterDataFileNames() for the master's data directory @p dir, only warning about a partial
+/// rename there: the master refuses to start on one, but recovery should still be possible.
+static void useDataFileNames(const std::string &dir) {
+	const auto leftovers = useMasterDataFileNames(dir);
+	if (!leftovers.empty()) { legacy_data_files::logPartialRename(dir, leftovers, false); }
+}
+
 /*! \brief Prints version of metadata that can be read from disk
  * by a master server in auto recovery mode.
  *
  * \param path - path to directory containing metadata files.
  */
 void meta_version_on_disk(std::string path) {
-	static const std::string changelogs[] {
+	// The files the master recovers from, under the names it uses there
+	useDataFileNames(path);
+	const std::string changelogs[] {
 		std::string(kChangelogFilename) + ".2",
 		std::string(kChangelogFilename) + ".1",
 		kChangelogFilename
@@ -316,16 +329,20 @@ int main(int argc,char **argv) {
 		// All candidates from the least to the most preferred one
 		// We still load metadata.sfs.back for scenarios where metaretore
 		// is started during migration to saunafs version with new naming scheme.
-		std::string candidates[] {
-			std::string(kMetadataMlFilename) + ".back.1",
-			std::string(kMetadataFilename) + ".back.1",
-			std::string(kMetadataMlFilename) + ".1",
-			std::string(kMetadataFilename) + ".1",
-			kMetadataMlFilename,
-			kMetadataFilename};
+		std::vector<std::string> candidates;
+		for (std::string name : {std::string(kMetadataMlFilename) + ".back.1",
+		                         std::string(kMetadataFilename) + ".back.1",
+		                         std::string(kMetadataMlFilename) + ".1",
+		                         std::string(kMetadataFilename) + ".1",
+		                         std::string(kMetadataMlFilename),
+		                         std::string(kMetadataFilename)}) {
+			// A pre-rebrand file, where its daemon still uses that name, before the current one
+			candidates.push_back(legacy_data_files::legacyName(name));
+			candidates.push_back(name);
+		}
 		std::string bestmetadata;
 		uint64_t bestversion = 0;
-		for (auto candidate : candidates) {
+		for (const auto &candidate : candidates) {
 			std::string metadata_candidate = std::string(datapath) + "/" + candidate;
 			if (access(metadata_candidate.c_str(), F_OK) != 0) {
 				continue;
@@ -345,9 +362,16 @@ int main(int argc,char **argv) {
 			return 1;
 		}
 		metadata = bestmetadata;
+		// Restored under the names the master uses there, as it would itself
+		useDataFileNames(datapath);
 		metaout =  datapath + "/" + kMetadataFilename;
 		safs_pretty_syslog(LOG_INFO, "file %s will be used to restore the most recent metadata",
 				metadata.c_str());
+	}
+	if (!autorestore) {
+		// The lock goes next to the metadata file, under the names a master there uses, so that
+		// one left behind does not switch that master to other names
+		useDataFileNames(fs::dirname(metadata));
 	}
 	try {
 		if (fs_init(metadata.c_str(), ignoreflag, noLock) != 0) {
