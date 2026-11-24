@@ -135,15 +135,15 @@ session_release_expect_timed_responsiveness() {
 	expect_equals 1 "${session_release_registrations}"
 }
 
-# Retain the status for the caller to check after cleanup and diagnostic reporting.
+# Retain the exit status and server reply for the caller to check.
 session_release_timed_delete() {
-	local session="${1}" start output seconds
+	local session="${1}" start seconds
 	start=$(date +%s.%N)
 	session_release_delete_status=0
-	output=$(leil-admin delete-session localhost "${info[matocl]}" "${session}" 2>&1) ||
+	session_release_delete_reply=$(leil-admin delete-session localhost "${info[matocl]}" "${session}" 2>&1) ||
 		session_release_delete_status=$?
 	seconds=$(awk -v start="${start}" -v end="$(date +%s.%N)" \
 		'BEGIN {printf "%.3f", end - start}')
 	echo "Session deletion: delete-session took ${seconds} s," \
-		"exit status ${session_release_delete_status}: ${output}"
+		"exit status ${session_release_delete_status}: ${session_release_delete_reply}"
 }

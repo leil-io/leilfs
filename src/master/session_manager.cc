@@ -377,6 +377,8 @@ bool SessionManagerFile::writeSessions(bool durable) {
 	for (const auto &sessionPtr : sessions_) {
 		if (sessionPtr->newSession != 1 && !sessionPtr->closing) { continue; }
 
+		// A later snapshot must keep existing retirement markers durable.
+		durable |= sessionPtr->closing;
 		ptr = fsesrecord.data();
 		sessionInfoLength = sessionPtr->info.size();
 

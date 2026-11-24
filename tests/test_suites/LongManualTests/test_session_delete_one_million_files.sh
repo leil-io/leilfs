@@ -43,5 +43,6 @@ assert_success saunafs_fusermount -u -z "${info[mount0]}"
 
 session_release_report_timed_samples 'Session deletion' "${files}" "${samples}"
 expect_equals 0 "${session_release_delete_status}"
+expect_awk_finds '$0 == "Session deleted successfully"' "${session_release_delete_reply}"
 session_release_expect_timed_responsiveness
 session_release_cleanup
