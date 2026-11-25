@@ -319,6 +319,51 @@ TEST(SessionManagerFileTests, ReplayedRetirementsPreserveDownloadedClientsAndCle
 	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "downloaded.sfs"));
 }
 
+TEST(SessionManagerFileTests, ReplayedRetirementMissingFromSnapshotSurvivesRecovery) {
+	TemporaryDirectory temp("/tmp", "session-replay-missing-record");
+	ScopedCurrentDirectory cwd(temp.name());
+
+	// The downloaded table predates the retired session, but contains an active client.
+	SessionManagerFile downloaded;
+	auto active = makeSession(42);
+	active->peerIpAddress = 0x7F000001;
+	active->info = "downloaded-client";
+	downloaded.addSession(std::move(active));
+	downloaded.storeSessions();
+
+	SessionManagerFile shadow;
+	shadow.applySessionRetirement(43);
+	shadow.addOpenFile(43, 123);  // Partial replay leaves this file for a later cleanup batch.
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+
+	// Recovery reloads the saved table, then reconstructs open files from metadata.
+	SessionManagerFile recovered;
+	ASSERT_EQ(recovered.loadSessions(), 1);
+	recovered.addOpenFile(43, 123);
+	size_t records = 0;
+	recovered.forEachSession([&](const Session &session) {
+		++records;
+		if (session.sessionId == 43) {
+			EXPECT_TRUE(session.closing);
+			EXPECT_TRUE(session.openFilesSet.contains(123));
+		}
+	});
+	EXPECT_EQ(records, 2U);
+
+	// Cleanup must resume immediately rather than waiting for the legacy session timeout.
+	std::vector<uint32_t> queued;
+	recovered.removeTimedOutSessions(0, 60, [&](Session *session) {
+		queued.push_back(session->sessionId);
+		return false;
+	});
+	EXPECT_EQ(queued, std::vector<uint32_t>({43}));
+	EXPECT_EQ(recovered.findSession(43), nullptr);
+	auto *preserved = recovered.findSession(42);
+	ASSERT_NE(preserved, nullptr);
+	EXPECT_EQ(preserved->info, "downloaded-client");
+	EXPECT_EQ(preserved->peerIpAddress, 0x7F000001U);
+}
+
 TEST(SessionManagerFileTests, OldSfsSessionHeaderIsRejected) {
 	TemporaryDirectory temp("/tmp", "session-file-old-sfs");
 	ScopedCurrentDirectory cwd(temp.name());

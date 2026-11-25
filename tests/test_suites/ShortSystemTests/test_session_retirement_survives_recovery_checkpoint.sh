@@ -72,6 +72,9 @@ assert_success awk -F: -v boundary="${cleanup_boundary}" \
 release_version=$(tail -n 1 "${replacement_data}/changelog.sfs" | cut -d: -f1)
 saunafs_make_conf_for_master 1
 assert_failure saunafs_master_daemon start
+# Failed startup returns before the child finishes its shutdown metadata dump.
+assert_eventually "! saunafs_master_daemon isalive"
+assert_file_not_exists "${replacement_data}/metadata.sfs.tmp"
 assert_equals "$((release_version + 1))" "$(metadata_get_version "${replacement_data}/metadata.sfs")"
 
 session_lock_image "${replacement_data}/metadata.sfs" "${TEMP_DIR}/replayed-locks"
@@ -79,8 +82,6 @@ assert_equals "${waiter_id}" "$(awk -v inode="${contended_inode}" \
 	'$1 == "flock" && $2 == "active" && $3 == inode {print $6}' "${TEMP_DIR}/replayed-locks")"
 assert_equals "${owner_id}" "$(awk -v inode="${remaining_inode}" \
 	'$1 == "flock" && $2 == "active" && $3 == inode {print $6}' "${TEMP_DIR}/replayed-locks")"
-# Finish terminating the failed startup before reading its files again.
-saunafs_master_daemon kill || true
 
 # The second startup reads the new checkpoint and the persisted session table.
 assert_success saunafs_master_n 0 kill

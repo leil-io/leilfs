@@ -314,7 +314,8 @@ inline const std::string &MasterConn::getSessionsTmpFilename() {
 #ifdef METALOGGER
 	static const std::string sessionsTmpFilename = kSessionsMlTmpFilename;
 #else  /* #ifdef METALOGGER */
-	static const std::string sessionsTmpFilename = kSessionsTmpFilename;
+	// Downloads must not share the temporary file used by local session saves.
+	static const std::string sessionsTmpFilename = std::string(kSessionsFilename) + ".download.tmp";
 #endif /* #else #ifdef METALOGGER */
 	return sessionsTmpFilename;
 }

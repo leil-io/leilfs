@@ -28,6 +28,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <type_traits>
 
 #include "common/cwrap.h"
@@ -343,9 +344,20 @@ bool SessionManagerFile::flushSessionRetirements() {
 	// Preserve the downloaded records while saving the replayed retirement state.
 	SessionManagerFile snapshot;
 	if (snapshot.loadSessions() != 1) { return false; }
+	std::set<uint32_t> retiredSessionIds;
+	for (const auto &session : sessions_) {
+		if (session->closing) { retiredSessionIds.insert(session->sessionId); }
+	}
 	for (auto &stored : snapshot.sessions_) {
-		const auto *session = findSessionEntry(stored->sessionId);
-		if (session != nullptr && session->closing) { stored->closing = true; }
+		if (retiredSessionIds.erase(stored->sessionId) != 0) { stored->closing = true; }
+	}
+	// Metadata may still reference retired sessions absent from the downloaded table.
+	// Preserve their retirement so recovery does not recreate them as active legacy sessions.
+	for (uint32_t sessionId : retiredSessionIds) {
+		auto retired = std::make_unique<Session>();
+		retired->sessionId = sessionId;
+		retired->closing = true;
+		snapshot.addSession(std::move(retired));
 	}
 	if (!snapshot.writeSessions(/*durable=*/true)) { return false; }
 	sessionsPersistencePending_ = false;

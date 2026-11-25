@@ -533,6 +533,7 @@ public:
 	void applySessionRetirement(uint32_t sessionId) override;
 
 	/// Applies replayed retirement state to the downloaded session table and saves it durably.
+	/// Preserves retirement records missing from the downloaded table for metadata recovery.
 	/// @return True if no save was needed or the save succeeded. False retains pending work
 	/// for retry. The caller logs failure and continues the metadata dump.
 	bool flushSessionRetirements() override;
