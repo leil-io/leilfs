@@ -325,6 +325,42 @@ int SessionManagerFile::initialize() {
 
 void SessionManagerFile::storeSessions() { writeSessions(/*durable=*/false); }
 
+void SessionManagerFile::applySessionRetirement(uint32_t sessionId) {
+	if (sessionId == 0) { return; }
+	auto *session = findSessionEntry(sessionId);
+	if (session == nullptr) {
+		auto retired = std::make_unique<Session>();
+		retired->sessionId = sessionId;
+		session = addSession(std::move(retired));
+	}
+	session->closing = true;
+	sessionsPersistencePending_ = true;
+}
+
+bool SessionManagerFile::flushSessionRetirements() {
+	if (!sessionsPersistencePending_) { return true; }
+
+	// Preserve the downloaded records while saving the replayed retirement state.
+	SessionManagerFile snapshot;
+	if (snapshot.loadSessions() != 1) { return false; }
+	for (auto &stored : snapshot.sessions_) {
+		const auto *session = findSessionEntry(stored->sessionId);
+		if (session != nullptr && session->closing) { stored->closing = true; }
+	}
+	if (!snapshot.writeSessions(/*durable=*/true)) { return false; }
+	sessionsPersistencePending_ = false;
+	return true;
+}
+
+void SessionManagerFile::sessionSnapshotDownloaded() {
+	sessionsPersistencePending_ = false;
+}
+
+void SessionManagerFile::unload() {
+	SessionManagerBase::unload();
+	sessionsPersistencePending_ = false;
+}
+
 bool SessionManagerFile::beginSessionRelease(Session &session) {
 	session.closing = true;
 	return writeSessions(/*durable=*/true);

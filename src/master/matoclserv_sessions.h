@@ -70,7 +70,14 @@ std::expected<Session *, uint8_t> matoclserv_find_session(uint32_t sessionId);
 void matoclserv_close_session(uint32_t sessionId);
 
 /// Marks a session closing when a shadow replays the inode-zero flock clear.
+/// Pending retirement persistence is attempted before the next metadata dump.
 void matoclserv_apply_session_retirement(uint32_t sessionId);
+
+/// Attempts to save pending replayed retirements before a metadata dump.
+bool matoclserv_flush_session_retirements();
+
+/// Accepts a successfully downloaded session snapshot as authoritative.
+void matoclserv_session_snapshot_downloaded();
 
 /// Prepares retirement before file release; returns false if persistence must be retried.
 bool matoclserv_begin_session_release(Session &session);

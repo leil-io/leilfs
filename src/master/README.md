@@ -215,6 +215,12 @@ Before expiry or deletion releases any files or locks, the file backend writes
 `CLRLCK(0,0,sessionId)` once for the session. The first zero
 selects flock. Inode zero is reserved here to signal session retirement. A
 shadow that understands the marker refuses the old session ID after promotion.
+Before a metadata dump, pending replayed retirements are saved together in the
+downloaded session table. A successful save or session-file download clears the
+pending-persistence flag. Downloads are treated as authoritative when they complete.
+A failed save is logged and retried at a later dump while metadata dumping proceeds.
+If a crash follows a failed session save and a successful metadata dump before
+session state is refreshed, an old session ID can become reconnectable again.
 Older metarestore versions replay an empty flock clear and advance the metadata
 version. Ordinary clears on real inodes retain their lock semantics.
 

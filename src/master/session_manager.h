@@ -143,7 +143,14 @@ public:
 	virtual void closeSession(uint32_t sessionId) = 0;
 
 	/// Replays retirement without attaching the client or starting file cleanup on a shadow.
+	/// Pending retirement persistence is attempted before the next metadata dump.
 	virtual void applySessionRetirement(uint32_t sessionId) = 0;
+
+	/// Attempts to persist pending replayed retirements before a metadata dump.
+	virtual bool flushSessionRetirements() { return true; }
+
+	/// Accepts a successfully downloaded session snapshot as authoritative.
+	virtual void sessionSnapshotDownloaded() {}
 
 	/// Marks the runtime session closing before cleanup. Backends must persist retirement here
 	/// or before invoking the release callback. Returns false when persistence must be retried;
@@ -520,6 +527,22 @@ public:
 	///       leave the existing sessions file untouched.
 	void storeSessions() override;
 
+	/// Queues replayed retirement for one durable write before the next metadata dump.
+	/// Marks the session closing, creating an entry if needed, and sets persistence pending.
+	/// Session ID zero is ignored.
+	void applySessionRetirement(uint32_t sessionId) override;
+
+	/// Applies replayed retirement state to the downloaded session table and saves it durably.
+	/// @return True if no save was needed or the save succeeded. False retains pending work
+	/// for retry. The caller logs failure and continues the metadata dump.
+	bool flushSessionRetirements() override;
+
+	/// Clears pending persistence after a successful authoritative session-file download.
+	void sessionSnapshotDownloaded() override;
+
+	/// Releases runtime sessions and clears pending persistence.
+	void unload() override;
+
 	/// @copydoc ISessionManager::beginSessionRelease
 	bool beginSessionRelease(Session &session) override;
 
@@ -532,4 +555,9 @@ private:
 	/// Closing records retain the existing wire format and use the already invalid peer IP 0.
 	/// Retirement also syncs the file and its rename before any file release can run.
 	bool writeSessions(bool durable);
+
+	/// Set by retirement replay to request a batched save before the next metadata dump.
+	/// A failed save retains it. A successful save, an authoritative session-file download,
+	/// or unload() clears it.
+	bool sessionsPersistencePending_{};
 };

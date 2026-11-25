@@ -63,6 +63,7 @@
 
 #ifndef METALOGGER
 #include "master/filesystem.h"
+#include "master/matoclserv_sessions.h"
 #include "master/personality.h"
 #include "master/restore.h"
 #endif /* #ifndef METALOGGER */
@@ -664,6 +665,9 @@ void MasterConn::downloadNext() {
 				    "can't rename downloaded sessions - do it manually before next download");
 			} else {
 #ifndef METALOGGER
+				// Accept the installed master snapshot as authoritative and clear pending persistence.
+				// Recovery replay below can set the flag again when it encounters retirement records.
+				matoclserv_session_snapshot_downloaded();
 				/*
 				 * We can have other state if we are synchronized or we got changelog apply error
 				 * during independent sessions download session.

@@ -181,6 +181,12 @@ uint8_t MetadataBackendFile::fs_storeall(DumpType dumpType) {
 		return SAUNAFS_ERROR_TEMP_NOTPOSSIBLE;
 	}
 
+	// Save replayed retirements together before the checkpoint covers their markers.
+	// A session-file failure must still allow the filesystem metadata dump to proceed.
+	if (!matoclserv_flush_session_retirements()) {
+		safs::log_warn("can't persist replayed session retirements; continuing metadata dump");
+	}
+
 	// We are going to do some changes in the data dir right now
 	fs_erase_message_from_lockfile();
 	changelog_rotate();

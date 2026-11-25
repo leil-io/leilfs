@@ -244,6 +244,81 @@ TEST(SessionManagerFileTests, ExpirySweepPersistsAllRetirementsWithOneReplacemen
 	EXPECT_NE(reader.findSession(kExpiredSessions + 1), nullptr);
 }
 
+TEST(SessionManagerFileTests, ReplayedRetirementsPersistInOneBatchAndRetryFailedWrites) {
+	TemporaryDirectory temp("/tmp", "session-replay-checkpoint");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile writer;
+	for (uint32_t id : {42U, 43U, 44U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		writer.addSession(std::move(session));
+	}
+	writer.storeSessions();
+	std::filesystem::create_hard_link(kSessionsFilename, "before-replay.sfs");
+	writer.applySessionRetirement(42);
+	writer.applySessionRetirement(43);
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "before-replay.sfs"));
+
+	// A failed batch save must remain pending until it can be retried.
+	std::filesystem::create_directory(kSessionsTmpFilename);
+	EXPECT_FALSE(writer.flushSessionRetirements());
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "before-replay.sfs"));
+	std::filesystem::remove(kSessionsTmpFilename);
+	ASSERT_TRUE(writer.flushSessionRetirements());
+
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+	EXPECT_EQ(reader.findSession(42), nullptr);
+	EXPECT_EQ(reader.findSession(43), nullptr);
+	EXPECT_NE(reader.findSession(44), nullptr);
+
+	// Another metadata dump without pending retirements must leave the saved file in place.
+	std::filesystem::create_hard_link(kSessionsFilename, "after-replay.sfs");
+	ASSERT_TRUE(writer.flushSessionRetirements());
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "after-replay.sfs"));
+}
+
+TEST(SessionManagerFileTests, ReplayedRetirementsPreserveDownloadedClientsAndClearPendingWork) {
+	TemporaryDirectory temp("/tmp", "session-replay-refresh");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	shadow.addSession(makeSession(42));
+	shadow.applySessionRetirement(42);
+	shadow.applySessionRetirement(43);  // This client was created after the shadow started.
+
+	SessionManagerFile downloaded;
+	for (uint32_t id : {42U, 43U, 44U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		session->info = "downloaded-client";
+		downloaded.addSession(std::move(session));
+	}
+	downloaded.storeSessions();
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+	EXPECT_EQ(reader.findSession(42), nullptr);
+	EXPECT_EQ(reader.findSession(43), nullptr);
+	auto *active = reader.findSession(44);
+	ASSERT_NE(active, nullptr);
+	EXPECT_EQ(active->info, "downloaded-client");
+	EXPECT_EQ(active->peerIpAddress, 0x7F000001U);
+
+	// An authoritative download supersedes work pending since the previous save.
+	shadow.applySessionRetirement(44);
+	for (uint32_t id : {42U, 43U, 44U}) {
+		auto *session = downloaded.findSession(id);
+		ASSERT_NE(session, nullptr);
+		session->closing = true;
+	}
+	downloaded.storeSessions();
+	shadow.sessionSnapshotDownloaded();
+	std::filesystem::create_hard_link(kSessionsFilename, "downloaded.sfs");
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "downloaded.sfs"));
+}
+
 TEST(SessionManagerFileTests, OldSfsSessionHeaderIsRejected) {
 	TemporaryDirectory temp("/tmp", "session-file-old-sfs");
 	ScopedCurrentDirectory cwd(temp.name());

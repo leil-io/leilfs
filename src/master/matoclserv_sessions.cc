@@ -100,6 +100,16 @@ void matoclserv_apply_session_retirement(uint32_t sessionId) {
 	gSessionManager->applySessionRetirement(sessionId);
 }
 
+bool matoclserv_flush_session_retirements() {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->flushSessionRetirements();
+}
+
+void matoclserv_session_snapshot_downloaded() {
+	sassert(gSessionManager != nullptr);
+	gSessionManager->sessionSnapshotDownloaded();
+}
+
 bool matoclserv_begin_session_release(Session &session) {
 	sassert(gSessionManager != nullptr);
 	return gSessionManager->beginSessionRelease(session);
