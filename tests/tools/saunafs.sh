@@ -198,17 +198,44 @@ saunafs_fusermount() {
 	fusermount3 "$@"
 }
 
+# windows_wait_for_exit_ <server_command> -- waits until no process runs <server_command>,
+# killing what is left once the time is up; fails if it is still there after that
+windows_wait_for_exit_() {
+	local server_command=$1
+	local gone="! pgrep -f \"$server_command\" >/dev/null"
+	if ! wait_for "$gone" "$(timeout_rescale '10 seconds')"; then
+		echo "'$server_command' did not exit, sending SIGKILL" >&2
+		pkill -SIGKILL -f "$server_command" || true
+		if ! wait_for "$gone" "$(timeout_rescale '10 seconds')"; then
+			echo "'$server_command' is still running after SIGKILL" >&2
+			return 1
+		fi
+	fi
+}
+
+# Under WSL1 the daemon's own stop cannot find the process through its lock file, so the signal
+# is sent here. Stop, restart and kill wait until the process exited, as the daemon's own stop
+# does on Linux: otherwise the next step runs while it still shuts down.
+# It works from / because under WSL1 a shell whose working directory is on the Windows mount
+# can hang starting processes once the master is gone.
 windows_server_aux(){
 	local server_command=$1
 	local command=$2
-	if [[ "$command" == "reload" ]]; then
-		kill -s SIGHUP $(pgrep -f "$server_command")
-	elif [[ "$command" == "kill" ]]; then
-		kill -s SIGKILL $(pgrep -f "$server_command")
-	elif [[ "$command" == "stop" ]] || [[ "$command" == "restart" ]]; then
-		kill -s SIGTERM $(pgrep -f "$server_command")
-	fi
-	$server_command $command | cat
+	(
+		cd /
+		local pids
+		pids=$(pgrep -f "$server_command" || true)
+		if [[ "$command" == "reload" ]]; then
+			[[ -z $pids ]] || kill -s SIGHUP $pids
+		elif [[ "$command" == "kill" ]]; then
+			[[ -z $pids ]] || kill -s SIGKILL $pids
+			windows_wait_for_exit_ "$server_command" || exit 1
+		elif [[ "$command" == "stop" ]] || [[ "$command" == "restart" ]]; then
+			[[ -z $pids ]] || kill -s SIGTERM $pids
+			windows_wait_for_exit_ "$server_command" || exit 1
+		fi
+		$server_command $command | cat
+	)
 }
 
 # saunafs_chunkserver_daemon <id> start|stop|restart|kill|tests|isalive|...
