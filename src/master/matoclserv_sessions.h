@@ -22,6 +22,7 @@
 
 #include "common/platform.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -60,13 +61,26 @@ Session *matoclserv_new_session(uint8_t newSession, uint8_t noNewId);
 
 /// Finds the session for a given ID.
 /// @param sessionId The session ID to search for
-/// @return The session, or SAUNAFS_ERROR_BADSESSIONID when it is gone, or SAUNAFS_ERROR_IO when
-///         the session store could not be read
+/// @return The session, SAUNAFS_ERROR_BADSESSIONID when unknown or closing, or SAUNAFS_ERROR_IO
+///         when the session store could not be read.
 std::expected<Session *, uint8_t> matoclserv_find_session(uint32_t sessionId);
 
-/// Marks a session as explicitly closed in manager state.
+/// Sets the reconnectable close marker (see ISessionManager::closeSession).
 /// @param sessionId The session ID to mark as closed
 void matoclserv_close_session(uint32_t sessionId);
+
+/// Marks a session closing when a shadow replays the inode-zero flock clear.
+/// Pending retirement persistence is attempted before the next metadata dump.
+void matoclserv_apply_session_retirement(uint32_t sessionId);
+
+/// Attempts to save pending replayed retirements before a metadata dump.
+bool matoclserv_flush_session_retirements();
+
+/// Reconciles and installs a downloaded session snapshot before it replaces the current file.
+bool matoclserv_install_session_snapshot(const std::string &filename);
+
+/// Prepares retirement before file release; returns false if persistence must be retried.
+bool matoclserv_begin_session_release(Session &session);
 
 /// Makes this server the one serving @p session's client (see ISessionManager::attachSession).
 /// @param isNew True for a session being registered, false for a reconnect
@@ -74,8 +88,8 @@ void matoclserv_close_session(uint32_t sessionId);
 /// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID or SAUNAFS_ERROR_IO
 uint8_t matoclserv_attach_session(Session *session, bool isNew, uint32_t attempt);
 
-/// Releases a session at once, whichever server serves it (see
-/// ISessionManager::releaseSessionNow).
+/// Retires a session, whichever server serves it, and starts bounded cleanup. A successful
+/// reply can leave cleanup pending (see ISessionManager::releaseSessionNow).
 uint8_t matoclserv_release_session_now(uint32_t sessionId,
                                        const std::function<bool(Session *)> &onReleased);
 
@@ -123,8 +137,14 @@ std::vector<SessionFiles> matoclserv_list_sessions();
 /// Returns true when the active backend provides the admin list-sessions view.
 bool matoclserv_uses_backend_session_list();
 
-/// Removes timed out sessions whose callback confirms teardown completed.
+/// Discovers expired sessions and starts or retries cleanup; managers remove only fully
+/// cleaned sessions (see ISessionManager::removeTimedOutSessions).
 void matoclserv_remove_timed_out_sessions(const std::function<bool(Session *)> &onTimedOut);
+
+/// Continues queued releases and detached-cache cleanup under a shared file-entry budget.
+/// Returns true when another continuation is needed.
+bool matoclserv_continue_session_releases(size_t &budget,
+                                          const std::function<bool(Session *)> &onReleased);
 
 /// Inserts an open file to the list of open files for a given session.
 /// @param currentSession Pointer to the session

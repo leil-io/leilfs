@@ -203,10 +203,28 @@ disconnect, explicit delete, and timeout cleanup. Session ids are still
 allocated through `gFSOperations->newSessionId()`, which records the allocation
 in the changelog for the file-backed master path.
 
-Explicit delete and timeout cleanup both call `matocl_close_files()` to release
-open files and locks. The helper reports whether teardown completed; timeout
-cleanup erases a session only after successful teardown, so a failed transactional
-backend commit can keep the session managed for a later retry.
+Session expiry and deletion release open files and locks in bounded steps
+(up to 1,000 files, with a 50 ms yield target), keeping the master responsive.
+Deletion disconnects all attached connections. Sessions being released reject
+reconnects, and persisted retirement lets cleanup resume after restart without
+changing the sessions-file layout. Transactional backends
+page the open-file index and destroy detached caches under the same budget.
+Failed releases remain managed for retry at the next session check.
+
+Before expiry or deletion releases any files or locks, the file backend writes
+`CLRLCK(0,0,sessionId)` once for the session. The first zero
+selects flock. Inode zero is reserved here to signal session retirement. A
+shadow that understands the marker refuses the old session ID after promotion.
+Before a metadata dump, pending replayed retirements are saved together in the
+downloaded session table. Before installation, each session download is reconciled
+with known retirements, preserving its other client details. Only a successful save
+or durable installation clears pending persistence; an older download cannot undo
+retirement saved by an earlier checkpoint.
+A failed save is logged and retried at a later dump while metadata dumping proceeds.
+If a crash follows a failed session save and a successful metadata dump before
+session state is refreshed, an old session ID can become reconnectable again.
+Older metarestore versions replay an empty flock clear and advance the metadata
+version. Ordinary clears on real inodes retain their lock semantics.
 
 ## Metadata Persistence
 

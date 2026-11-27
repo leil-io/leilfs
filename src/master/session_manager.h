@@ -29,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "common/sessions_file.h"
@@ -126,7 +127,7 @@ public:
 	/// (subtracts 2 if @c newSession >= 2).
 	///
 	/// @return A pointer to the matching Session owned by this manager, or
-	///         nullptr if no session has the given id.
+	///         nullptr if no session has the given id or the session is closing.
 	/// @throws kv::TransactionError When a backend that keeps sessions in a store cannot read
 	///         it: an unreadable store does not mean the session is gone.
 	virtual Session *findSession(uint32_t sessionId) = 0;
@@ -138,7 +139,25 @@ public:
 	/// @c connections or set @c disconnectedTimestamp; that is done by
 	/// matocl_before_disconnect(). Timeout-based reaping is handled by
 	/// removeTimedOutSessions(). If @p sessionId is 0 or unknown this is a no-op.
+	/// Reconnecting can clear this marker; beginSessionRelease() handles retirement before
+	/// file cleanup.
 	virtual void closeSession(uint32_t sessionId) = 0;
+
+	/// Replays retirement without attaching the client or starting file cleanup on a shadow.
+	/// Pending retirement persistence is attempted before the next metadata dump.
+	virtual void applySessionRetirement(uint32_t sessionId) = 0;
+
+	/// Attempts to persist pending replayed retirements before a metadata dump.
+	virtual bool flushSessionRetirements() { return true; }
+
+	/// Installs a downloaded session file. The file backend preserves replayed retirements
+	/// before publication; other backends use the downloaded file unchanged.
+	virtual bool installSessionSnapshot(const std::string &filename);
+
+	/// Marks the runtime session closing before cleanup. Backends must persist retirement here
+	/// or before invoking the release callback. Returns false when persistence must be retried;
+	/// callers must then defer every file release.
+	virtual bool beginSessionRelease(Session &session) = 0;
 
 	/// Makes this server the one serving @p session's client, superseding any earlier
 	/// attachment, and stores the new attachment generation in Session::attachmentGeneration.
@@ -174,12 +193,15 @@ public:
 	virtual bool routeLockAnswer(const FilesystemOperationContext &fsOpContext, uint32_t sessionId,
 	                             uint32_t messageId, uint32_t requestId, uint8_t lockType) = 0;
 
-	/// Releases @p sessionId at once, whichever server serves it, as an administrator's delete
-	/// does: no client or server can use the session afterwards. Then releases its files and
-	/// locks through @p onReleased and removes it.
-	/// @return SAUNAFS_STATUS_OK, SAUNAFS_ERROR_BADSESSIONID when no such session exists,
-	///         SAUNAFS_ERROR_IO when the release or its cleanup did not complete (a later sweep
-	///         finishes the cleanup), or SAUNAFS_ERROR_ENOTSUP for backends whose sessions are
+	/// Retires @p sessionId in the shared store, preventing further use on any server, and starts
+	/// bounded file/lock cleanup through @p onReleased. More work can remain queued for
+	/// continueSessionReleases(); session rows are removed only after all views are complete.
+	/// @param onReleased Returns true when the supplied open-file view has been handled; a
+	///                   paged backend may still have later views to process.
+	/// @return SAUNAFS_STATUS_OK when cleanup finished or remains queued after retirement,
+	///         SAUNAFS_ERROR_BADSESSIONID when no such session exists,
+	///         SAUNAFS_ERROR_IO when retirement or cleanup failed (a later sweep retries
+	///         failed cleanup), or SAUNAFS_ERROR_ENOTSUP for backends whose sessions are
 	///         only those of this server's connections.
 	virtual uint8_t releaseSessionNow(uint32_t sessionId,
 	                                  const std::function<bool(Session *)> &onReleased) = 0;
@@ -295,22 +317,29 @@ public:
 	/// connection-list walk for admin list-sessions.
 	virtual bool usesBackendSessionList() const = 0;
 
-	/// Reaps sessions whose disconnect-timeout has elapsed.
+	/// Discovers expired sessions and starts or retries their release passes.
 	///
-	/// For each session whose disconnect deadline is in the past, the manager
-	/// first invokes @p onTimedOut (so the network layer can close any lingering
-	/// open files). If the callback returns true, the entry is removed. If it
-	/// returns false, the session stays managed so a later sweep can retry.
+	/// The manager invokes @p onTimedOut on the current open-file view. A true result completes
+	/// that view; a paged backend can still have later views. A false result keeps cleanup
+	/// managed: active cursors continue through continueSessionReleases(), while stalled passes
+	/// wait for another periodic sweep. A disconnected Session::closing is eligible without
+	/// waiting for the sustain time. Session rows are removed only after every view completes.
 	///
 	/// @param now Current wall-clock time (seconds since epoch), typically from
 	///            eventloop_time().
 	/// @param sessionSustainTime How long a disconnected session is kept alive
 	///                           before it is eligible for reaping. Clamped by
 	///                           configuration on the dispatcher side.
-	/// @param onTimedOut Invoked for every timed-out session. Return true when
-	///                   teardown completed and the session may be removed.
+	/// @param onTimedOut Return true when the supplied open-file view has been handled.
 	virtual void removeTimedOutSessions(uint32_t now, uint32_t sessionSustainTime,
 	                                    const std::function<bool(Session *)> &onTimedOut) = 0;
+
+	/// Continues active release passes without starting new passes. Shared catalogs keep a
+	/// separate queue so continuing a release does not rescan remote session rows.
+	/// The callback and backend cache cleanup consume the shared file budget. Returns true when
+	/// another continuation is needed, including for deferred cache destruction.
+	virtual bool continueSessionReleases(size_t &budget,
+	                                     const std::function<bool(Session *)> &onReleased) = 0;
 
 protected:
 	/// Guard against construction from a null reference; kept to mirror the
@@ -323,8 +352,9 @@ protected:
 /// Provides the in-memory session vector, the common id-allocation and
 /// open-files bookkeeping, and the timeout-reaping loop. Concrete subclasses
 /// only need to supply the persistence side: initialize(), loadSessions(),
-/// storeSessions(), plus, optionally, onSessionRemoved() to tear down any
-/// backend-specific per-session state and report whether removal can finish.
+/// storeSessions(), plus, optionally, onSessionRemoved() and any retirement
+/// or cleanup overrides to tear down any backend-specific per-session state
+/// and report whether removal can finish.
 ///
 /// Newly derived classes should prefer extending this base rather than
 /// implementing ISessionManager from scratch, so different backends keep the
@@ -344,6 +374,12 @@ public:
 
 	/// @copydoc ISessionManager::closeSession
 	void closeSession(uint32_t sessionId) override;
+	void applySessionRetirement(uint32_t sessionId) override;
+
+	/// @copydoc ISessionManager::beginSessionRelease
+	/// @note Marks runtime state only. A durable backend must persist retirement in an override
+	///       or before invoking the cleanup callback.
+	bool beginSessionRelease(Session &session) override;
 
 	/// @copydoc ISessionManager::attachSession
 	/// @note Persists a new session through persistSession() and keeps generation 0.
@@ -421,11 +457,14 @@ public:
 	bool usesBackendSessionList() const override;
 
 	/// @copydoc ISessionManager::removeTimedOutSessions
-	/// @note Calls @p onTimedOut first. If teardown and onSessionRemoved()
-	///       both succeed, erases the entry. Otherwise keeps the session for a
-	///       later retry.
+	/// @note Erases the entry only after teardown and onSessionRemoved() both succeed.
+	///       Otherwise keeps it managed for continuation or a later retry.
 	void removeTimedOutSessions(uint32_t now, uint32_t sessionSustainTime,
 	                            const std::function<bool(Session *)> &onTimedOut) override;
+
+	/// @copydoc ISessionManager::continueSessionReleases
+	bool continueSessionReleases(size_t &budget,
+	                             const std::function<bool(Session *)> &onReleased) override;
 
 	/// Appends @p sessionPtr to the managed vector and returns a non-owning
 	/// pointer to the stored Session. @p sessionPtr must be non-null.
@@ -459,6 +498,7 @@ protected:
 
 	/// Returns true when @p session is eligible for reaping under the tri-level
 	/// threshold (freshly-registered pending, normal, and legacy pre-1.5.13).
+	/// A disconnected closing session is always eligible, so its teardown continues.
 	static bool isTimedOut(const Session &session, uint32_t now, uint32_t sessionSustainTime);
 
 protected:
@@ -473,6 +513,7 @@ protected:
 /// per-session open-file index on disk. After restart, Session::openFilesSet is
 /// rebuilt from FSNodeFile::sessionIds during metadata loading, and the
 /// base-class onSessionRemoved() hook is intentionally a no-op.
+/// Retired records use peer IP zero in the same layout; loading restores Session::closing.
 class SessionManagerFile final : public SessionManagerBase {
 public:
 	/// @copydoc ISessionManager::initialize
@@ -487,4 +528,53 @@ public:
 	/// @note Atomic rename from the ".tmp" companion. Partial write failures
 	///       leave the existing sessions file untouched.
 	void storeSessions() override;
+
+	/// Queues replayed retirement for one durable write before the next metadata dump.
+	/// Marks the session closing, creating an entry if needed, and sets persistence pending.
+	/// Session ID zero is ignored.
+	void applySessionRetirement(uint32_t sessionId) override;
+
+	/// Applies replayed retirement state to the downloaded session table and saves it durably.
+	/// Preserves retirement records missing from the downloaded table for metadata recovery.
+	/// @return True if no save was needed or the save succeeded. False retains pending work
+	/// for retry. The caller logs failure and continues the metadata dump.
+	bool flushSessionRetirements() override;
+
+	/// Reconciles known retirements into the downloaded file before installing it durably.
+	/// Ordinary session fields come from the download. Success clears pending persistence;
+	/// a failed publication retains pending work for retry.
+	bool installSessionSnapshot(const std::string &filename) override;
+
+	/// Releases runtime sessions and clears pending persistence.
+	void unload() override;
+
+	/// @copydoc ISessionManager::beginSessionRelease
+	bool beginSessionRelease(Session &session) override;
+
+	/// @copydoc ISessionManager::removeTimedOutSessions
+	/// @note Persists new retirements together before invoking their cleanup callbacks.
+	void removeTimedOutSessions(uint32_t now, uint32_t sessionSustainTime,
+	                            const std::function<bool(Session *)> &onTimedOut) override;
+
+private:
+	/// Reads either the installed session file or a completed download into this manager.
+	int loadSessions(const std::string &filename);
+
+	/// Applies only closing state to the snapshot, including missing retirement records.
+	/// Returns whether the snapshot changed; active clients retain their downloaded fields.
+	bool reconcileRetirements(SessionManagerFile &snapshot) const;
+
+	/// Atomically publishes a closed file. For durable publication, the caller syncs the file
+	/// first and this function syncs its directory entry.
+	static bool publishSessionsFile(const std::string &filename, bool durable);
+
+	/// Closing records retain the existing wire format and use the already invalid peer IP 0.
+	/// Retirement also syncs the file and its rename before any file release can run.
+	bool writeSessions(bool durable);
+
+	/// Tracks persistence required by retirement replay or an attempted snapshot installation.
+	/// Pending work is saved together before the next metadata dump.
+	/// A failed save retains it. A successful save, a reconciled and durably installed download,
+	/// or unload() clears it. Downloads reconcile closing state even when this flag is clear.
+	bool sessionsPersistencePending_{};
 };

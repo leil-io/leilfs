@@ -63,6 +63,7 @@
 
 #ifndef METALOGGER
 #include "master/filesystem.h"
+#include "master/matoclserv_sessions.h"
 #include "master/personality.h"
 #include "master/restore.h"
 #endif /* #ifndef METALOGGER */
@@ -313,7 +314,8 @@ inline const std::string &MasterConn::getSessionsTmpFilename() {
 #ifdef METALOGGER
 	static const std::string sessionsTmpFilename = kSessionsMlTmpFilename;
 #else  /* #ifdef METALOGGER */
-	static const std::string sessionsTmpFilename = kSessionsTmpFilename;
+	// Downloads must not share the temporary file used by local session saves.
+	static const std::string sessionsTmpFilename = std::string(kSessionsFilename) + ".download.tmp";
 #endif /* #else #ifdef METALOGGER */
 	return sessionsTmpFilename;
 }
@@ -659,9 +661,16 @@ void MasterConn::downloadNext() {
 			}
 			downloadInit(DOWNLOAD_SESSIONS_SFS);
 		} else if (filenum == DOWNLOAD_SESSIONS_SFS) {
-			if (::rename(getSessionsTmpFilename().c_str(), getSessionsFilename().c_str()) < 0) {
-				safs::log_info(
-				    "can't rename downloaded sessions - do it manually before next download");
+#ifndef METALOGGER
+			// Preserve replayed retirements before an older download can replace the session file.
+			const bool installed = matoclserv_install_session_snapshot(getSessionsTmpFilename());
+#else
+			const bool installed =
+			    ::rename(getSessionsTmpFilename().c_str(), getSessionsFilename().c_str()) == 0;
+#endif
+			if (!installed) {
+				safs::log_info("can't install downloaded sessions; retrying on a later download");
+				if (state == State::kDownloading) { mode = Mode::Kill; }
 			} else {
 #ifndef METALOGGER
 				/*

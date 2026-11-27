@@ -95,6 +95,26 @@ void matoclserv_close_session(uint32_t sessionId) {
 	gSessionManager->closeSession(sessionId);
 }
 
+void matoclserv_apply_session_retirement(uint32_t sessionId) {
+	sassert(gSessionManager != nullptr);
+	gSessionManager->applySessionRetirement(sessionId);
+}
+
+bool matoclserv_flush_session_retirements() {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->flushSessionRetirements();
+}
+
+bool matoclserv_install_session_snapshot(const std::string &filename) {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->installSessionSnapshot(filename);
+}
+
+bool matoclserv_begin_session_release(Session &session) {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->beginSessionRelease(session);
+}
+
 uint8_t matoclserv_attach_session(Session *session, bool isNew, uint32_t attempt) {
 	sassert(gSessionManager != nullptr);
 	if (session == nullptr) { return SAUNAFS_ERROR_BADSESSIONID; }
@@ -155,6 +175,12 @@ bool matoclserv_uses_backend_session_list() {
 void matoclserv_remove_timed_out_sessions(const std::function<bool(Session *)> &onTimedOut) {
 	sassert(gSessionManager != nullptr);
 	gSessionManager->removeTimedOutSessions(eventloop_time(), gSessionSustainTime, onTimedOut);
+}
+
+bool matoclserv_continue_session_releases(size_t &budget,
+                                          const std::function<bool(Session *)> &onReleased) {
+	sassert(gSessionManager != nullptr);
+	return gSessionManager->continueSessionReleases(budget, onReleased);
 }
 
 int matoclserv_insert_open_file(const FilesystemOperationContext &fsOpContext,

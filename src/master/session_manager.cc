@@ -23,9 +23,12 @@
 
 #include "master/session_manager.h"
 
+#include <fcntl.h>
+#include <unistd.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <type_traits>
 
 #include "common/cwrap.h"
@@ -37,6 +40,10 @@
 #include "master/metadata_backend_common.h"
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
+
+bool ISessionManager::installSessionSnapshot(const std::string &filename) {
+	return rename(filename.c_str(), kSessionsFilename) == 0;
+}
 
 Session *SessionManagerBase::addSession(std::unique_ptr<Session> sessionPtr) {
 	passert(sessionPtr.get());
@@ -83,7 +90,8 @@ Session *SessionManagerBase::newSession(uint8_t newSession, uint8_t noNewId) {
 
 Session *SessionManagerBase::findSession(uint32_t sessionId) {
 	auto *session = findSessionEntry(sessionId);
-	if (session == nullptr) { return nullptr; }
+	// A closing session is gone for its client, which registers a new one instead.
+	if (session == nullptr || session->closing) { return nullptr; }
 
 	if (session->newSession >= 2) { session->newSession -= 2; }
 
@@ -92,11 +100,20 @@ Session *SessionManagerBase::findSession(uint32_t sessionId) {
 	return session;
 }
 
+void SessionManagerBase::applySessionRetirement(uint32_t sessionId) {
+	if (auto *session = findSessionEntry(sessionId)) { session->closing = true; }
+}
+
 void SessionManagerBase::closeSession(uint32_t sessionId) {
 	auto *session = findSessionEntry(sessionId);
 	if (session == nullptr) { return; }
 
 	if (session->connections == 1 && session->newSession < 2) { session->newSession += 2; }
+}
+
+bool SessionManagerBase::beginSessionRelease(Session &session) {
+	session.closing = true;
+	return true;
 }
 
 uint8_t SessionManagerBase::attachSession(Session &session, bool isNew, uint32_t /*attempt*/) {
@@ -256,9 +273,31 @@ void SessionManagerBase::removeTimedOutSessions(uint32_t now, uint32_t sessionSu
 
 bool SessionManagerBase::onSessionRemoved([[maybe_unused]] const Session &session) { return true; }
 
+bool SessionManagerBase::continueSessionReleases(size_t &budget,
+                                                 const std::function<bool(Session *)> &onReleased) {
+	bool pending = false;
+	for (auto it = sessions_.begin(); it != sessions_.end();) {
+		auto &session = **it;
+		if (session.connections != 0 || !session.releaseCursor) {
+			++it;
+			continue;
+		}
+
+		if (budget != 0 && onReleased(&session) && onSessionRemoved(session)) {
+			it = sessions_.erase(it);
+			continue;
+		}
+
+		pending |= session.releaseCursor.has_value();
+		++it;
+	}
+	return pending;
+}
+
 bool SessionManagerBase::isTimedOut(const Session &session, uint32_t now,
                                     uint32_t sessionSustainTime) {
 	if (session.connections != 0) { return false; }
+	if (session.closing) { return true; }
 
 	return ((session.newSession > 1 && session.disconnectedTimestamp < now) ||
 	        (session.newSession == 1 && session.disconnectedTimestamp + sessionSustainTime < now) ||
@@ -289,7 +328,119 @@ int SessionManagerFile::initialize() {
 	return 0;
 }
 
-void SessionManagerFile::storeSessions() {
+void SessionManagerFile::storeSessions() { writeSessions(/*durable=*/false); }
+
+void SessionManagerFile::applySessionRetirement(uint32_t sessionId) {
+	if (sessionId == 0) { return; }
+	auto *session = findSessionEntry(sessionId);
+	if (session == nullptr) {
+		auto retired = std::make_unique<Session>();
+		retired->sessionId = sessionId;
+		session = addSession(std::move(retired));
+	}
+	session->closing = true;
+	sessionsPersistencePending_ = true;
+}
+
+bool SessionManagerFile::flushSessionRetirements() {
+	if (!sessionsPersistencePending_) { return true; }
+
+	// Preserve the downloaded records while saving the replayed retirement state.
+	SessionManagerFile snapshot;
+	if (snapshot.loadSessions() != 1) { return false; }
+	reconcileRetirements(snapshot);
+	if (!snapshot.writeSessions(/*durable=*/true)) { return false; }
+	sessionsPersistencePending_ = false;
+	return true;
+}
+
+bool SessionManagerFile::reconcileRetirements(SessionManagerFile &snapshot) const {
+	bool changed = false;
+	std::set<uint32_t> retiredSessionIds;
+	for (const auto &session : sessions_) {
+		if (session->closing) { retiredSessionIds.insert(session->sessionId); }
+	}
+	for (auto &stored : snapshot.sessions_) {
+		if (retiredSessionIds.erase(stored->sessionId) != 0 && !stored->closing) {
+			stored->closing = true;
+			changed = true;
+		}
+	}
+	// Metadata may still reference retired sessions absent from the downloaded table.
+	// Preserve their retirement so recovery does not recreate them as active legacy sessions.
+	for (uint32_t sessionId : retiredSessionIds) {
+		auto retired = std::make_unique<Session>();
+		retired->sessionId = sessionId;
+		retired->closing = true;
+		snapshot.addSession(std::move(retired));
+		changed = true;
+	}
+	return changed;
+}
+
+bool SessionManagerFile::installSessionSnapshot(const std::string &filename) {
+	SessionManagerFile snapshot;
+	if (snapshot.loadSessions(filename) != 1) { return false; }
+
+	// A checkpoint may already have cleared the pending flag while this download was in flight.
+	// Reconcile every candidate before it can replace the installed retirement state.
+	sessionsPersistencePending_ = true;
+	if (reconcileRetirements(snapshot)) {
+		if (!snapshot.writeSessions(/*durable=*/true)) { return false; }
+		if (unlink(filename.c_str()) < 0) {
+			safs_silent_errlog(LOG_WARNING, "can't remove reconciled session download");
+		}
+	} else {
+		// An up-to-date download needs no rewrite, but its replacement must still be durable.
+		const int file = open(filename.c_str(), O_RDONLY);
+		if (file < 0) {
+			safs_silent_errlog(LOG_WARNING, "can't open session download for sync");
+			return false;
+		}
+		const bool synced = fsync(file) == 0;
+		close(file);
+		if (!synced) {
+			safs_silent_errlog(LOG_WARNING, "can't sync session download");
+			return false;
+		}
+		if (!publishSessionsFile(filename, /*durable=*/true)) { return false; }
+	}
+	sessionsPersistencePending_ = false;
+	return true;
+}
+
+void SessionManagerFile::unload() {
+	SessionManagerBase::unload();
+	sessionsPersistencePending_ = false;
+}
+
+bool SessionManagerFile::beginSessionRelease(Session &session) {
+	session.closing = true;
+	return writeSessions(/*durable=*/true);
+}
+
+void SessionManagerFile::removeTimedOutSessions(
+    uint32_t now, uint32_t sessionSustainTime,
+    const std::function<bool(Session *)> &onTimedOut) {
+	std::vector<Session *> sessionsToRetire;
+	for (const auto &session : sessions_) {
+		if (session->releaseCursor || !isTimedOut(*session, now, sessionSustainTime)) { continue; }
+		session->closing = true;
+		sessionsToRetire.push_back(session.get());
+	}
+
+	// Each snapshot contains all sessions. Sync once before queuing these release passes.
+	// On failure, their cursors stay unset and the next sweep can retry the write.
+	if (!sessionsToRetire.empty() && writeSessions(/*durable=*/true)) {
+		for (auto *session : sessionsToRetire) { session->releaseCursor = 0; }
+	}
+
+	SessionManagerBase::removeTimedOutSessions(now, sessionSustainTime, [&](Session *session) {
+		return session->releaseCursor.has_value() && onTimedOut(session);
+	});
+}
+
+bool SessionManagerFile::writeSessions(bool durable) {
 	uint32_t sessionInfoLength;
 	constexpr uint32_t kSessionSerializedSize =
 	    sizeof(Session::sessionId) + sizeof(sessionInfoLength) + sizeof(Session::peerIpAddress) +
@@ -303,7 +454,7 @@ void SessionManagerFile::storeSessions() {
 	FILE *fd = fopen(kSessionsTmpFilename, "w");
 	if (fd == nullptr) {
 		safs_silent_errlog(LOG_WARNING, "can't store sessions, open error");
-		return;
+		return false;
 	}
 
 	memcpy(fsesrecord.data(), SFSSIGNATURE "S \001\006\004", 8);
@@ -313,18 +464,22 @@ void SessionManagerFile::storeSessions() {
 	if (fwrite(fsesrecord.data(), 10, 1, fd) != 1) {
 		safs_pretty_syslog(LOG_WARNING, "can't store sessions, fwrite error");
 		fclose(fd);
-		return;
+		return false;
 	}
 
 	for (const auto &sessionPtr : sessions_) {
-		if (sessionPtr->newSession != 1) { continue; }
+		if (sessionPtr->newSession != 1 && !sessionPtr->closing) { continue; }
 
+		// A later snapshot must keep existing retirement markers durable.
+		durable |= sessionPtr->closing;
 		ptr = fsesrecord.data();
 		sessionInfoLength = sessionPtr->info.size();
 
 		put32bit(&ptr, sessionPtr->sessionId);
 		put32bit(&ptr, sessionInfoLength);
-		put32bit(&ptr, sessionPtr->peerIpAddress);
+		// Released masters, including 5.9.0 and 5.12.0, reject reconnects with zero peer IP
+		// addresses.
+		put32bit(&ptr, sessionPtr->closing ? 0 : sessionPtr->peerIpAddress);
 		putINode(&ptr, sessionPtr->rootInode);
 		put8bit(&ptr, sessionPtr->flags);
 		put8bit(&ptr, sessionPtr->minGoal);
@@ -347,28 +502,56 @@ void SessionManagerFile::storeSessions() {
 		if (fwrite(fsesrecord.data(), kBufferSize, 1, fd) != 1) {
 			safs::log_warn("can't store sessions, fwrite error");
 			fclose(fd);
-			return;
+			return false;
 		}
 
 		if (sessionInfoLength > 0 &&
 		    fwrite(sessionPtr->info.data(), sessionInfoLength, 1, fd) != 1) {
 			safs::log_warn("can't store sessions, fwrite error");
 			fclose(fd);
-			return;
+			return false;
 		}
+	}
+
+	if (durable && (fflush(fd) != 0 || fsync(fileno(fd)) != 0)) {
+		safs_silent_errlog(LOG_WARNING, "can't sync retiring sessions");
+		fclose(fd);
+		return false;
 	}
 
 	if (fclose(fd) != 0) {
 		safs_silent_errlog(LOG_WARNING, "can't store sessions, fclose error");
-		return;
+		return false;
 	}
 
-	if (rename(kSessionsTmpFilename, kSessionsFilename) < 0) {
-		safs_silent_errlog(LOG_WARNING, "can't store sessions, rename error");
-	}
+	return publishSessionsFile(kSessionsTmpFilename, durable);
 }
 
-int SessionManagerFile::loadSessions() {
+bool SessionManagerFile::publishSessionsFile(const std::string &filename, bool durable) {
+	if (rename(filename.c_str(), kSessionsFilename) < 0) {
+		safs_silent_errlog(LOG_WARNING, "can't store sessions, rename error");
+		return false;
+	}
+
+	if (durable) {
+		const int directory = open(".", O_RDONLY | O_DIRECTORY);
+		if (directory < 0) {
+			safs_silent_errlog(LOG_WARNING, "can't open sessions directory for sync");
+			return false;
+		}
+		const bool synced = fsync(directory) == 0;
+		close(directory);
+		if (!synced) {
+			safs_silent_errlog(LOG_WARNING, "can't sync retiring sessions directory");
+			return false;
+		}
+	}
+	return true;
+}
+
+int SessionManagerFile::loadSessions() { return loadSessions(kSessionsFilename); }
+
+int SessionManagerFile::loadSessions(const std::string &filename) {
 	uint32_t sessionInfoLength;
 	uint8_t headerBuffer[8];
 	std::vector<uint8_t> sessionBuffer;
@@ -376,7 +559,7 @@ int SessionManagerFile::loadSessions() {
 	uint32_t statsInFile;
 	int bytesRead;
 
-	FILE *fd = fopen(kSessionsFilename, "r");
+	FILE *fd = fopen(filename.c_str(), "r");
 	if (fd == nullptr) {
 		safs_silent_errlog(LOG_WARNING, "can't load sessions, fopen error");
 		if (errno == ENOENT) { return 0; }
@@ -436,6 +619,7 @@ int SessionManagerFile::loadSessions() {
 			get32bit(&ptr, sessionPtr->mapAllGid);
 
 			sessionPtr->newSession = 1;
+			sessionPtr->closing = sessionPtr->peerIpAddress == 0;
 			sessionPtr->disconnectedTimestamp = eventloop_time();
 			for (uint32_t i = 0; i < SESSION_STATS; ++i) {
 				if (i < statsInFile) {

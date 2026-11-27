@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
@@ -177,6 +178,337 @@ TEST(SessionManagerFileTests, CurrentFormatRoundTripsThroughStoreAndLoad) {
 	EXPECT_EQ(visited, 1);
 }
 
+TEST(SessionManagerFileTests, RetirementPersistsWithoutChangingTheSessionsFormat) {
+	TemporaryDirectory temp("/tmp", "session-file-retired");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile writer;
+	auto session = makeSession(42);
+	session->peerIpAddress = 0x7F000001;
+	session->newSession = 3;  // Explicitly deleted sessions must retain their retirement too.
+	auto *stored = writer.addSession(std::move(session));
+	ASSERT_TRUE(writer.beginSessionRelease(*stored));
+
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+	EXPECT_EQ(reader.findSession(42), nullptr);
+	size_t records = 0;
+	reader.forEachSession([&records](const Session &loaded) {
+		++records;
+		EXPECT_TRUE(loaded.closing);
+		EXPECT_EQ(loaded.peerIpAddress, 0U);
+	});
+	EXPECT_EQ(records, 1U);
+}
+
+TEST(SessionManagerFileTests, ExpirySweepPersistsAllRetirementsWithOneReplacement) {
+	TemporaryDirectory temp("/tmp", "session-file-retirement-batch");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile manager;
+	constexpr uint32_t kExpiredSessions = 8;
+	for (uint32_t id = 1; id <= kExpiredSessions; ++id) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		session->connections = 0;
+		session->disconnectedTimestamp = 1;
+		manager.addSession(std::move(session));
+	}
+	auto live = makeSession(kExpiredSessions + 1);
+	live->peerIpAddress = 0x7F000001;
+	manager.addSession(std::move(live));
+
+	size_t queued = 0;
+	manager.removeTimedOutSessions(100, 60, [&](Session *session) {
+		// Mirror the dispatcher's initial retirement for backends that leave it to the callback.
+		if (!session->releaseCursor) {
+			if (!manager.beginSessionRelease(*session)) {
+				ADD_FAILURE() << "Could not persist retirement";
+				return false;
+			}
+			session->releaseCursor = 0;
+		}
+
+		// Hold the first published inode open by name so later renames cannot reuse it.
+		if (queued++ == 0) {
+			std::filesystem::create_hard_link(kSessionsFilename, "first-retirement.sfs");
+		}
+		return false;
+	});
+
+	EXPECT_EQ(queued, kExpiredSessions);
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "first-retirement.sfs"));
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+	size_t retired = 0;
+	reader.forEachSession([&retired](const Session &session) { retired += session.closing; });
+	EXPECT_EQ(retired, kExpiredSessions);
+	EXPECT_NE(reader.findSession(kExpiredSessions + 1), nullptr);
+}
+
+TEST(SessionManagerFileTests, ReplayedRetirementsPersistInOneBatchAndRetryFailedWrites) {
+	TemporaryDirectory temp("/tmp", "session-replay-checkpoint");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile writer;
+	for (uint32_t id : {42U, 43U, 44U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		writer.addSession(std::move(session));
+	}
+	writer.storeSessions();
+	std::filesystem::create_hard_link(kSessionsFilename, "before-replay.sfs");
+	writer.applySessionRetirement(42);
+	writer.applySessionRetirement(43);
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "before-replay.sfs"));
+
+	// A failed batch save must remain pending until it can be retried.
+	std::filesystem::create_directory(kSessionsTmpFilename);
+	EXPECT_FALSE(writer.flushSessionRetirements());
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "before-replay.sfs"));
+	std::filesystem::remove(kSessionsTmpFilename);
+	ASSERT_TRUE(writer.flushSessionRetirements());
+
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+	EXPECT_EQ(reader.findSession(42), nullptr);
+	EXPECT_EQ(reader.findSession(43), nullptr);
+	EXPECT_NE(reader.findSession(44), nullptr);
+
+	// Another metadata dump without pending retirements must leave the saved file in place.
+	std::filesystem::create_hard_link(kSessionsFilename, "after-replay.sfs");
+	ASSERT_TRUE(writer.flushSessionRetirements());
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "after-replay.sfs"));
+}
+
+TEST(SessionManagerFileTests, ReplayedRetirementsPreserveDownloadedClientsAndClearPendingWork) {
+	TemporaryDirectory temp("/tmp", "session-replay-refresh");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	shadow.addSession(makeSession(42));
+	shadow.applySessionRetirement(42);
+	shadow.applySessionRetirement(43);  // This client was created after the shadow started.
+
+	SessionManagerFile downloaded;
+	for (uint32_t id : {42U, 43U, 44U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		session->info = "downloaded-client";
+		downloaded.addSession(std::move(session));
+	}
+	downloaded.storeSessions();
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+
+	SessionManagerFile reader;
+	ASSERT_EQ(reader.loadSessions(), 1);
+	EXPECT_EQ(reader.findSession(42), nullptr);
+	EXPECT_EQ(reader.findSession(43), nullptr);
+	auto *active = reader.findSession(44);
+	ASSERT_NE(active, nullptr);
+	EXPECT_EQ(active->info, "downloaded-client");
+	EXPECT_EQ(active->peerIpAddress, 0x7F000001U);
+
+	// Installing a download that already contains every retirement clears pending work.
+	shadow.applySessionRetirement(44);
+	for (uint32_t id : {42U, 43U, 44U}) {
+		auto *session = downloaded.findSession(id);
+		ASSERT_NE(session, nullptr);
+		session->closing = true;
+	}
+	downloaded.storeSessions();
+	std::filesystem::rename(kSessionsFilename, "downloaded.sfs");
+	std::filesystem::create_hard_link("downloaded.sfs", "downloaded-inode.sfs");
+	ASSERT_TRUE(shadow.installSessionSnapshot("downloaded.sfs"));
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "downloaded-inode.sfs"));
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "downloaded-inode.sfs"));
+}
+
+TEST(SessionManagerFileTests, RetirementSurvivesDownloadCompletedBeforeCheckpoint) {
+	TemporaryDirectory temp("/tmp", "session-download-before-checkpoint");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	for (uint32_t id : {42U, 43U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		shadow.addSession(std::move(session));
+	}
+	shadow.storeSessions();
+
+	// The download captures the master's session file before retirement is replayed.
+	const char *download = "sessions.sfs.download.tmp";
+	ASSERT_TRUE(std::filesystem::copy_file(kSessionsFilename, download));
+	shadow.applySessionRetirement(42);
+
+	// Complete the older download through the same installation path as the shadow.
+	ASSERT_TRUE(shadow.installSessionSnapshot(download));
+	EXPECT_EQ(shadow.findSession(42), nullptr);  // The running shadow still rejects reconnects.
+
+	// The next metadata checkpoint covers the retirement, so recovery cannot replay it again.
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+	SessionManagerFile recovered;
+	ASSERT_EQ(recovered.loadSessions(), 1);
+	EXPECT_EQ(recovered.findSession(42), nullptr);
+	EXPECT_NE(recovered.findSession(43), nullptr);
+}
+
+TEST(SessionManagerFileTests, RetirementSurvivesDownloadCompletedAfterCheckpoint) {
+	TemporaryDirectory temp("/tmp", "session-download-after-checkpoint");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	for (uint32_t id : {42U, 43U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		shadow.addSession(std::move(session));
+	}
+	shadow.storeSessions();
+
+	// The download captures the old file, but remains in flight through the checkpoint.
+	const char *download = "sessions.sfs.download.tmp";
+	ASSERT_TRUE(std::filesystem::copy_file(kSessionsFilename, download));
+	shadow.applySessionRetirement(42);
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+
+	// The checkpoint's session file already preserves retirement successfully.
+	SessionManagerFile checkpoint;
+	ASSERT_EQ(checkpoint.loadSessions(), 1);
+	ASSERT_EQ(checkpoint.findSession(42), nullptr);
+
+	// Completing the older download must not undo that persisted retirement.
+	ASSERT_TRUE(shadow.installSessionSnapshot(download));
+	EXPECT_EQ(shadow.findSession(42), nullptr);
+
+	// Restart before another dump or download has a chance to repair the session file.
+	SessionManagerFile recovered;
+	ASSERT_EQ(recovered.loadSessions(), 1);
+	EXPECT_EQ(recovered.findSession(42), nullptr);
+	EXPECT_NE(recovered.findSession(43), nullptr);
+}
+
+TEST(SessionManagerFileTests, RepeatedDownloadsPreserveRetirementsAndDownloadedClients) {
+	TemporaryDirectory temp("/tmp", "session-download-repeat");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	auto cached = makeSession(43);
+	cached->info = "outdated-client-details";
+	shadow.addSession(std::move(cached));
+
+	SessionManagerFile downloaded;
+	for (uint32_t id : {42U, 43U, 44U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		session->info = "downloaded-client";
+		downloaded.addSession(std::move(session));
+	}
+	downloaded.storeSessions();
+	ASSERT_TRUE(std::filesystem::copy_file(kSessionsFilename, "master-snapshot.sfs"));
+	shadow.applySessionRetirement(42);
+	shadow.applySessionRetirement(45);  // This retired session is absent from the download.
+
+	// The second download arrives after installation cleared the pending-persistence flag.
+	for (int attempt = 0; attempt < 2; ++attempt) {
+		SCOPED_TRACE(attempt);
+		ASSERT_TRUE(std::filesystem::copy_file("master-snapshot.sfs", "downloaded.sfs"));
+		ASSERT_TRUE(shadow.installSessionSnapshot("downloaded.sfs"));
+		SessionManagerFile recovered;
+		ASSERT_EQ(recovered.loadSessions(), 1);
+		recovered.addOpenFile(45, 123);
+		EXPECT_EQ(recovered.findSession(42), nullptr);
+		EXPECT_EQ(recovered.findSession(45), nullptr);
+		auto *active = recovered.findSession(43);
+		ASSERT_NE(active, nullptr);
+		EXPECT_EQ(active->info, "downloaded-client");
+		EXPECT_EQ(active->peerIpAddress, 0x7F000001U);
+		EXPECT_NE(recovered.findSession(44), nullptr);
+	}
+}
+
+TEST(SessionManagerFileTests, FailedDownloadReconciliationPreservesInstalledFileAndPendingWork) {
+	TemporaryDirectory temp("/tmp", "session-download-write-failure");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	auto session = makeSession(42);
+	session->peerIpAddress = 0x7F000001;
+	shadow.addSession(std::move(session));
+	shadow.storeSessions();
+	ASSERT_TRUE(std::filesystem::copy_file(kSessionsFilename, "downloaded.sfs"));
+	std::filesystem::create_hard_link(kSessionsFilename, "installed.sfs");
+	shadow.applySessionRetirement(42);
+
+	// Block the reconciled write: the older download must never replace the installed file.
+	std::filesystem::create_directory(kSessionsTmpFilename);
+	EXPECT_FALSE(shadow.installSessionSnapshot("downloaded.sfs"));
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "installed.sfs"));
+	EXPECT_TRUE(std::filesystem::exists("downloaded.sfs"));
+
+	// A later checkpoint still attempts the pending save, and the download can then be retried.
+	std::filesystem::remove(kSessionsTmpFilename);
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+	SessionManagerFile checkpoint;
+	ASSERT_EQ(checkpoint.loadSessions(), 1);
+	ASSERT_EQ(checkpoint.findSession(42), nullptr);
+	ASSERT_TRUE(shadow.installSessionSnapshot("downloaded.sfs"));
+	SessionManagerFile recovered;
+	ASSERT_EQ(recovered.loadSessions(), 1);
+	EXPECT_EQ(recovered.findSession(42), nullptr);
+}
+
+TEST(SessionManagerFileTests, InvalidDownloadPreservesInstalledFile) {
+	TemporaryDirectory temp("/tmp", "session-download-invalid");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	shadow.storeSessions();
+	std::filesystem::create_hard_link(kSessionsFilename, "installed.sfs");
+	{
+		std::ofstream invalid("downloaded.sfs");
+		invalid << "invalid session header";
+	}
+	EXPECT_FALSE(shadow.installSessionSnapshot("downloaded.sfs"));
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "installed.sfs"));
+}
+
+TEST(SessionManagerFileTests, ReplayedRetirementMissingFromSnapshotSurvivesRecovery) {
+	TemporaryDirectory temp("/tmp", "session-replay-missing-record");
+	ScopedCurrentDirectory cwd(temp.name());
+
+	// The downloaded table predates the retired session, but contains an active client.
+	SessionManagerFile downloaded;
+	auto active = makeSession(42);
+	active->peerIpAddress = 0x7F000001;
+	active->info = "downloaded-client";
+	downloaded.addSession(std::move(active));
+	downloaded.storeSessions();
+
+	SessionManagerFile shadow;
+	shadow.applySessionRetirement(43);
+	shadow.addOpenFile(43, 123);  // Partial replay leaves this file for a later cleanup batch.
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+
+	// Recovery reloads the saved table, then reconstructs open files from metadata.
+	SessionManagerFile recovered;
+	ASSERT_EQ(recovered.loadSessions(), 1);
+	recovered.addOpenFile(43, 123);
+	size_t records = 0;
+	recovered.forEachSession([&](const Session &session) {
+		++records;
+		if (session.sessionId == 43) {
+			EXPECT_TRUE(session.closing);
+			EXPECT_TRUE(session.openFilesSet.contains(123));
+		}
+	});
+	EXPECT_EQ(records, 2U);
+
+	// Cleanup must resume immediately rather than waiting for the legacy session timeout.
+	std::vector<uint32_t> queued;
+	recovered.removeTimedOutSessions(0, 60, [&](Session *session) {
+		queued.push_back(session->sessionId);
+		return false;
+	});
+	EXPECT_EQ(queued, std::vector<uint32_t>({43}));
+	EXPECT_EQ(recovered.findSession(43), nullptr);
+	auto *preserved = recovered.findSession(42);
+	ASSERT_NE(preserved, nullptr);
+	EXPECT_EQ(preserved->info, "downloaded-client");
+	EXPECT_EQ(preserved->peerIpAddress, 0x7F000001U);
+}
+
 TEST(SessionManagerFileTests, OldSfsSessionHeaderIsRejected) {
 	TemporaryDirectory temp("/tmp", "session-file-old-sfs");
 	ScopedCurrentDirectory cwd(temp.name());
@@ -257,6 +589,21 @@ TEST(SessionManagerBaseTests, FindSessionLeavesRegularNewSessionUntouched) {
 	EXPECT_EQ(found->connections, 2U);
 }
 
+TEST(SessionManagerBaseTests, FindSessionRefusesClosingSession) {
+	TestSessionManager manager;
+	auto session = makeSession(42);
+	session->newSession = 3;
+	session->connections = 0;
+	session->disconnectedTimestamp = 12345;
+	session->closing = true;
+	const Session *stored = manager.addSession(std::move(session));
+
+	EXPECT_EQ(manager.findSession(42), nullptr);
+	EXPECT_EQ(stored->connections, 0U);
+	EXPECT_EQ(stored->newSession, 3U);
+	EXPECT_EQ(stored->disconnectedTimestamp, 12345U);
+}
+
 // ---------------------------------------------------------------------------
 // closeSession()
 // ---------------------------------------------------------------------------
@@ -313,6 +660,7 @@ TEST(SessionManagerBaseTests, CloseSessionOnUnknownIdIsNoOp) {
 //
 // isTimedOut():
 //   connections != 0                                    => not timed out
+//   closing                                             => timed out (teardown running)
 //   newSession > 1 && dts < now                         => timed out (pending close)
 //   newSession == 1 && dts + sustain < now              => timed out (regular)
 //   newSession == 0 && dts + 7200 < now                 => timed out (legacy)
@@ -353,6 +701,29 @@ TEST(SessionManagerBaseTests, RemoveTimedOutReapsPendingCloseSession) {
 	EXPECT_EQ(timedOut, std::vector<uint32_t>{1});
 	EXPECT_EQ(manager.removedSessionIds, std::vector<uint32_t>{1});
 	EXPECT_EQ(manager.findSessionEntry(1), nullptr);
+}
+
+TEST(SessionManagerBaseTests, RemoveTimedOutContinuesDisconnectedClosingSession) {
+	TestSessionManager manager;
+	auto connected = makeSession(1);
+	connected->closing = true;
+	manager.addSession(std::move(connected));
+
+	// Disconnected in this second, long before the sustain time would run out.
+	auto disconnected = makeSession(2);
+	disconnected->connections = 0;
+	disconnected->disconnectedTimestamp = 200;
+	disconnected->closing = true;
+	manager.addSession(std::move(disconnected));
+
+	std::vector<uint32_t> timedOut;
+	manager.removeTimedOutSessions(200, 100'000, [&](Session *timedOutSession) {
+		timedOut.push_back(timedOutSession->sessionId);
+		return false;
+	});
+
+	EXPECT_EQ(timedOut, std::vector<uint32_t>{2});
+	EXPECT_TRUE(manager.removedSessionIds.empty());
 }
 
 TEST(SessionManagerBaseTests, RemoveTimedOutHonorsStrictLessThanSustainBoundary) {

@@ -34,6 +34,9 @@
 #include "master/filesystem_operations.h"
 #include "master/filesystem_operations_interface.h"
 #include "master/filesystem_snapshot.h"
+#ifndef METARESTORE
+#include "master/matoclserv_sessions.h"
+#endif
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
@@ -599,6 +602,16 @@ int do_lock_clear_session(const char *filename, uint64_t lv, uint32_t ts, const 
 	EAT(ptr, filename, lv, ',');
 	GETU32(sessionid, ptr);
 	EAT(ptr, filename, lv, ')');
+
+	// A flock clear for inode zero marks session retirement. Released readers look
+	// up that inode, find no locks and advance the same journal version.
+	if (lock_type == static_cast<uint8_t>(safs_locks::Type::kFlock) && inode == 0 && sessionid != 0) {
+#ifndef METARESTORE
+		matoclserv_apply_session_retirement(sessionid);
+#endif
+		gFSOperations->increaseMetadataVersion({});
+		return SAUNAFS_STATUS_OK;
+	}
 
 	auto fsOpContext = gFSOperations->createFilesystemOperationContext(
 	    FilesystemOperationContext::TransactionType::kReadWrite);

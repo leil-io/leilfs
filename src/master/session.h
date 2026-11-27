@@ -24,8 +24,10 @@
 #include "common/platform.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -36,6 +38,9 @@
 
 /// Number of per-hour operation counters tracked in each Session.
 #define SESSION_STATS 16
+
+/// File-entry budget per cleanup step, shared across sessions and detached-cache eviction.
+inline constexpr size_t kSessionReleaseBatchSize = 1000;
 
 /// Shared in-memory representation of one client session.
 ///
@@ -54,13 +59,18 @@
 ///
 /// `openFilesSet` is the per-session view of open files. It complements the
 /// per-file `FSNodeFile::sessionIds` index used by filesystem metadata: the two
-/// indexes answer opposite lookup directions and are kept in sync by the open,
-/// release, and session-teardown paths.
+/// indexes answer opposite lookup directions and are maintained by open/release
+/// paths. KV release views contain one fetched page; their stored index remains
+/// authoritative for the files still requiring cleanup.
+///
+/// Teardown releases the open files in bounded release passes spread over
+/// several event-loop steps. Retirement is persisted before file release; the
+/// cursor records progress within the current open-file view only in memory.
 struct Session {
 	/// Cache mapping uid to supplementary groups used when building FsContext.
 	using GroupCache = GenericLruCache<uint32_t, FsContext::GroupsContainer, 1024>;
 
-	/// In-memory per-session set of currently open file inodes.
+	/// Cached inode set, also used for bounded KV release views.
 	using OpenFilesSet = std::set<inode_t>;
 
 	uint32_t sessionId{};  ///< Session ID.
@@ -100,5 +110,13 @@ struct Session {
 	/// Previous hour operation counters.
 	std::array<uint32_t, SESSION_STATS> prevHourOperationsStats{};
 	GroupCache groupsCache;     ///< Cache of supplementary groups for this session.
-	OpenFilesSet openFilesSet;  ///< Set of currently open file inodes.
+	OpenFilesSet openFilesSet;  ///< Cached open inodes or the current KV release page.
+	/// Set when retirement starts, before file release. Reconnects are refused even if
+	/// retirement persistence must be retried; cleanup state stays managed until completion.
+	bool closing{};
+	/// Ensures a release spanning several batches publishes one retirement record.
+	bool retirementPublished{};
+	/// Next inode in the active view; empty when inactive. KV managers also use zero to queue
+	/// a not-yet-loaded page for continuation.
+	std::optional<inode_t> releaseCursor;
 };
