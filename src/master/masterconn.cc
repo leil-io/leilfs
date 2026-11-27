@@ -661,14 +661,18 @@ void MasterConn::downloadNext() {
 			}
 			downloadInit(DOWNLOAD_SESSIONS_SFS);
 		} else if (filenum == DOWNLOAD_SESSIONS_SFS) {
-			if (::rename(getSessionsTmpFilename().c_str(), getSessionsFilename().c_str()) < 0) {
-				safs::log_info(
-				    "can't rename downloaded sessions - do it manually before next download");
+#ifndef METALOGGER
+			// Preserve replayed retirements before an older download can replace the session file.
+			const bool installed = matoclserv_install_session_snapshot(getSessionsTmpFilename());
+#else
+			const bool installed =
+			    ::rename(getSessionsTmpFilename().c_str(), getSessionsFilename().c_str()) == 0;
+#endif
+			if (!installed) {
+				safs::log_info("can't install downloaded sessions; retrying on a later download");
+				if (state == State::kDownloading) { mode = Mode::Kill; }
 			} else {
 #ifndef METALOGGER
-				// Accept the installed master snapshot as authoritative and clear pending persistence.
-				// Recovery replay below can set the flag again when it encounters retirement records.
-				matoclserv_session_snapshot_downloaded();
 				/*
 				 * We can have other state if we are synchronized or we got changelog apply error
 				 * during independent sessions download session.

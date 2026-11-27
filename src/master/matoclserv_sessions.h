@@ -76,8 +76,8 @@ void matoclserv_apply_session_retirement(uint32_t sessionId);
 /// Attempts to save pending replayed retirements before a metadata dump.
 bool matoclserv_flush_session_retirements();
 
-/// Accepts a successfully downloaded session snapshot as authoritative.
-void matoclserv_session_snapshot_downloaded();
+/// Reconciles and installs a downloaded session snapshot before it replaces the current file.
+bool matoclserv_install_session_snapshot(const std::string &filename);
 
 /// Prepares retirement before file release; returns false if persistence must be retried.
 bool matoclserv_begin_session_release(Session &session);

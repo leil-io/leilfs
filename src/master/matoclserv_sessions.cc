@@ -105,9 +105,9 @@ bool matoclserv_flush_session_retirements() {
 	return gSessionManager->flushSessionRetirements();
 }
 
-void matoclserv_session_snapshot_downloaded() {
+bool matoclserv_install_session_snapshot(const std::string &filename) {
 	sassert(gSessionManager != nullptr);
-	gSessionManager->sessionSnapshotDownloaded();
+	return gSessionManager->installSessionSnapshot(filename);
 }
 
 bool matoclserv_begin_session_release(Session &session) {

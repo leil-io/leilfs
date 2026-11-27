@@ -305,7 +305,7 @@ TEST(SessionManagerFileTests, ReplayedRetirementsPreserveDownloadedClientsAndCle
 	EXPECT_EQ(active->info, "downloaded-client");
 	EXPECT_EQ(active->peerIpAddress, 0x7F000001U);
 
-	// An authoritative download supersedes work pending since the previous save.
+	// Installing a download that already contains every retirement clears pending work.
 	shadow.applySessionRetirement(44);
 	for (uint32_t id : {42U, 43U, 44U}) {
 		auto *session = downloaded.findSession(id);
@@ -313,10 +313,155 @@ TEST(SessionManagerFileTests, ReplayedRetirementsPreserveDownloadedClientsAndCle
 		session->closing = true;
 	}
 	downloaded.storeSessions();
-	shadow.sessionSnapshotDownloaded();
-	std::filesystem::create_hard_link(kSessionsFilename, "downloaded.sfs");
+	std::filesystem::rename(kSessionsFilename, "downloaded.sfs");
+	std::filesystem::create_hard_link("downloaded.sfs", "downloaded-inode.sfs");
+	ASSERT_TRUE(shadow.installSessionSnapshot("downloaded.sfs"));
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "downloaded-inode.sfs"));
 	ASSERT_TRUE(shadow.flushSessionRetirements());
-	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "downloaded.sfs"));
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "downloaded-inode.sfs"));
+}
+
+TEST(SessionManagerFileTests, RetirementSurvivesDownloadCompletedBeforeCheckpoint) {
+	TemporaryDirectory temp("/tmp", "session-download-before-checkpoint");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	for (uint32_t id : {42U, 43U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		shadow.addSession(std::move(session));
+	}
+	shadow.storeSessions();
+
+	// The download captures the master's session file before retirement is replayed.
+	const char *download = "sessions.sfs.download.tmp";
+	ASSERT_TRUE(std::filesystem::copy_file(kSessionsFilename, download));
+	shadow.applySessionRetirement(42);
+
+	// Complete the older download through the same installation path as the shadow.
+	ASSERT_TRUE(shadow.installSessionSnapshot(download));
+	EXPECT_EQ(shadow.findSession(42), nullptr);  // The running shadow still rejects reconnects.
+
+	// The next metadata checkpoint covers the retirement, so recovery cannot replay it again.
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+	SessionManagerFile recovered;
+	ASSERT_EQ(recovered.loadSessions(), 1);
+	EXPECT_EQ(recovered.findSession(42), nullptr);
+	EXPECT_NE(recovered.findSession(43), nullptr);
+}
+
+TEST(SessionManagerFileTests, RetirementSurvivesDownloadCompletedAfterCheckpoint) {
+	TemporaryDirectory temp("/tmp", "session-download-after-checkpoint");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	for (uint32_t id : {42U, 43U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		shadow.addSession(std::move(session));
+	}
+	shadow.storeSessions();
+
+	// The download captures the old file, but remains in flight through the checkpoint.
+	const char *download = "sessions.sfs.download.tmp";
+	ASSERT_TRUE(std::filesystem::copy_file(kSessionsFilename, download));
+	shadow.applySessionRetirement(42);
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+
+	// The checkpoint's session file already preserves retirement successfully.
+	SessionManagerFile checkpoint;
+	ASSERT_EQ(checkpoint.loadSessions(), 1);
+	ASSERT_EQ(checkpoint.findSession(42), nullptr);
+
+	// Completing the older download must not undo that persisted retirement.
+	ASSERT_TRUE(shadow.installSessionSnapshot(download));
+	EXPECT_EQ(shadow.findSession(42), nullptr);
+
+	// Restart before another dump or download has a chance to repair the session file.
+	SessionManagerFile recovered;
+	ASSERT_EQ(recovered.loadSessions(), 1);
+	EXPECT_EQ(recovered.findSession(42), nullptr);
+	EXPECT_NE(recovered.findSession(43), nullptr);
+}
+
+TEST(SessionManagerFileTests, RepeatedDownloadsPreserveRetirementsAndDownloadedClients) {
+	TemporaryDirectory temp("/tmp", "session-download-repeat");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	auto cached = makeSession(43);
+	cached->info = "outdated-client-details";
+	shadow.addSession(std::move(cached));
+
+	SessionManagerFile downloaded;
+	for (uint32_t id : {42U, 43U, 44U}) {
+		auto session = makeSession(id);
+		session->peerIpAddress = 0x7F000001;
+		session->info = "downloaded-client";
+		downloaded.addSession(std::move(session));
+	}
+	downloaded.storeSessions();
+	ASSERT_TRUE(std::filesystem::copy_file(kSessionsFilename, "master-snapshot.sfs"));
+	shadow.applySessionRetirement(42);
+	shadow.applySessionRetirement(45);  // This retired session is absent from the download.
+
+	// The second download arrives after installation cleared the pending-persistence flag.
+	for (int attempt = 0; attempt < 2; ++attempt) {
+		SCOPED_TRACE(attempt);
+		ASSERT_TRUE(std::filesystem::copy_file("master-snapshot.sfs", "downloaded.sfs"));
+		ASSERT_TRUE(shadow.installSessionSnapshot("downloaded.sfs"));
+		SessionManagerFile recovered;
+		ASSERT_EQ(recovered.loadSessions(), 1);
+		recovered.addOpenFile(45, 123);
+		EXPECT_EQ(recovered.findSession(42), nullptr);
+		EXPECT_EQ(recovered.findSession(45), nullptr);
+		auto *active = recovered.findSession(43);
+		ASSERT_NE(active, nullptr);
+		EXPECT_EQ(active->info, "downloaded-client");
+		EXPECT_EQ(active->peerIpAddress, 0x7F000001U);
+		EXPECT_NE(recovered.findSession(44), nullptr);
+	}
+}
+
+TEST(SessionManagerFileTests, FailedDownloadReconciliationPreservesInstalledFileAndPendingWork) {
+	TemporaryDirectory temp("/tmp", "session-download-write-failure");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	auto session = makeSession(42);
+	session->peerIpAddress = 0x7F000001;
+	shadow.addSession(std::move(session));
+	shadow.storeSessions();
+	ASSERT_TRUE(std::filesystem::copy_file(kSessionsFilename, "downloaded.sfs"));
+	std::filesystem::create_hard_link(kSessionsFilename, "installed.sfs");
+	shadow.applySessionRetirement(42);
+
+	// Block the reconciled write: the older download must never replace the installed file.
+	std::filesystem::create_directory(kSessionsTmpFilename);
+	EXPECT_FALSE(shadow.installSessionSnapshot("downloaded.sfs"));
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "installed.sfs"));
+	EXPECT_TRUE(std::filesystem::exists("downloaded.sfs"));
+
+	// A later checkpoint still attempts the pending save, and the download can then be retried.
+	std::filesystem::remove(kSessionsTmpFilename);
+	ASSERT_TRUE(shadow.flushSessionRetirements());
+	SessionManagerFile checkpoint;
+	ASSERT_EQ(checkpoint.loadSessions(), 1);
+	ASSERT_EQ(checkpoint.findSession(42), nullptr);
+	ASSERT_TRUE(shadow.installSessionSnapshot("downloaded.sfs"));
+	SessionManagerFile recovered;
+	ASSERT_EQ(recovered.loadSessions(), 1);
+	EXPECT_EQ(recovered.findSession(42), nullptr);
+}
+
+TEST(SessionManagerFileTests, InvalidDownloadPreservesInstalledFile) {
+	TemporaryDirectory temp("/tmp", "session-download-invalid");
+	ScopedCurrentDirectory cwd(temp.name());
+	SessionManagerFile shadow;
+	shadow.storeSessions();
+	std::filesystem::create_hard_link(kSessionsFilename, "installed.sfs");
+	{
+		std::ofstream invalid("downloaded.sfs");
+		invalid << "invalid session header";
+	}
+	EXPECT_FALSE(shadow.installSessionSnapshot("downloaded.sfs"));
+	EXPECT_TRUE(std::filesystem::equivalent(kSessionsFilename, "installed.sfs"));
 }
 
 TEST(SessionManagerFileTests, ReplayedRetirementMissingFromSnapshotSurvivesRecovery) {

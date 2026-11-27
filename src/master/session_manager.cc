@@ -41,6 +41,10 @@
 #include "protocol/SFSCommunication.h"
 #include "slogger/slogger.h"
 
+bool ISessionManager::installSessionSnapshot(const std::string &filename) {
+	return rename(filename.c_str(), kSessionsFilename) == 0;
+}
+
 Session *SessionManagerBase::addSession(std::unique_ptr<Session> sessionPtr) {
 	passert(sessionPtr.get());
 	sessions_.push_back(std::move(sessionPtr));
@@ -344,12 +348,23 @@ bool SessionManagerFile::flushSessionRetirements() {
 	// Preserve the downloaded records while saving the replayed retirement state.
 	SessionManagerFile snapshot;
 	if (snapshot.loadSessions() != 1) { return false; }
+	reconcileRetirements(snapshot);
+	if (!snapshot.writeSessions(/*durable=*/true)) { return false; }
+	sessionsPersistencePending_ = false;
+	return true;
+}
+
+bool SessionManagerFile::reconcileRetirements(SessionManagerFile &snapshot) const {
+	bool changed = false;
 	std::set<uint32_t> retiredSessionIds;
 	for (const auto &session : sessions_) {
 		if (session->closing) { retiredSessionIds.insert(session->sessionId); }
 	}
 	for (auto &stored : snapshot.sessions_) {
-		if (retiredSessionIds.erase(stored->sessionId) != 0) { stored->closing = true; }
+		if (retiredSessionIds.erase(stored->sessionId) != 0 && !stored->closing) {
+			stored->closing = true;
+			changed = true;
+		}
 	}
 	// Metadata may still reference retired sessions absent from the downloaded table.
 	// Preserve their retirement so recovery does not recreate them as active legacy sessions.
@@ -358,14 +373,40 @@ bool SessionManagerFile::flushSessionRetirements() {
 		retired->sessionId = sessionId;
 		retired->closing = true;
 		snapshot.addSession(std::move(retired));
+		changed = true;
 	}
-	if (!snapshot.writeSessions(/*durable=*/true)) { return false; }
-	sessionsPersistencePending_ = false;
-	return true;
+	return changed;
 }
 
-void SessionManagerFile::sessionSnapshotDownloaded() {
+bool SessionManagerFile::installSessionSnapshot(const std::string &filename) {
+	SessionManagerFile snapshot;
+	if (snapshot.loadSessions(filename) != 1) { return false; }
+
+	// A checkpoint may already have cleared the pending flag while this download was in flight.
+	// Reconcile every candidate before it can replace the installed retirement state.
+	sessionsPersistencePending_ = true;
+	if (reconcileRetirements(snapshot)) {
+		if (!snapshot.writeSessions(/*durable=*/true)) { return false; }
+		if (unlink(filename.c_str()) < 0) {
+			safs_silent_errlog(LOG_WARNING, "can't remove reconciled session download");
+		}
+	} else {
+		// An up-to-date download needs no rewrite, but its replacement must still be durable.
+		const int file = open(filename.c_str(), O_RDONLY);
+		if (file < 0) {
+			safs_silent_errlog(LOG_WARNING, "can't open session download for sync");
+			return false;
+		}
+		const bool synced = fsync(file) == 0;
+		close(file);
+		if (!synced) {
+			safs_silent_errlog(LOG_WARNING, "can't sync session download");
+			return false;
+		}
+		if (!publishSessionsFile(filename, /*durable=*/true)) { return false; }
+	}
 	sessionsPersistencePending_ = false;
+	return true;
 }
 
 void SessionManagerFile::unload() {
@@ -483,14 +524,21 @@ bool SessionManagerFile::writeSessions(bool durable) {
 		return false;
 	}
 
-	if (rename(kSessionsTmpFilename, kSessionsFilename) < 0) {
+	return publishSessionsFile(kSessionsTmpFilename, durable);
+}
+
+bool SessionManagerFile::publishSessionsFile(const std::string &filename, bool durable) {
+	if (rename(filename.c_str(), kSessionsFilename) < 0) {
 		safs_silent_errlog(LOG_WARNING, "can't store sessions, rename error");
 		return false;
 	}
 
 	if (durable) {
 		const int directory = open(".", O_RDONLY | O_DIRECTORY);
-		if (directory < 0) { return false; }
+		if (directory < 0) {
+			safs_silent_errlog(LOG_WARNING, "can't open sessions directory for sync");
+			return false;
+		}
 		const bool synced = fsync(directory) == 0;
 		close(directory);
 		if (!synced) {
@@ -501,7 +549,9 @@ bool SessionManagerFile::writeSessions(bool durable) {
 	return true;
 }
 
-int SessionManagerFile::loadSessions() {
+int SessionManagerFile::loadSessions() { return loadSessions(kSessionsFilename); }
+
+int SessionManagerFile::loadSessions(const std::string &filename) {
 	uint32_t sessionInfoLength;
 	uint8_t headerBuffer[8];
 	std::vector<uint8_t> sessionBuffer;
@@ -509,7 +559,7 @@ int SessionManagerFile::loadSessions() {
 	uint32_t statsInFile;
 	int bytesRead;
 
-	FILE *fd = fopen(kSessionsFilename, "r");
+	FILE *fd = fopen(filename.c_str(), "r");
 	if (fd == nullptr) {
 		safs_silent_errlog(LOG_WARNING, "can't load sessions, fopen error");
 		if (errno == ENOENT) { return 0; }

@@ -216,8 +216,10 @@ Before expiry or deletion releases any files or locks, the file backend writes
 selects flock. Inode zero is reserved here to signal session retirement. A
 shadow that understands the marker refuses the old session ID after promotion.
 Before a metadata dump, pending replayed retirements are saved together in the
-downloaded session table. A successful save or session-file download clears the
-pending-persistence flag. Downloads are treated as authoritative when they complete.
+downloaded session table. Before installation, each session download is reconciled
+with known retirements, preserving its other client details. Only a successful save
+or durable installation clears pending persistence; an older download cannot undo
+retirement saved by an earlier checkpoint.
 A failed save is logged and retried at a later dump while metadata dumping proceeds.
 If a crash follows a failed session save and a successful metadata dump before
 session state is refreshed, an old session ID can become reconnectable again.

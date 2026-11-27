@@ -29,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "common/sessions_file.h"
@@ -149,8 +150,9 @@ public:
 	/// Attempts to persist pending replayed retirements before a metadata dump.
 	virtual bool flushSessionRetirements() { return true; }
 
-	/// Accepts a successfully downloaded session snapshot as authoritative.
-	virtual void sessionSnapshotDownloaded() {}
+	/// Installs a downloaded session file. The file backend preserves replayed retirements
+	/// before publication; other backends use the downloaded file unchanged.
+	virtual bool installSessionSnapshot(const std::string &filename);
 
 	/// Marks the runtime session closing before cleanup. Backends must persist retirement here
 	/// or before invoking the release callback. Returns false when persistence must be retried;
@@ -538,8 +540,10 @@ public:
 	/// for retry. The caller logs failure and continues the metadata dump.
 	bool flushSessionRetirements() override;
 
-	/// Clears pending persistence after a successful authoritative session-file download.
-	void sessionSnapshotDownloaded() override;
+	/// Reconciles known retirements into the downloaded file before installing it durably.
+	/// Ordinary session fields come from the download. Success clears pending persistence;
+	/// a failed publication retains pending work for retry.
+	bool installSessionSnapshot(const std::string &filename) override;
 
 	/// Releases runtime sessions and clears pending persistence.
 	void unload() override;
@@ -553,12 +557,24 @@ public:
 	                            const std::function<bool(Session *)> &onTimedOut) override;
 
 private:
+	/// Reads either the installed session file or a completed download into this manager.
+	int loadSessions(const std::string &filename);
+
+	/// Applies only closing state to the snapshot, including missing retirement records.
+	/// Returns whether the snapshot changed; active clients retain their downloaded fields.
+	bool reconcileRetirements(SessionManagerFile &snapshot) const;
+
+	/// Atomically publishes a closed file. For durable publication, the caller syncs the file
+	/// first and this function syncs its directory entry.
+	static bool publishSessionsFile(const std::string &filename, bool durable);
+
 	/// Closing records retain the existing wire format and use the already invalid peer IP 0.
 	/// Retirement also syncs the file and its rename before any file release can run.
 	bool writeSessions(bool durable);
 
-	/// Set by retirement replay to request a batched save before the next metadata dump.
-	/// A failed save retains it. A successful save, an authoritative session-file download,
-	/// or unload() clears it.
+	/// Tracks persistence required by retirement replay or an attempted snapshot installation.
+	/// Pending work is saved together before the next metadata dump.
+	/// A failed save retains it. A successful save, a reconciled and durably installed download,
+	/// or unload() clears it. Downloads reconcile closing state even when this flag is clear.
 	bool sessionsPersistencePending_{};
 };
